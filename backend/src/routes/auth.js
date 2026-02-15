@@ -43,3 +43,19 @@ authRouter.post("/profile", requireUser, async (req, res) => {
 
   return res.json({ ok: true, profile: data });
 });
+authRouter.post("/resolve-login", async (req, res) => {
+  const cedula = String(req.body?.cedula || "").trim();
+
+  if (!cedula) return res.status(400).json({ error: "cedula requerida" });
+
+  const { data, error } = await supabaseAdmin
+    .from("users")
+    .select("email")
+    .eq("cedula", cedula)
+    .maybeSingle();
+
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data?.email) return res.status(404).json({ error: "Cédula no registrada" });
+
+  return res.json({ email: data.email });
+});
