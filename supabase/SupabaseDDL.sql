@@ -63,6 +63,7 @@ create table public.users (
   type char(1) not null check (type in ('S','T','A')),
   code_jiliu text unique, -- para mapear ETM studentDescription -> code
   id_course bigint references public.course(id),
+  cedula text unique,
   created_at timestamptz default now()
 );
 
