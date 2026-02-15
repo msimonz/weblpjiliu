@@ -1,27 +1,3 @@
--- ====== ENUMS / HELPERS ======
-create or replace function public.is_admin()
-returns boolean language sql stable as $$
-  select exists (
-    select 1 from public.users u
-    where u.id = auth.uid() and u.type = 'A'
-  );
-$$;
-
-create or replace function public.is_teacher()
-returns boolean language sql stable as $$
-  select exists (
-    select 1 from public.users u
-    where u.id = auth.uid() and u.type = 'T'
-  );
-$$;
-
-create or replace function public.is_student()
-returns boolean language sql stable as $$
-  select exists (
-    select 1 from public.users u
-    where u.id = auth.uid() and u.type = 'S'
-  );
-$$;
 
 -- ====== TABLES ======
 drop table if exists public.grades cascade;
@@ -119,6 +95,32 @@ drop trigger if exists trg_grades_updated_at on public.grades;
 create trigger trg_grades_updated_at
 before update on public.grades
 for each row execute function public.set_updated_at();
+
+-- ====== ENUMS / HELPERS ======
+create or replace function public.is_admin()
+returns boolean language sql stable as $$
+  select exists (
+    select 1 from public.users u
+    where u.id = auth.uid() and u.type = 'A'
+  );
+$$;
+
+create or replace function public.is_teacher()
+returns boolean language sql stable as $$
+  select exists (
+    select 1 from public.users u
+    where u.id = auth.uid() and u.type = 'T'
+  );
+$$;
+
+create or replace function public.is_student()
+returns boolean language sql stable as $$
+  select exists (
+    select 1 from public.users u
+    where u.id = auth.uid() and u.type = 'S'
+  );
+$$;
+
 
 -- ====== RLS ======
 alter table public.course enable row level security;
