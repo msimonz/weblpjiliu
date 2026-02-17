@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
-import { primaryRole } from "@/lib/roles";
+import { getRoles, roleLabelFromRole, type RoleCode } from "@/lib/roles";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,8 +12,17 @@ export default function LoginPage() {
   const [cedula, setCedula] = useState("");
   const [password, setPassword] = useState("");
 
+  // ✅ nuevo: rol elegido
+  const [rolePick, setRolePick] = useState<RoleCode>("S");
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const roleToRoute = (role: RoleCode) => {
+    if (role === "A") return "/admin";
+    if (role === "T") return "/teacher";
+    return "/dashboard";
+  };
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -42,13 +51,22 @@ export default function LoginPage() {
 
       if (authErr) throw new Error("Cédula o contraseña incorrectas");
 
-      // después de login exitoso:
-      const info = await apiFetch("/api/auth/me"); // ya lo tienes en tu proyecto
-      const role = primaryRole(info);
+      // 3) validar roles reales contra el rol seleccionado
+      const info = await apiFetch("/api/auth/me");
+      const roles = getRoles(info); // RoleCode[]
 
-      if (role === "A") router.replace("/admin");
-      else if (role === "T") router.replace("/teacher");
-      else router.replace("/dashboard");
+      if (!roles.includes(rolePick)) {
+        // ✅ importante: cerrar sesión si no tiene ese rol
+        await supabase.auth.signOut();
+        throw new Error(
+          `No tienes el rol "${roleLabelFromRole(rolePick)}" asignado.`
+        );
+      }
+      localStorage.setItem("active_role", rolePick);
+      router.replace(roleToRoute(rolePick));
+
+      // 4) redirigir al panel elegido
+      router.replace(roleToRoute(rolePick));
     } catch (err: any) {
       setError(err?.message || "No fue posible iniciar sesión");
     } finally {
@@ -57,18 +75,35 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="container" style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
+    <div
+      className="container"
+      style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}
+    >
       <div className="card" style={{ width: 420 }}>
         <h1 style={{ margin: "6px 0 6px", fontSize: 28, letterSpacing: "-0.02em" }}>
           Iniciar sesión
         </h1>
         <p className="muted" style={{ marginTop: 0 }}>
-          Ingresa con tu cédula y contraseña.
+          Ingresa con tu cédula, contraseña y el rol con el que deseas entrar.
         </p>
 
         {error && <div className="msgError">{error}</div>}
 
         <form onSubmit={handleLogin} style={{ marginTop: 14, display: "grid", gap: 12 }}>
+          {/* ✅ Nuevo dropdown de rol */}
+          <div>
+            <div className="label">Rol</div>
+            <select
+              className="select"
+              value={rolePick}
+              onChange={(e) => setRolePick(e.target.value as RoleCode)}
+            >
+              <option value="S">Student</option>
+              <option value="T">Teacher</option>
+              <option value="A">Admin</option>
+            </select>
+          </div>
+
           <div>
             <div className="label">Cédula</div>
             <input
@@ -98,7 +133,6 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* ✅ Quitamos “Crear cuenta” */}
         <div style={{ marginTop: 14, color: "var(--muted)", fontSize: 13 }}>
           Si no tienes acceso o olvidaste tu contraseña, contacta al administrador.
         </div>

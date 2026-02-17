@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
 import { getRoles, primaryRole, roleLabelFromRole } from "@/lib/roles";
+import { getActiveRole, roleToRoute } from "@/lib/activeRole";
+
 
 type Course = { id: number; name: string; level: number; year: string | null };
 type ClassItem = { id: number; name: string; level: number };
@@ -92,8 +94,10 @@ export default function AdminPage() {
         const info = await apiFetch("/api/auth/me");
         setMe(info);
 
-        const roles = getRoles(info);
-        if (!roles.includes("A")) return router.replace("/dashboard");
+        const activeRole = getActiveRole(info);
+        // si el rol activo NO es Admin, lo mandas al panel del rol activo
+        if (activeRole !== "A") return router.replace(roleToRoute(activeRole));
+
       } catch {
         router.replace("/login");
       } finally {

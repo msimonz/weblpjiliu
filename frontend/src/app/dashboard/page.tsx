@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
 import { getRoles, primaryRole, roleLabelFromRole } from "@/lib/roles";
+import { getActiveRole, roleToRoute } from "@/lib/activeRole";
+
 
 type ClassItem = { id: number; name: string; level: number };
 
@@ -106,9 +108,10 @@ export default function DashboardPage() {
         if (!data.session) return router.replace("/login");
         const info = await apiFetch("/api/auth/me");
         setMe(info);
-        const roles = getRoles(info);
-        if (roles.includes("A")) return router.replace("/admin");
-        if (roles.includes("T")) return router.replace("/teacher");
+        const activeRole = getActiveRole(info);
+        // Teacher solo deja entrar si rol activo es T (si es A o S, lo redirige a su panel)
+        if (activeRole !== "S") return router.replace(roleToRoute(activeRole));
+
 
       } catch {
         router.replace("/login");
