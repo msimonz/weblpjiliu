@@ -8,10 +8,11 @@ export const adminRouter = Router();
 
 // ===== Middleware: solo Admin =====
 function requireAdmin(req, res, next) {
-  const r = req.auth?.role || req.auth?.profile?.type || req.auth?.profile?.role;
-  if (r !== "A") return res.status(403).json({ error: "Solo Admin" });
+  const roles = req.auth?.roles || [];
+  if (!roles.includes("A")) return res.status(403).json({ error: "Solo Admin" });
   return next();
 }
+
 
 // ===== Multer (upload Excel) =====
 const upload = multer({
@@ -27,6 +28,28 @@ function toInt(v) {
 function cleanStr(v) {
   return String(v ?? "").trim();
 }
+
+// ===== Cache code -> typeId =====
+const typeCache = new Map();
+
+async function getTypeIdByCode(code) {
+  const c = String(code || "").trim().toUpperCase();
+  if (!c) throw new Error("type vacío");
+  if (typeCache.has(c)) return typeCache.get(c);
+
+  const { data, error } = await supabaseAdmin
+    .from("type")
+    .select("id,code")
+    .eq("code", c)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data?.id) throw new Error(`No existe type '${c}' en tabla type`);
+
+  typeCache.set(c, data.id);
+  return data.id;
+}
+
 
 // ============================================================================
 // 1) COURSES
@@ -135,10 +158,29 @@ adminRouter.post("/evaluation-types", requireAuth, requireAdmin, async (req, res
 // 4) LISTAR TEACHERS y STUDENTS (para dropdowns)
 // ============================================================================
 adminRouter.get("/teachers", requireAuth, requireAdmin, async (req, res) => {
+  const { data: tRow, error: tErr } = await supabaseAdmin
+    .from("type")
+    .select("id")
+    .eq("code", "T")
+    .maybeSingle();
+
+  if (tErr) return res.status(500).json({ error: tErr.message });
+  if (!tRow?.id) return res.status(500).json({ error: "No existe type 'T'" });
+
+  const { data: ut, error: utErr } = await supabaseAdmin
+    .from("user_type")
+    .select("id_user")
+    .eq("id_type", tRow.id);
+
+  if (utErr) return res.status(500).json({ error: utErr.message });
+
+  const ids = (ut || []).map((r) => r.id_user);
+  if (ids.length === 0) return res.json({ items: [] });
+
   const { data, error } = await supabaseAdmin
     .from("users")
-    .select("id,name,email,cedula,type")
-    .eq("type", "T")
+    .select("id,name,email,cedula")
+    .in("id", ids)
     .order("name", { ascending: true });
 
   if (error) return res.status(500).json({ error: error.message });
@@ -147,24 +189,41 @@ adminRouter.get("/teachers", requireAuth, requireAdmin, async (req, res) => {
 
 adminRouter.get("/students", requireAuth, requireAdmin, async (req, res) => {
   const q = cleanStr(req.query.q || "");
+
+  const { data: sRow, error: sErr } = await supabaseAdmin
+    .from("type")
+    .select("id")
+    .eq("code", "S")
+    .maybeSingle();
+
+  if (sErr) return res.status(500).json({ error: sErr.message });
+  if (!sRow?.id) return res.status(500).json({ error: "No existe type 'S'" });
+
+  const { data: ut, error: utErr } = await supabaseAdmin
+    .from("user_type")
+    .select("id_user")
+    .eq("id_type", sRow.id);
+
+  if (utErr) return res.status(500).json({ error: utErr.message });
+
+  let ids = (ut || []).map((r) => r.id_user);
+  if (ids.length === 0) return res.json({ items: [] });
+
   let query = supabaseAdmin
     .from("users")
-    .select("id,name,email,cedula,type,id_course")
-    .eq("type", "S")
+    .select("id,name,email,cedula,id_course")
+    .in("id", ids)
     .order("name", { ascending: true })
     .limit(200);
 
-  if (q) {
-    // búsqueda simple por nombre/email/cedula
-    // Nota: supabase no tiene OR fácil con ilike multiple sin rpc,
-    // usamos ilike por name y si no, el front filtra también.
-    query = query.ilike("name", `%${q}%`);
-  }
+  if (q) query = query.ilike("name", `%${q}%`);
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
+
   return res.json({ items: data || [] });
 });
+
 
 // ============================================================================
 // 5) ASIGNAR TEACHER A CLASS (class_teacher)
@@ -223,16 +282,43 @@ adminRouter.get("/course-students", requireAuth, requireAdmin, async (req, res) 
   const courseId = toInt(req.query.course_id);
   if (!courseId) return res.status(400).json({ error: "course_id requerido" });
 
-  const { data, error } = await supabaseAdmin
+  // 1) usuarios por course
+  const { data: users, error: uErr } = await supabaseAdmin
     .from("users")
-    .select("id,name,email,cedula,type,id_course")
-    .eq("type", "S")
+    .select("id,name,email,cedula,id_course")
     .eq("id_course", courseId)
     .order("name", { ascending: true });
 
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ items: data || [] });
+  if (uErr) return res.status(500).json({ error: uErr.message });
+
+  const ids = (users || []).map((u) => u.id);
+  if (ids.length === 0) return res.json({ items: [] });
+
+  // 2) id del rol S
+  const { data: sRow, error: sErr } = await supabaseAdmin
+    .from("type")
+    .select("id")
+    .eq("code", "S")
+    .maybeSingle();
+
+  if (sErr) return res.status(500).json({ error: sErr.message });
+  if (!sRow?.id) return res.status(500).json({ error: "No existe type 'S'" });
+
+  // 3) filtrar por user_type
+  const { data: utRows, error: utErr } = await supabaseAdmin
+    .from("user_type")
+    .select("id_user")
+    .eq("id_type", sRow.id)
+    .in("id_user", ids);
+
+  if (utErr) return res.status(500).json({ error: utErr.message });
+
+  const isStudent = new Set((utRows || []).map((r) => r.id_user));
+  const items = (users || []).filter((u) => isStudent.has(u.id));
+
+  return res.json({ items });
 });
+
 
 // ============================================================================
 // 7) SUBIR EXCEL: crear users en Auth + public.users
@@ -265,7 +351,8 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
 
       const email = cleanStr(r.email || r.Email || r.EMAIL);
       const name = cleanStr(r.name || r.Name || r.NOMBRE);
-      const type = cleanStr(r.type || r.Type || r.ROL || "S").toUpperCase();
+      const typeRaw = cleanStr(r.type || r.Type || r.ROL || "S").toUpperCase();
+      const typeList = typeRaw.split(",").map(x => x.trim()).filter(Boolean);
       const cedula = cleanStr(r.cedula || r.Cedula || r.CEDULA);
       const code_jiliu = cleanStr(r.code_jiliu || r.Code || r.CODIGO);
       const id_course = toInt(r.id_course || r.ID_COURSE || r.course_id);
@@ -280,8 +367,8 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         results.skipped++;
         continue;
       }
-      if (!["S", "T", "A"].includes(type)) {
-        results.errors.push({ row: i + 2, error: "type inválido (S/T/A)" });
+      if (typeList.length === 0 || typeList.some(t => !["S","T","A"].includes(t))) {
+        results.errors.push({ row: i + 2, error: "type inválido (S/T/A o lista S,T)" });
         results.skipped++;
         continue;
       }
@@ -293,7 +380,7 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         email,
         password: DEFAULT_PASSWORD,
         email_confirm: true,
-        user_metadata: { name, type },
+        user_metadata: { name, roles: typeList },
       });
 
       if (createRes?.error) {
@@ -330,7 +417,6 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         id: authUserId,
         email,
         name,
-        type,
         cedula: cedula || null,
         code_jiliu: code_jiliu || null,
         id_course: id_course || null,
@@ -340,7 +426,7 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
       const { data: up, error: upDbErr } = await supabaseAdmin
         .from("users")
         .upsert(payload, { onConflict: "id" })
-        .select("id,email,name,type,cedula,id_course")
+        .select("id,email,name,cedula,code_jiliu,id_course")
         .maybeSingle();
 
       if (upDbErr) {
@@ -348,6 +434,20 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         results.skipped++;
         continue;
       }
+      // 2.1) Asignar rol en user_type (id_user, id_type)
+      for (const t of typeList) {
+        try {
+          const typeId = await getTypeIdByCode(t);
+          const { error: utErr } = await supabaseAdmin
+            .from("user_type")
+            .upsert({ id_user: authUserId, id_type: typeId }, { onConflict: "id_user,id_type" });
+
+          if (utErr) results.errors.push({ row: i + 2, error: `user_type(${t}): ${utErr.message}` });
+        } catch (e) {
+          results.errors.push({ row: i + 2, error: `user_type(${t}): ${e.message}` });
+        }
+      }
+
 
       // 3) si asigna course, registrar history
       if (id_course) {

@@ -6,8 +6,10 @@ export const teacherRouter = Router();
 
 // ✅ middleware simple: solo teachers (o admin)
 function requireTeacher(req, res, next) {
-  const r = req.auth?.role || req.auth?.profile?.type || req.auth?.profile?.role;
-  if (r !== "T" && r !== "A") return res.status(403).json({ error: "Solo Teacher/Admin" });
+  const roles = req.auth?.roles || [];
+  if (!roles.includes("T") && !roles.includes("A")) {
+    return res.status(403).json({ error: "Solo Teacher/Admin" });
+  }
   return next();
 }
 
@@ -159,24 +161,46 @@ teacherRouter.get("/course-students", requireAuth, requireTeacher, async (req, r
   const courseId = Number(req.query.course_id);
   if (!courseId) return res.status(400).json({ error: "course_id requerido" });
 
-  const { data, error } = await supabaseAdmin
+  // 1) traer usuarios por course
+  const { data: users, error: uErr } = await supabaseAdmin
     .from("users")
-    .select("id,name,cedula,type,id_course")
+    .select("id,name,cedula,id_course")
     .eq("id_course", courseId)
-    .eq("type", "S") // solo estudiantes
     .order("name", { ascending: true });
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (uErr) return res.status(500).json({ error: uErr.message });
 
-  // devolver solo campos necesarios
-  const items = (data || []).map((u) => ({
-    id: u.id,
-    name: u.name,
-    cedula: u.cedula,
-  }));
+  const ids = (users || []).map((u) => u.id);
+  if (ids.length === 0) return res.json({ items: [] });
+
+  // 2) traer id_type de 'S'
+  const { data: tRow, error: tErr } = await supabaseAdmin
+    .from("type")
+    .select("id")
+    .eq("code", "S")
+    .maybeSingle();
+
+  if (tErr) return res.status(500).json({ error: tErr.message });
+  if (!tRow?.id) return res.status(500).json({ error: "No existe type 'S'" });
+
+  // 3) filtrar los que tengan rol S
+  const { data: utRows, error: utErr } = await supabaseAdmin
+    .from("user_type")
+    .select("id_user")
+    .eq("id_type", tRow.id)
+    .in("id_user", ids);
+
+  if (utErr) return res.status(500).json({ error: utErr.message });
+
+  const isStudent = new Set((utRows || []).map((r) => r.id_user));
+
+  const items = (users || [])
+    .filter((u) => isStudent.has(u.id))
+    .map((u) => ({ id: u.id, name: u.name, cedula: u.cedula }));
 
   return res.json({ items });
 });
+
 
 /**
  * ✅ 5) Notas existentes de una evaluación (para precargar tabla)
@@ -322,7 +346,7 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
   // ✅ 2) buscar estudiante por cédula (tabla users)
   const { data: st, error: stErr } = await supabaseAdmin
     .from("users")
-    .select("id,cedula,name,email,type,id_course")
+    .select("id,cedula,name,email,id_course")
     .eq("cedula", ced)
     .maybeSingle();
 

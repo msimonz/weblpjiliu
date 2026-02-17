@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
+import { getRoles, primaryRole, roleLabelFromRole } from "@/lib/roles";
 
 type TeacherClass = { id: number; name: string; level: number };
 
@@ -97,9 +98,8 @@ export default function TeacherPage() {
 
         const info = await apiFetch("/api/auth/me");
         setMe(info);
-
-        const role = info?.role;
-        if (role !== "T" && role !== "A") return router.replace("/dashboard");
+        const roles = getRoles(info);
+        if (!roles.includes("T") && !roles.includes("A")) return router.replace("/dashboard");
       } catch {
         router.replace("/login");
       } finally {
@@ -462,10 +462,7 @@ export default function TeacherPage() {
     router.replace("/login");
   }
 
-  const roleLabel = useMemo(() => {
-    if (!me?.role) return "—";
-    return me.role === "A" ? "Admin" : me.role === "T" ? "Teacher" : "Student";
-  }, [me]);
+  const roleLabel = useMemo(() => roleLabelFromRole(primaryRole(me)), [me]);
 
   if (loadingMe) return <div className="container">Cargando...</div>;
 

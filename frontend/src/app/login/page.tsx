@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
+import { primaryRole } from "@/lib/roles";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -43,11 +44,11 @@ export default function LoginPage() {
 
       // después de login exitoso:
       const info = await apiFetch("/api/auth/me"); // ya lo tienes en tu proyecto
-      const role = info?.role;
+      const role = primaryRole(info);
 
       if (role === "A") router.replace("/admin");
       else if (role === "T") router.replace("/teacher");
-      else router.replace("/dashboard"); // student
+      else router.replace("/dashboard");
     } catch (err: any) {
       setError(err?.message || "No fue posible iniciar sesión");
     } finally {

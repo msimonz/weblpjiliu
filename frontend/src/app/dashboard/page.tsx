@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
+import { getRoles, primaryRole, roleLabelFromRole } from "@/lib/roles";
 
 type ClassItem = { id: number; name: string; level: number };
 
@@ -105,6 +106,10 @@ export default function DashboardPage() {
         if (!data.session) return router.replace("/login");
         const info = await apiFetch("/api/auth/me");
         setMe(info);
+        const roles = getRoles(info);
+        if (roles.includes("A")) return router.replace("/admin");
+        if (roles.includes("T")) return router.replace("/teacher");
+
       } catch {
         router.replace("/login");
       } finally {
@@ -336,7 +341,7 @@ export default function DashboardPage() {
         <div style={{ marginTop: 10 }}>
           <div className="label">Rol</div>
           <div style={{ fontWeight: 900 }}>
-            {me?.role === "A" ? "Admin" : me?.role === "T" ? "Teacher" : "Student"}
+            {roleLabelFromRole(primaryRole(me))}
           </div>
         </div>
 

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
+import { getRoles, primaryRole, roleLabelFromRole } from "@/lib/roles";
 
 type Course = { id: number; name: string; level: number; year: string | null };
 type ClassItem = { id: number; name: string; level: number };
@@ -14,7 +15,7 @@ type UserMini = {
   name: string;
   email: string;
   cedula: string | null;
-  type: "S" | "T" | "A";
+  type?: "S" | "T" | "A";
   id_course?: number | null;
 };
 
@@ -91,8 +92,8 @@ export default function AdminPage() {
         const info = await apiFetch("/api/auth/me");
         setMe(info);
 
-        const role = info?.role;
-        if (role !== "A") return router.replace("/dashboard");
+        const roles = getRoles(info);
+        if (!roles.includes("A")) return router.replace("/dashboard");
       } catch {
         router.replace("/login");
       } finally {
@@ -273,7 +274,7 @@ export default function AdminPage() {
       const { data: sess } = await supabase.auth.getSession();
       const token = sess.session?.access_token;
 
-      const resp = await fetch(`${process.env.NEXT_PUBLIC_API_BASE || ""}/api/admin/upload-users`, {
+      const resp = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || ""}/api/admin/upload-users`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: fd,
@@ -321,9 +322,9 @@ export default function AdminPage() {
   }
 
   const roleLabel = useMemo(() => {
-    if (!me?.role) return "—";
-    return me.role === "A" ? "Admin" : me.role === "T" ? "Teacher" : "Student";
+    return roleLabelFromRole(primaryRole(me));
   }, [me]);
+
 
   const filteredStudents = useMemo(() => {
     const q = studentQuery.trim().toLowerCase();

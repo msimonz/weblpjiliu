@@ -1,37 +1,66 @@
 import { supabaseAdmin } from "../supabase.js";
 
-export async function authMiddleware(req, res, next) {
-  const auth = req.headers.authorization || "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
-
-  req.auth = null;
-
-  if (!token) return next();
-
-  const { data, error } = await supabaseAdmin.auth.getUser(token);
-
-  console.log("[AUTH] token head:", token?.slice(0, 18));
-  console.log("[AUTH] getUser error:", error?.message);
-  console.log("[AUTH] user id:", data?.user?.id);
-
-  if (error || !data?.user) return next();
-
-  // OJO: profile puede NO existir todavía (registro nuevo)
-  const { data: profile, error: profErr } = await supabaseAdmin
+// ===============
+// Helper: cargar profile + roles
+// ===============
+async function loadProfileAndRoles(user) {
+  // profile (sin type)
+  const { data: profile, error: pErr } = await supabaseAdmin
     .from("users")
-    .select("id,type,id_course,email,name,code_jiliu,cedula")
-    .eq("id", data.user.id)
+    .select("id,name,email,cedula,code_jiliu,id_course,created_at")
+    .eq("id", user.id)
     .maybeSingle();
 
-  console.log("[AUTH] profile exists?:", !!profile, "profErr:", profErr?.message);
+  if (pErr) throw new Error(pErr.message);
 
-  req.auth = {
-    user: data.user,
-    profile: profile || null,
-    role: profile?.type || null,
-  };
+  // roles por tabla puente
+  const { data: rolesRows, error: rErr } = await supabaseAdmin
+    .from("user_type")
+    .select("type: type(code)")
+    .eq("id_user", user.id);
 
-  next();
+  if (rErr) throw new Error(rErr.message);
+
+  const roles = (rolesRows || [])
+    .map((x) => x?.type?.code)
+    .filter(Boolean);
+
+  // role principal para compatibilidad (A > T > S)
+  const role = roles.includes("A")
+    ? "A"
+    : roles.includes("T")
+    ? "T"
+    : roles.includes("S")
+    ? "S"
+    : null;
+
+  return { profile: profile || null, roles, role };
+}
+
+// ===============
+// Middleware opcional (no bloquea)
+// ===============
+export async function authMiddleware(req, res, next) {
+  try {
+    const auth = req.headers.authorization || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+
+    req.auth = null;
+    if (!token) return next();
+
+    const { data, error } = await supabaseAdmin.auth.getUser(token);
+    if (error || !data?.user) return next();
+
+    const user = data.user;
+    const { profile, roles, role } = await loadProfileAndRoles(user);
+
+    req.auth = { user, profile, roles, role };
+    return next();
+  } catch (e) {
+    // si falla, no bloquea (solo deja req.auth null)
+    req.auth = null;
+    return next();
+  }
 }
 
 // ✅ Solo exige token válido (sirve para /profile en registro)
@@ -41,22 +70,34 @@ export function requireUser(req, res, next) {
 }
 
 // ✅ Exige token válido + fila en public.users (para usar la app)
-export function requireAuth(req, res, next) {
-  if (!req.auth?.profile) return res.status(401).json({ error: "Unauthorized" });
-  next();
+export async function requireAuth(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    if (!token) return res.status(401).json({ error: "No token" });
+
+    const { data, error } = await supabaseAdmin.auth.getUser(token);
+    if (error || !data?.user) return res.status(401).json({ error: "Token inválido" });
+
+    const user = data.user;
+
+    const { profile, roles, role } = await loadProfileAndRoles(user);
+    if (!profile) return res.status(401).json({ error: "Profile no existe" });
+
+    req.auth = { user, profile, roles, role };
+    return next();
+  } catch (e) {
+    return res.status(401).json({ error: e?.message || "No autorizado" });
+  }
 }
 
-export function requireRole(...roles) {
+// ✅ Requiere que tenga al menos uno de los roles pedidos
+export function requireRole(...allowedRoles) {
   return (req, res, next) => {
-    if (!req.auth?.profile) return res.status(401).json({ error: "Unauthorized" });
-    if (!roles.includes(req.auth.role)) return res.status(403).json({ error: "Forbidden" });
+    if (!req.auth?.user) return res.status(401).json({ error: "Unauthorized" });
+    const roles = req.auth.roles || [];
+    const ok = allowedRoles.some((r) => roles.includes(r));
+    if (!ok) return res.status(403).json({ error: "Forbidden" });
     next();
   };
 }
-
-function requireAdmin(req, res, next) {
-  const r = req.auth?.role || req.auth?.profile?.type || req.auth?.profile?.role;
-  if (r !== "A") return res.status(403).json({ error: "Solo Admin" });
-  return next();
-}
-
