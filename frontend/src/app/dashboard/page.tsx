@@ -7,7 +7,6 @@ import { apiFetch } from "@/lib/api";
 import { getRoles, primaryRole, roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 
-
 type ClassItem = { id: number; name: string; level: number };
 
 type GradeItem = {
@@ -47,25 +46,18 @@ export default function DashboardPage() {
   const [me, setMe] = useState<any>(null);
   const [meLoading, setMeLoading] = useState(true);
 
-  // ✅ Año seleccionado (UI)
   const [level, setLevel] = useState<number>(1);
 
-  // ✅ curso fijo del estudiante (NO depende del dropdown)
   const studentCourseFixed = useMemo(() => {
-    // Ajusta estas rutas si tu /me viene distinto:
-    // - course: { id, name, level }
-    // - profile.id_course
     const c = me?.course ?? null;
     return c;
   }, [me]);
 
   const studentLevelFixed = useMemo(() => {
-    // ✅ prioridad: me.course.level
     const lvl = Number(studentCourseFixed?.level);
     return Number.isFinite(lvl) && lvl > 0 ? lvl : null;
   }, [studentCourseFixed]);
 
-  // ✅ mensaje de bloqueo si el estudiante no ha cursado ese año
   const blockedByYear = useMemo(() => {
     if (!studentLevelFixed) return false;
     return level !== studentLevelFixed;
@@ -86,9 +78,6 @@ export default function DashboardPage() {
   const [summaryItems, setSummaryItems] = useState<SummaryItem[]>([]);
   const [summaryStats, setSummaryStats] = useState<SummaryStats | null>(null);
 
-  // ❌ antes: course dependía de loadSummary(level). Ahora NO.
-  // const [course, setCourse] = useState<any>(null);
-
   const [error, setError] = useState<string | null>(null);
 
   const debounceRef = useRef<number | null>(null);
@@ -99,6 +88,8 @@ export default function DashboardPage() {
   const [pwLoading, setPwLoading] = useState(false);
   const [pwMsg, setPwMsg] = useState<string | null>(null);
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   // auth guard
   useEffect(() => {
     (async () => {
@@ -108,11 +99,9 @@ export default function DashboardPage() {
         if (!data.session) return router.replace("/login");
         const info = await apiFetch("/api/auth/me");
         setMe(info);
+
         const activeRole = getActiveRole(info);
-        // Teacher solo deja entrar si rol activo es T (si es A o S, lo redirige a su panel)
         if (activeRole !== "S") return router.replace(roleToRoute(activeRole));
-
-
       } catch {
         router.replace("/login");
       } finally {
@@ -121,7 +110,7 @@ export default function DashboardPage() {
     })();
   }, [router]);
 
-  // ✅ al cargar el usuario: setear el año al nivel real del estudiante
+  // set year to real student level
   useEffect(() => {
     if (!meLoading && studentLevelFixed) {
       setLevel(studentLevelFixed);
@@ -141,11 +130,9 @@ export default function DashboardPage() {
     setError(null);
   }, [level]);
 
-  // cargar resumen por año (cuando hay level y NO hay materia seleccionada)
   async function loadSummary() {
     setError(null);
 
-    // ✅ si el año no corresponde al nivel del estudiante, NO consultes nada
     if (blockedByYear) {
       setSummaryItems([]);
       setSummaryStats(null);
@@ -154,8 +141,6 @@ export default function DashboardPage() {
 
     setSummaryLoading(true);
     try {
-      // ✅ igual puedes dejar que el backend reciba level,
-      // pero ya no se dispara si el estudiante no ha cursado ese año.
       const res = await apiFetch(`/api/student/subjects-summary?level=${level}`);
       setSummaryItems(res?.items || []);
       setSummaryStats(res?.stats || null);
@@ -177,7 +162,6 @@ export default function DashboardPage() {
   useEffect(() => {
     setError(null);
 
-    // ✅ bloqueado por año => no autocomplete
     if (blockedByYear) {
       setSuggestions([]);
       setOpenSug(false);
@@ -213,7 +197,10 @@ export default function DashboardPage() {
     };
   }, [q, level, blockedByYear]);
 
-  const canConsult = useMemo(() => !!selectedClass?.id && !blockedByYear, [selectedClass, blockedByYear]);
+  const canConsult = useMemo(
+    () => !!selectedClass?.id && !blockedByYear,
+    [selectedClass, blockedByYear]
+  );
 
   function pickClass(c: ClassItem) {
     setSelectedClass(c);
@@ -222,7 +209,6 @@ export default function DashboardPage() {
   }
 
   async function handleConsult(classOverride?: { id: number; name: string }) {
-    // ✅ bloqueado por año => no consultar
     if (blockedByYear) {
       setError("Aún no ha cursado este año.");
       return;
@@ -277,14 +263,12 @@ export default function DashboardPage() {
     }
   }
 
-  // aprobado/reprobado
   const PASS_GRADE = summaryStats?.pass_grade ?? 70;
   const gradeTextColor = (value: number | null) => {
     if (value === null) return "inherit";
     return value >= PASS_GRADE ? "rgb(21,128,61)" : "rgb(185,28,28)";
   };
 
-  // mini chart helpers (con tope)
   const passed = summaryStats?.passed ?? 0;
   const failed = summaryStats?.failed ?? 0;
   const maxBar = Math.max(1, passed, failed);
@@ -292,7 +276,6 @@ export default function DashboardPage() {
   const passH = Math.min(CHART_MAX, Math.round((passed / maxBar) * CHART_MAX));
   const failH = Math.min(CHART_MAX, Math.round((failed / maxBar) * CHART_MAX));
 
-  // ✅ Curso fijo para sidebar (no depende del level)
   const fixedCourseName = useMemo(() => {
     return (
       studentCourseFixed?.name ??
@@ -302,23 +285,73 @@ export default function DashboardPage() {
 
   if (meLoading) return <div className="container">Cargando...</div>;
 
+  // ✅ medidas UI
+  const SIDEBAR_W = 320;
+  const HAM_PAD = 14;
+  const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
+
   return (
     <div>
-      {/* ✅ SIDEBAR */}
+      {/* ✅ HAMBURGUESA (se pega al borde del sidebar cuando abre) */}
+      <div
+        onMouseEnter={() => setSidebarOpen(true)}
+        onMouseLeave={() => setSidebarOpen(false)}
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          zIndex: 70,
+          // una franja pequeña para que sea fácil “enganchar” el hover
+          width: sidebarOpen ? SIDEBAR_W + HAM_PAD + 44 : HAM_PAD + 44,
+          height: 72,
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            left: hamLeft,
+            top: HAM_PAD,
+            zIndex: 70,
+            width: 44,
+            height: 44,
+            borderRadius: 14,
+            background: "rgba(255,255,255,.88)",
+            border: "1px solid rgba(2,132,199,.18)",
+            boxShadow: "0 18px 45px rgba(2,132,199,.12)",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            display: "grid",
+            placeItems: "center",
+            cursor: "pointer",
+          }}
+        >
+          <div style={{ display: "grid", gap: 5 }}>
+            <div style={{ width: 18, height: 2, borderRadius: 9, background: "rgba(15,23,42,.85)" }} />
+            <div style={{ width: 18, height: 2, borderRadius: 9, background: "rgba(15,23,42,.65)" }} />
+            <div style={{ width: 18, height: 2, borderRadius: 9, background: "rgba(15,23,42,.45)" }} />
+          </div>
+        </div>
+      </div>
+
+      {/* ✅ SIDEBAR (oculta y aparece con hover) */}
       <aside
+        onMouseEnter={() => setSidebarOpen(true)}
+        onMouseLeave={() => setSidebarOpen(false)}
         style={{
           position: "fixed",
           left: 0,
           top: 0,
           bottom: 0,
-          width: 320,
+          width: SIDEBAR_W,
           padding: 18,
           background: "rgba(255,255,255,.78)",
           borderRight: "1px solid rgba(2,132,199,.18)",
           backdropFilter: "blur(10px)",
           WebkitBackdropFilter: "blur(10px)",
           overflow: "auto",
-          zIndex: 50,
+          zIndex: 55,
+          transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
+          transition: "transform 180ms ease",
         }}
       >
         <div style={{ fontWeight: 900, fontSize: 18 }}>Perfil del estudiante</div>
@@ -343,14 +376,11 @@ export default function DashboardPage() {
 
         <div style={{ marginTop: 10 }}>
           <div className="label">Rol</div>
-          <div style={{ fontWeight: 900 }}>
-            {roleLabelFromRole(primaryRole(me))}
-          </div>
+          <div style={{ fontWeight: 900 }}>{roleLabelFromRole(primaryRole(me))}</div>
         </div>
 
         <div style={{ marginTop: 10 }}>
           <div className="label">Curso</div>
-          {/* ✅ FIJO */}
           <div style={{ fontWeight: 900 }}>{fixedCourseName}</div>
         </div>
 
@@ -396,7 +426,12 @@ export default function DashboardPage() {
       </aside>
 
       {/* ✅ CONTENIDO */}
-      <main style={{ marginLeft: 320 }}>
+      <main
+        style={{
+          marginLeft: sidebarOpen ? SIDEBAR_W : 0,
+          transition: "margin-left 180ms ease",
+        }}
+      >
         <div className="container">
           <div className="topbar" style={{ alignItems: "center" }}>
             <div className="brand">
@@ -456,7 +491,6 @@ export default function DashboardPage() {
                     ))}
                   </select>
 
-                  {/* ✅ Mensaje si el año no corresponde */}
                   {blockedByYear && (
                     <div style={{ marginTop: 8, color: "#b45309", fontWeight: 800, fontSize: 13 }}>
                       Aún no ha cursado este año.
@@ -477,7 +511,9 @@ export default function DashboardPage() {
                       setWeighted(null);
                     }}
                     placeholder={
-                      blockedByYear ? "Aún no ha cursado este año" : "Escribe: Matemáticas, Inglés, Historia..."
+                      blockedByYear
+                        ? "Aún no ha cursado este año"
+                        : "Escribe: Matemáticas, Inglés, Historia..."
                     }
                     onFocus={() => !blockedByYear && q.trim() && setOpenSug(true)}
                   />
@@ -497,7 +533,9 @@ export default function DashboardPage() {
                         boxShadow: "0 18px 45px rgba(2,132,199,.10)",
                       }}
                     >
-                      {loadingSug && <div style={{ padding: 12, color: "var(--muted)" }}>Buscando...</div>}
+                      {loadingSug && (
+                        <div style={{ padding: 12, color: "var(--muted)" }}>Buscando...</div>
+                      )}
                       {!loadingSug &&
                         suggestions.map((s) => (
                           <button
@@ -536,7 +574,6 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* ✅ Si está bloqueado, muestra el mensaje y no dibujes tablas */}
               {blockedByYear ? (
                 <div style={{ marginTop: 18, color: "var(--muted)", fontWeight: 800 }}>
                   Aún no ha cursado este año.
@@ -545,7 +582,14 @@ export default function DashboardPage() {
                 <>
                   {!selectedClass && (
                     <div style={{ marginTop: 18 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: 12,
+                        }}
+                      >
                         <div>
                           <div className="label">Materias del año (ponderado total)</div>
                           <div style={{ color: "var(--muted)", fontSize: 13 }}>
@@ -568,7 +612,14 @@ export default function DashboardPage() {
                         </button>
                       </div>
 
-                      <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
+                      <div
+                        style={{
+                          marginTop: 12,
+                          overflow: "hidden",
+                          borderRadius: 18,
+                          border: "1px solid var(--stroke)",
+                        }}
+                      >
                         <table style={{ width: "100%", borderCollapse: "collapse" }}>
                           <thead>
                             <tr style={{ background: "rgba(14,165,233,.08)" }}>
@@ -592,9 +643,18 @@ export default function DashboardPage() {
                               </tr>
                             ) : (
                               summaryItems.map((s) => (
-                                <tr key={s.class_id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
+                                <tr
+                                  key={s.class_id}
+                                  style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}
+                                >
                                   <td style={{ padding: 12, fontWeight: 900 }}>{s.name}</td>
-                                  <td style={{ padding: 12, fontWeight: 900, color: gradeTextColor(s.weighted) }}>
+                                  <td
+                                    style={{
+                                      padding: 12,
+                                      fontWeight: 900,
+                                      color: gradeTextColor(s.weighted),
+                                    }}
+                                  >
                                     {s.weighted === null ? "—" : s.weighted.toFixed(2)}
                                   </td>
                                   <td style={{ padding: 12 }}>
@@ -608,7 +668,8 @@ export default function DashboardPage() {
                                         padding: "10px 12px",
                                         cursor: "pointer",
                                         color: "white",
-                                        background: "linear-gradient(180deg, var(--sky), var(--sky2))",
+                                        background:
+                                          "linear-gradient(180deg, var(--sky), var(--sky2))",
                                         fontWeight: 900,
                                       }}
                                     >
@@ -626,7 +687,14 @@ export default function DashboardPage() {
 
                   {selectedClass && (
                     <div style={{ marginTop: 18 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-end" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 18,
+                          alignItems: "flex-end",
+                        }}
+                      >
                         <div>
                           <div className="label">Materia seleccionada</div>
                           <div style={{ fontWeight: 900, fontSize: 16 }}>{selectedClass.name}</div>
@@ -634,13 +702,26 @@ export default function DashboardPage() {
 
                         <div style={{ textAlign: "right" }}>
                           <div className="label">Ponderado total</div>
-                          <div style={{ fontWeight: 900, fontSize: 22, color: gradeTextColor(weighted) }}>
+                          <div
+                            style={{
+                              fontWeight: 900,
+                              fontSize: 22,
+                              color: gradeTextColor(weighted),
+                            }}
+                          >
                             {weighted === null ? "—" : weighted.toFixed(2)}
                           </div>
                         </div>
                       </div>
 
-                      <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
+                      <div
+                        style={{
+                          marginTop: 12,
+                          overflow: "hidden",
+                          borderRadius: 18,
+                          border: "1px solid var(--stroke)",
+                        }}
+                      >
                         <table style={{ width: "100%", borderCollapse: "collapse" }}>
                           <thead>
                             <tr style={{ background: "rgba(14,165,233,.08)" }}>
@@ -659,14 +740,25 @@ export default function DashboardPage() {
                               </tr>
                             ) : (
                               items.map((it) => (
-                                <tr key={it.exam_id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
+                                <tr
+                                  key={it.exam_id}
+                                  style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}
+                                >
                                   <td style={{ padding: 12, fontWeight: 900 }}>{it.title}</td>
                                   <td style={{ padding: 12 }}>{Number(it.percent).toFixed(0)}%</td>
-                                  <td style={{ padding: 12, fontWeight: 900, color: gradeTextColor(it.grade) }}>
+                                  <td
+                                    style={{
+                                      padding: 12,
+                                      fontWeight: 900,
+                                      color: gradeTextColor(it.grade),
+                                    }}
+                                  >
                                     {it.grade === null ? "—" : Number(it.grade).toFixed(2)}
                                   </td>
                                   <td style={{ padding: 12 }}>
-                                    {it.finished_at ? new Date(it.finished_at).toLocaleDateString() : "—"}
+                                    {it.finished_at
+                                      ? new Date(it.finished_at).toLocaleDateString()
+                                      : "—"}
                                   </td>
                                 </tr>
                               ))
@@ -703,7 +795,7 @@ export default function DashboardPage() {
               )}
             </div>
 
-            {/* DERECHA: resumen */}
+            {/* DERECHA */}
             <div className="card">
               <h2 style={{ marginTop: 6 }}>Resumen del año</h2>
               <p style={{ marginTop: 0, color: "var(--muted)" }}>
@@ -716,21 +808,62 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-                    <div style={{ padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(255,255,255,.65)" }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 12,
+                      marginTop: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        padding: 14,
+                        borderRadius: 18,
+                        border: "1px solid var(--stroke)",
+                        background: "rgba(255,255,255,.65)",
+                      }}
+                    >
                       <div className="label">Materias pasadas</div>
-                      <div style={{ fontSize: 26, fontWeight: 900 }}>{summaryStats ? passed : "—"}</div>
+                      <div style={{ fontSize: 26, fontWeight: 900 }}>
+                        {summaryStats ? passed : "—"}
+                      </div>
                     </div>
 
-                    <div style={{ padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(255,255,255,.65)" }}>
+                    <div
+                      style={{
+                        padding: 14,
+                        borderRadius: 18,
+                        border: "1px solid var(--stroke)",
+                        background: "rgba(255,255,255,.65)",
+                      }}
+                    >
                       <div className="label">Materias perdidas</div>
-                      <div style={{ fontSize: 26, fontWeight: 900 }}>{summaryStats ? failed : "—"}</div>
+                      <div style={{ fontSize: 26, fontWeight: 900 }}>
+                        {summaryStats ? failed : "—"}
+                      </div>
                     </div>
 
-                    <div style={{ gridColumn: "1 / span 2", padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(255,255,255,.65)" }}>
+                    <div
+                      style={{
+                        gridColumn: "1 / span 2",
+                        padding: 14,
+                        borderRadius: 18,
+                        border: "1px solid var(--stroke)",
+                        background: "rgba(255,255,255,.65)",
+                      }}
+                    >
                       <div className="label">Promedio ponderado total</div>
-                      <div style={{ fontSize: 26, fontWeight: 900, color: gradeTextColor(summaryStats?.avg_weighted ?? null) }}>
-                        {summaryStats?.avg_weighted === null || !summaryStats ? "—" : summaryStats.avg_weighted.toFixed(2)}
+                      <div
+                        style={{
+                          fontSize: 26,
+                          fontWeight: 900,
+                          color: gradeTextColor(summaryStats?.avg_weighted ?? null),
+                        }}
+                      >
+                        {summaryStats?.avg_weighted === null || !summaryStats
+                          ? "—"
+                          : summaryStats.avg_weighted.toFixed(2)}
                       </div>
                       <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
                         Umbral para “pasada”: {summaryStats ? summaryStats.pass_grade.toFixed(2) : "—"}
@@ -756,25 +889,43 @@ export default function DashboardPage() {
                         boxSizing: "border-box",
                       }}
                     >
-                      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                      <div
+                        style={{
+                          flex: 1,
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
                         <div
                           style={{
                             width: "70%",
                             height: `${passH}px`,
                             borderRadius: 14,
-                            background: "linear-gradient(180deg, rgba(34,197,94,.9), rgba(21,128,61,.9))",
+                            background:
+                              "linear-gradient(180deg, rgba(34,197,94,.9), rgba(21,128,61,.9))",
                           }}
                         />
                         <div style={{ fontWeight: 900, fontSize: 13 }}>Pasadas ({passed})</div>
                       </div>
 
-                      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                      <div
+                        style={{
+                          flex: 1,
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
                         <div
                           style={{
                             width: "70%",
                             height: `${failH}px`,
                             borderRadius: 14,
-                            background: "linear-gradient(180deg, rgba(239,68,68,.9), rgba(185,28,28,.9))",
+                            background:
+                              "linear-gradient(180deg, rgba(239,68,68,.9), rgba(185,28,28,.9))",
                           }}
                         />
                         <div style={{ fontWeight: 900, fontSize: 13 }}>Perdidas ({failed})</div>
@@ -803,7 +954,7 @@ export default function DashboardPage() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            zIndex: 9999,
+            zIndex: sidebarOpen ? 40 : 60,
             padding: 16,
           }}
         >
@@ -826,16 +977,34 @@ export default function DashboardPage() {
 
             <div style={{ marginTop: 14 }}>
               <div className="label">Nueva contraseña</div>
-              <input className="input" type="password" value={pw1} onChange={(e) => setPw1(e.target.value)} placeholder="********" />
+              <input
+                className="input"
+                type="password"
+                value={pw1}
+                onChange={(e) => setPw1(e.target.value)}
+                placeholder="********"
+              />
             </div>
 
             <div style={{ marginTop: 10 }}>
               <div className="label">Confirmar contraseña</div>
-              <input className="input" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="********" />
+              <input
+                className="input"
+                type="password"
+                value={pw2}
+                onChange={(e) => setPw2(e.target.value)}
+                placeholder="********"
+              />
             </div>
 
             {pwMsg && (
-              <div style={{ marginTop: 10, fontWeight: 800, color: pwMsg.startsWith("✅") ? "#15803d" : "#b91c1c" }}>
+              <div
+                style={{
+                  marginTop: 10,
+                  fontWeight: 800,
+                  color: pwMsg.startsWith("✅") ? "#15803d" : "#b91c1c",
+                }}
+              >
                 {pwMsg}
               </div>
             )}
