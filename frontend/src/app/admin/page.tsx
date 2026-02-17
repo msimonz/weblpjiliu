@@ -27,7 +27,13 @@ const LEVELS = [
   { value: 4, label: "Cuarto año" },
 ] as const;
 
-type AdminView = "COURSES" | "CLASSES" | "TYPES" | "ASSIGN_TEACHER" | "ASSIGN_STUDENTS" | "UPLOAD_EXCEL";
+type AdminView =
+  | "COURSES"
+  | "CLASSES"
+  | "TYPES"
+  | "ASSIGN_TEACHER"
+  | "ASSIGN_STUDENTS"
+  | "UPLOAD_EXCEL";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -37,7 +43,7 @@ export default function AdminPage() {
 
   const [msg, setMsg] = useState<string | null>(null);
 
-  // ✅ sidebar + hamburguesa
+  // ✅ sidebar + hamburguesa (igual que student)
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // ✅ selector de panel (arriba)
@@ -102,7 +108,6 @@ export default function AdminPage() {
         setMe(info);
 
         const activeRole = getActiveRole(info);
-        // si el rol activo NO es Admin, lo mandas al panel del rol activo
         if (activeRole !== "A") return router.replace(roleToRoute(activeRole));
       } catch {
         router.replace("/login");
@@ -283,11 +288,14 @@ export default function AdminPage() {
       const { data: sess } = await supabase.auth.getSession();
       const token = sess.session?.access_token;
 
-      const resp = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || ""}/api/admin/upload-users`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: fd,
-      });
+      const resp = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE_URL || ""}/api/admin/upload-users`,
+        {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: fd,
+        }
+      );
 
       const json = await resp.json();
       if (!resp.ok) throw new Error(json?.error || "Error subiendo excel");
@@ -345,39 +353,75 @@ export default function AdminPage() {
 
   if (loadingMe) return <div className="container">Cargando...</div>;
 
+  // ✅ medidas UI (igual que student)
+  const SIDEBAR_W = 320;
+  const HAM_PAD = 14;
+  const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
+
   return (
     <div>
-      {/* ✅ HAMBURGUESA (se mueve pegada al sidebar) */}
+      {/* ✅ HAMBURGUESA (igual que student: franja + botón que se pega) */}
       <div
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
         style={{
           position: "fixed",
-          left: sidebarOpen ? 320 + 14 : 14,
-          top: 14,
-          zIndex: 60,
-          width: 44,
-          height: 44,
-          borderRadius: 14,
-          background: "rgba(255,255,255,.88)",
-          border: "1px solid rgba(2,132,199,.18)",
-          boxShadow: "0 18px 45px rgba(2,132,199,.12)",
-          backdropFilter: "blur(10px)",
-          WebkitBackdropFilter: "blur(10px)",
-          display: "grid",
-          placeItems: "center",
-          cursor: "pointer",
-          transition: "left 180ms ease",
+          top: 0,
+          left: 0,
+          zIndex: 70,
+          width: sidebarOpen ? SIDEBAR_W + HAM_PAD + 44 : HAM_PAD + 44,
+          height: 72,
         }}
       >
-        <div style={{ display: "grid", gap: 5 }}>
-          <div style={{ width: 18, height: 2, borderRadius: 9, background: "rgba(15,23,42,.85)" }} />
-          <div style={{ width: 18, height: 2, borderRadius: 9, background: "rgba(15,23,42,.65)" }} />
-          <div style={{ width: 18, height: 2, borderRadius: 9, background: "rgba(15,23,42,.45)" }} />
+        <div
+          style={{
+            position: "absolute",
+            left: hamLeft,
+            top: HAM_PAD,
+            zIndex: 70,
+            width: 44,
+            height: 44,
+            borderRadius: 14,
+            background: "var(--card)",
+            border: "1px solid var(--stroke)",
+            boxShadow: "var(--shadow)",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            display: "grid",
+            placeItems: "center",
+            cursor: "pointer",
+          }}
+        >
+          <div style={{ display: "grid", gap: 5 }}>
+            <div
+              style={{
+                width: 18,
+                height: 2,
+                borderRadius: 9,
+                background: "color-mix(in srgb, var(--text) 85%, transparent)",
+              }}
+            />
+            <div
+              style={{
+                width: 18,
+                height: 2,
+                borderRadius: 9,
+                background: "color-mix(in srgb, var(--text) 65%, transparent)",
+              }}
+            />
+            <div
+              style={{
+                width: 18,
+                height: 2,
+                borderRadius: 9,
+                background: "color-mix(in srgb, var(--text) 45%, transparent)",
+              }}
+            />
+          </div>
         </div>
       </div>
 
-      {/* ✅ SIDEBAR */}
+      {/* ✅ SIDEBAR (ajustado a tus tokens, como student) */}
       <aside
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -386,16 +430,18 @@ export default function AdminPage() {
           left: 0,
           top: 0,
           bottom: 0,
-          width: 320,
+          width: SIDEBAR_W,
           padding: 18,
-          background: "rgba(255,255,255,.78)",
-          borderRight: "1px solid rgba(2,132,199,.18)",
+          background: "var(--card)",
+          borderRight: "1px solid var(--stroke)",
+          boxShadow: "var(--shadow)",
           backdropFilter: "blur(10px)",
           WebkitBackdropFilter: "blur(10px)",
           overflow: "auto",
           zIndex: 55,
           transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
           transition: "transform 180ms ease",
+          color: "var(--text)",
         }}
       >
         <div style={{ fontWeight: 900, fontSize: 18 }}>Perfil del administrador</div>
@@ -415,7 +461,9 @@ export default function AdminPage() {
 
         <div style={{ marginTop: 10 }}>
           <div className="label">Email</div>
-          <div style={{ fontWeight: 900, wordBreak: "break-word" }}>{me?.user?.email ?? "—"}</div>
+          <div style={{ fontWeight: 900, wordBreak: "break-word" }}>
+            {me?.user?.email ?? "—"}
+          </div>
         </div>
 
         <div style={{ marginTop: 10 }}>
@@ -424,41 +472,20 @@ export default function AdminPage() {
         </div>
 
         <button
+          className="btn"
           onClick={() => {
             setPwMsg(null);
             setPw1("");
             setPw2("");
             setPwOpen(true);
           }}
-          style={{
-            width: "100%",
-            border: 0,
-            borderRadius: 14,
-            marginTop: 20,
-            padding: "12px 12px",
-            cursor: "pointer",
-            color: "white",
-            background: "linear-gradient(180deg, var(--sky), var(--sky2))",
-            fontWeight: 900,
-          }}
+          style={{ width: "100%", marginTop: 20 }}
         >
           Cambiar contraseña
         </button>
 
         <div style={{ marginTop: 12 }}>
-          <button
-            onClick={handleLogout}
-            style={{
-              width: "100%",
-              border: 0,
-              borderRadius: 14,
-              padding: "12px 12px",
-              cursor: "pointer",
-              color: "white",
-              background: "linear-gradient(180deg, var(--sky), var(--sky2))",
-              fontWeight: 900,
-            }}
-          >
+          <button className="btn" onClick={handleLogout} style={{ width: "100%" }}>
             Salir
           </button>
         </div>
@@ -467,7 +494,7 @@ export default function AdminPage() {
       {/* ✅ MAIN */}
       <main
         style={{
-          marginLeft: sidebarOpen ? 320 : 0,
+          marginLeft: sidebarOpen ? SIDEBAR_W : 0,
           transition: "margin-left 180ms ease",
         }}
       >
@@ -480,16 +507,7 @@ export default function AdminPage() {
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <div
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 999,
-                  border: "1px solid var(--stroke)",
-                  background: "rgba(255,255,255,.75)",
-                  fontWeight: 800,
-                  fontSize: 13,
-                }}
-              >
+              <div className="btnLight" style={{ padding: "8px 12px", borderRadius: 999 }}>
                 {roleLabel} · {me?.user?.email}
               </div>
             </div>
@@ -526,7 +544,11 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {msg && <div className="msgError" style={{ marginTop: 12 }}>{msg}</div>}
+          {msg && (
+            <div className="msgError" style={{ marginTop: 12 }}>
+              {msg}
+            </div>
+          )}
 
           {/* =========================
               PANEL: CREAR COURSE
@@ -548,7 +570,11 @@ export default function AdminPage() {
 
                 <div>
                   <div className="label">Nivel</div>
-                  <select className="select" value={newCourseLevel} onChange={(e) => setNewCourseLevel(Number(e.target.value))}>
+                  <select
+                    className="select"
+                    value={newCourseLevel}
+                    onChange={(e) => setNewCourseLevel(Number(e.target.value))}
+                  >
                     {LEVELS.map((x) => (
                       <option key={x.value} value={x.value}>
                         {x.label}
@@ -559,7 +585,12 @@ export default function AdminPage() {
 
                 <div style={{ gridColumn: "1 / span 2" }}>
                   <div className="label">Year (opcional)</div>
-                  <input className="input" type="date" value={newCourseYear} onChange={(e) => setNewCourseYear(e.target.value)} />
+                  <input
+                    className="input"
+                    type="date"
+                    value={newCourseYear}
+                    onChange={(e) => setNewCourseYear(e.target.value)}
+                  />
                 </div>
               </div>
 
@@ -567,7 +598,14 @@ export default function AdminPage() {
                 Crear course
               </button>
 
-              <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
+              <div
+                style={{
+                  marginTop: 12,
+                  overflow: "hidden",
+                  borderRadius: 18,
+                  border: "1px solid var(--stroke)",
+                }}
+              >
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: "rgba(14,165,233,.08)" }}>
@@ -616,7 +654,11 @@ export default function AdminPage() {
 
                 <div>
                   <div className="label">Nivel</div>
-                  <select className="select" value={newClassLevel} onChange={(e) => setNewClassLevel(Number(e.target.value))}>
+                  <select
+                    className="select"
+                    value={newClassLevel}
+                    onChange={(e) => setNewClassLevel(Number(e.target.value))}
+                  >
                     {LEVELS.map((x) => (
                       <option key={x.value} value={x.value}>
                         {x.label}
@@ -630,7 +672,14 @@ export default function AdminPage() {
                 Crear materia
               </button>
 
-              <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
+              <div
+                style={{
+                  marginTop: 12,
+                  overflow: "hidden",
+                  borderRadius: 18,
+                  border: "1px solid var(--stroke)",
+                }}
+              >
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: "rgba(14,165,233,.08)" }}>
@@ -680,7 +729,14 @@ export default function AdminPage() {
                 Crear tipo
               </button>
 
-              <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
+              <div
+                style={{
+                  marginTop: 12,
+                  overflow: "hidden",
+                  borderRadius: 18,
+                  border: "1px solid var(--stroke)",
+                }}
+              >
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: "rgba(14,165,233,.08)" }}>
@@ -755,7 +811,14 @@ export default function AdminPage() {
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Asignar alumnos a course</h2>
 
-              <div style={{ display: "grid", gridTemplateColumns: "320px 1fr 220px", gap: 12, alignItems: "end" }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "320px 1fr 220px",
+                  gap: 12,
+                  alignItems: "end",
+                }}
+              >
                 <div>
                   <div className="label">Course</div>
                   <select className="select" value={selCourse} onChange={(e) => setSelCourse(e.target.value)}>
@@ -778,7 +841,12 @@ export default function AdminPage() {
                   />
                 </div>
 
-                <button className="btn" onClick={assignStudents} disabled={!selCourse || selectedCount === 0} style={{ width: "100%" }}>
+                <button
+                  className="btn"
+                  onClick={assignStudents}
+                  disabled={!selCourse || selectedCount === 0}
+                  style={{ width: "100%" }}
+                >
                   Asignar ({selectedCount})
                 </button>
               </div>
@@ -808,7 +876,9 @@ export default function AdminPage() {
                           <input
                             type="checkbox"
                             checked={!!selectedStudents[s.id]}
-                            onChange={(e) => setSelectedStudents((p) => ({ ...p, [s.id]: e.target.checked }))}
+                            onChange={(e) =>
+                              setSelectedStudents((p) => ({ ...p, [s.id]: e.target.checked }))
+                            }
                           />
                           <div style={{ display: "flex", flexDirection: "column" }}>
                             <div style={{ fontWeight: 900 }}>{s.name}</div>
@@ -829,11 +899,15 @@ export default function AdminPage() {
                   </div>
 
                   {!selCourse ? (
-                    <div style={{ padding: 12, color: "var(--muted)" }}>Selecciona un course para ver alumnos.</div>
+                    <div style={{ padding: 12, color: "var(--muted)" }}>
+                      Selecciona un course para ver alumnos.
+                    </div>
                   ) : (
                     <div style={{ maxHeight: 320, overflow: "auto" }}>
                       {courseStudents.length === 0 ? (
-                        <div style={{ padding: 12, color: "var(--muted)" }}>Este course no tiene alumnos aún.</div>
+                        <div style={{ padding: 12, color: "var(--muted)" }}>
+                          Este course no tiene alumnos aún.
+                        </div>
                       ) : (
                         courseStudents.map((s) => (
                           <div key={s.id} style={{ padding: 12, borderTop: "1px solid rgba(2,132,199,.10)" }}>
@@ -877,14 +951,7 @@ export default function AdminPage() {
                     setMsg(null);
                     if (fileRef.current) fileRef.current.value = "";
                   }}
-                  style={{
-                    border: "1px solid var(--stroke2)",
-                    background: "rgba(255,255,255,.85)",
-                    borderRadius: 14,
-                    padding: "10px 12px",
-                    cursor: "pointer",
-                    fontWeight: 900,
-                  }}
+                  className="btnLight"
                 >
                   Limpiar
                 </button>
@@ -920,7 +987,7 @@ export default function AdminPage() {
         </div>
       </main>
 
-      {/* MODAL cambiar contraseña */}
+      {/* ✅ MODAL cambiar contraseña (igual que student: var(--card), stroke, etc.) */}
       {pwOpen && (
         <div
           onClick={() => setPwOpen(false)}
@@ -931,7 +998,7 @@ export default function AdminPage() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            zIndex: 9999,
+            zIndex: sidebarOpen ? 40 : 60,
             padding: 16,
           }}
         >
@@ -942,9 +1009,12 @@ export default function AdminPage() {
               maxWidth: 420,
               borderRadius: 18,
               border: "1px solid var(--stroke)",
-              background: "rgba(255,255,255,.98)",
+              background: "var(--card)",
               boxShadow: "0 20px 70px rgba(0,0,0,.25)",
               padding: 16,
+              color: "var(--text)",
+              backdropFilter: "blur(14px)",
+              WebkitBackdropFilter: "blur(14px)",
             }}
           >
             <div style={{ fontWeight: 900, fontSize: 18 }}>Cambiar contraseña</div>
@@ -954,12 +1024,24 @@ export default function AdminPage() {
 
             <div style={{ marginTop: 14 }}>
               <div className="label">Nueva contraseña</div>
-              <input className="input" type="password" value={pw1} onChange={(e) => setPw1(e.target.value)} placeholder="********" />
+              <input
+                className="input"
+                type="password"
+                value={pw1}
+                onChange={(e) => setPw1(e.target.value)}
+                placeholder="********"
+              />
             </div>
 
             <div style={{ marginTop: 10 }}>
               <div className="label">Confirmar contraseña</div>
-              <input className="input" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="********" />
+              <input
+                className="input"
+                type="password"
+                value={pw2}
+                onChange={(e) => setPw2(e.target.value)}
+                placeholder="********"
+              />
             </div>
 
             {pwMsg && (
@@ -975,18 +1057,7 @@ export default function AdminPage() {
             )}
 
             <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                onClick={() => setPwOpen(false)}
-                style={{
-                  border: "1px solid var(--stroke2)",
-                  background: "rgba(255,255,255,.85)",
-                  borderRadius: 14,
-                  padding: "10px 12px",
-                  cursor: "pointer",
-                  fontWeight: 900,
-                }}
-              >
+              <button type="button" onClick={() => setPwOpen(false)} className="btnLight">
                 Cancelar
               </button>
 
@@ -994,15 +1065,10 @@ export default function AdminPage() {
                 type="button"
                 disabled={pwLoading}
                 onClick={handleChangePassword}
+                className="btn"
                 style={{
-                  border: 0,
-                  borderRadius: 14,
-                  padding: "10px 12px",
-                  cursor: pwLoading ? "not-allowed" : "pointer",
-                  color: "white",
-                  background: "linear-gradient(180deg, var(--sky), var(--sky2))",
-                  fontWeight: 900,
                   opacity: pwLoading ? 0.7 : 1,
+                  cursor: pwLoading ? "not-allowed" : "pointer",
                 }}
               >
                 {pwLoading ? "Guardando..." : "Guardar"}

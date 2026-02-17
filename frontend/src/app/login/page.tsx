@@ -77,6 +77,8 @@ export default function LoginPage() {
     }
   }
 
+  const HEADER_H = 82; // ✅ nuevo alto (más grande)
+
   return (
     <div
       style={{
@@ -88,18 +90,18 @@ export default function LoginPage() {
         padding: 20,
       }}
     >
-      {/* ✅ HEADER */}
+      {/* ✅ HEADER (Logo grande + " | JILIU") */}
       <header
         style={{
           position: "fixed",
           top: 0,
           left: 0,
           right: 0,
-          height: 72,
+          height: HEADER_H,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          gap: 12,
+          gap: 14,
           background: "rgba(255,255,255,.55)",
           borderBottom: "1px solid rgba(2,132,199,.15)",
           backdropFilter: "blur(10px)",
@@ -110,25 +112,41 @@ export default function LoginPage() {
         {logoUrl ? (
           <img
             src={logoUrl}
-            alt="La Promesa"
-            style={{ height: 44, width: "auto", objectFit: "contain" }}
+            alt="JILIU"
+            style={{ height: 56, width: "auto", objectFit: "contain" }}
           />
         ) : null}
 
-        <div style={{ display: "grid", lineHeight: 1.1 }}>
-          <div style={{ fontWeight: 900, fontSize: 16, color: "rgba(15,23,42,.9)" }}>
-            JILIU · La Promesa
-          </div>
-          <div style={{ fontSize: 12, color: "rgba(15,23,42,.55)", fontWeight: 700 }}>
-            Portal de notas y asignaciones
-          </div>
+        <div
+          style={{
+            width: 1,
+            height: 44,
+            background: "rgba(15,23,42,.18)",
+            borderRadius: 999,
+          }}
+        />
+
+        <div
+          style={{
+            fontWeight: 950,
+            fontSize: 18,
+            color: "rgba(15,23,42,.9)",
+            letterSpacing: "-0.01em",
+          }}
+        >
+          JILIU
         </div>
       </header>
 
       {/* ✅ LOGIN CARD (se baja para no chocar con el header) */}
       <div
         className="container"
-        style={{ minHeight: "100vh", display: "grid", placeItems: "center", paddingTop: 72 }}
+        style={{
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          paddingTop: HEADER_H,
+        }}
       >
         <div className="card" style={{ width: 420 }}>
           <h1 style={{ margin: "6px 0 6px", fontSize: 28, letterSpacing: "-0.02em" }}>

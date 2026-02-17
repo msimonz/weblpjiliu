@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
-import { getRoles, primaryRole, roleLabelFromRole } from "@/lib/roles";
+import { primaryRole, roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 
 type ClassItem = { id: number; name: string; level: number };
@@ -271,10 +271,11 @@ export default function DashboardPage() {
 
   const passed = summaryStats?.passed ?? 0;
   const failed = summaryStats?.failed ?? 0;
-  const maxBar = Math.max(1, passed, failed);
-  const CHART_MAX = 50;
-  const passH = Math.min(CHART_MAX, Math.round((passed / maxBar) * CHART_MAX));
-  const failH = Math.min(CHART_MAX, Math.round((failed / maxBar) * CHART_MAX));
+
+  // ✅ NUEVO: porcentajes para “barra de progreso” dentro de las tarjetas
+  const totalPF = passed + failed;
+  const passPct = totalPF > 0 ? Math.round((passed / totalPF) * 100) : 0;
+  const failPct = totalPF > 0 ? Math.round((failed / totalPF) * 100) : 0;
 
   const fixedCourseName = useMemo(() => {
     return (
@@ -301,7 +302,6 @@ export default function DashboardPage() {
           top: 0,
           left: 0,
           zIndex: 70,
-          // una franja pequeña para que sea fácil “enganchar” el hover
           width: sidebarOpen ? SIDEBAR_W + HAM_PAD + 44 : HAM_PAD + 44,
           height: 72,
         }}
@@ -315,9 +315,9 @@ export default function DashboardPage() {
             width: 44,
             height: 44,
             borderRadius: 14,
-            background: "rgba(255,255,255,.88)",
-            border: "1px solid rgba(2,132,199,.18)",
-            boxShadow: "0 18px 45px rgba(2,132,199,.12)",
+            background: "var(--card)",
+            border: "1px solid var(--stroke)",
+            boxShadow: "var(--shadow)",
             backdropFilter: "blur(10px)",
             WebkitBackdropFilter: "blur(10px)",
             display: "grid",
@@ -326,9 +326,30 @@ export default function DashboardPage() {
           }}
         >
           <div style={{ display: "grid", gap: 5 }}>
-            <div style={{ width: 18, height: 2, borderRadius: 9, background: "rgba(15,23,42,.85)" }} />
-            <div style={{ width: 18, height: 2, borderRadius: 9, background: "rgba(15,23,42,.65)" }} />
-            <div style={{ width: 18, height: 2, borderRadius: 9, background: "rgba(15,23,42,.45)" }} />
+            <div
+              style={{
+                width: 18,
+                height: 2,
+                borderRadius: 9,
+                background: "color-mix(in srgb, var(--text) 85%, transparent)",
+              }}
+            />
+            <div
+              style={{
+                width: 18,
+                height: 2,
+                borderRadius: 9,
+                background: "color-mix(in srgb, var(--text) 65%, transparent)",
+              }}
+            />
+            <div
+              style={{
+                width: 18,
+                height: 2,
+                borderRadius: 9,
+                background: "color-mix(in srgb, var(--text) 45%, transparent)",
+              }}
+            />
           </div>
         </div>
       </div>
@@ -344,14 +365,16 @@ export default function DashboardPage() {
           bottom: 0,
           width: SIDEBAR_W,
           padding: 18,
-          background: "rgba(255,255,255,.78)",
-          borderRight: "1px solid rgba(2,132,199,.18)",
+          background: "var(--card)",
+          borderRight: "1px solid var(--stroke)",
+          boxShadow: "var(--shadow)",
           backdropFilter: "blur(10px)",
           WebkitBackdropFilter: "blur(10px)",
           overflow: "auto",
           zIndex: 55,
           transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
           transition: "transform 180ms ease",
+          color: "var(--text)",
         }}
       >
         <div style={{ fontWeight: 900, fontSize: 18 }}>Perfil del estudiante</div>
@@ -385,41 +408,20 @@ export default function DashboardPage() {
         </div>
 
         <button
+          className="btn"
           onClick={() => {
             setPwMsg(null);
             setPw1("");
             setPw2("");
             setPwOpen(true);
           }}
-          style={{
-            width: "100%",
-            border: 0,
-            borderRadius: 14,
-            marginTop: 20,
-            padding: "12px 12px",
-            cursor: "pointer",
-            color: "white",
-            background: "linear-gradient(180deg, var(--sky), var(--sky2))",
-            fontWeight: 900,
-          }}
+          style={{ width: "100%", marginTop: 20 }}
         >
           Cambiar contraseña
         </button>
 
-        <div style={{ marginTop: 16 }}>
-          <button
-            onClick={handleLogout}
-            style={{
-              width: "100%",
-              border: 0,
-              borderRadius: 14,
-              padding: "12px 12px",
-              cursor: "pointer",
-              color: "white",
-              background: "linear-gradient(180deg, var(--sky), var(--sky2))",
-              fontWeight: 900,
-            }}
-          >
+        <div style={{ marginTop: 12 }}>
+          <button className="btn" onClick={handleLogout} style={{ width: "100%" }}>
             Salir
           </button>
         </div>
@@ -440,16 +442,7 @@ export default function DashboardPage() {
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <div
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 999,
-                  border: "1px solid var(--stroke)",
-                  background: "rgba(255,255,255,.75)",
-                  fontWeight: 800,
-                  fontSize: 13,
-                }}
-              >
+              <div className="btnLight">
                 {me?.role === "A" ? "Admin" : me?.role === "T" ? "Teacher" : "Student"} ·{" "}
                 {me?.user?.email}
               </div>
@@ -472,13 +465,10 @@ export default function DashboardPage() {
               <h1 style={{ margin: "6px 0 6px", fontSize: 28, letterSpacing: "-0.02em" }}>
                 Consultar notas
               </h1>
-              <p className="muted" style={{ marginTop: 0 }}>
-                Selecciona el año, busca la materia y consulta tus evaluaciones con ponderado.
-              </p>
 
               <div style={{ display: "grid", gridTemplateColumns: "220px 1fr 160px", gap: 12 }}>
                 <div>
-                  <div className="label">Año JILIU</div>
+                  <div className="label">Año</div>
                   <select
                     className="select"
                     value={level}
@@ -526,11 +516,14 @@ export default function DashboardPage() {
                         left: 0,
                         right: 0,
                         top: 76,
-                        background: "rgba(255,255,255,.98)",
                         border: "1px solid var(--stroke2)",
                         borderRadius: 16,
                         overflow: "hidden",
                         boxShadow: "0 18px 45px rgba(2,132,199,.10)",
+                        background: "var(--card)",
+                        color: "var(--text)",
+                        backdropFilter: "blur(12px)",
+                        WebkitBackdropFilter: "blur(12px)",
                       }}
                     >
                       {loadingSug && (
@@ -542,12 +535,15 @@ export default function DashboardPage() {
                             key={s.id}
                             type="button"
                             onClick={() => pickClass(s)}
+                            className="btnLight"
                             style={{
                               width: "100%",
                               textAlign: "left",
                               padding: 12,
+                              borderRadius: 0,
                               border: 0,
                               background: "transparent",
+                              boxShadow: "none",
                               cursor: "pointer",
                               fontWeight: 800,
                             }}
@@ -591,23 +587,8 @@ export default function DashboardPage() {
                         }}
                       >
                         <div>
-                          <div className="label">Materias del año (ponderado total)</div>
-                          <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                            Dale “Consultar” para ver el detalle de esa materia.
-                          </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={loadSummary}
-                          style={{
-                            border: "1px solid var(--stroke2)",
-                            background: "rgba(255,255,255,.85)",
-                            borderRadius: 14,
-                            padding: "10px 12px",
-                            cursor: "pointer",
-                            fontWeight: 900,
-                          }}
-                        >
+                        <button type="button" onClick={loadSummary} className="btnLight">
                           {summaryLoading ? "Cargando..." : "Refrescar"}
                         </button>
                       </div>
@@ -661,19 +642,10 @@ export default function DashboardPage() {
                                     <button
                                       type="button"
                                       onClick={() => handleConsult({ id: s.class_id, name: s.name })}
-                                      style={{
-                                        width: "100%",
-                                        border: 0,
-                                        borderRadius: 14,
-                                        padding: "10px 12px",
-                                        cursor: "pointer",
-                                        color: "white",
-                                        background:
-                                          "linear-gradient(180deg, var(--sky), var(--sky2))",
-                                        fontWeight: 900,
-                                      }}
+                                      className="btn"
+                                      style={{ width: "100%", marginTop: 0 }}
                                     >
-                                      Consultar
+                                      Detalle
                                     </button>
                                   </td>
                                 </tr>
@@ -696,7 +668,7 @@ export default function DashboardPage() {
                         }}
                       >
                         <div>
-                          <div className="label">Materia seleccionada</div>
+                          <div className="label">Materia</div>
                           <div style={{ fontWeight: 900, fontSize: 16 }}>{selectedClass.name}</div>
                         </div>
 
@@ -777,14 +749,7 @@ export default function DashboardPage() {
                             setWeighted(null);
                             loadSummary();
                           }}
-                          style={{
-                            border: "1px solid var(--stroke2)",
-                            background: "rgba(255,255,255,.85)",
-                            borderRadius: 14,
-                            padding: "10px 12px",
-                            cursor: "pointer",
-                            fontWeight: 900,
-                          }}
+                          className="btnLight"
                         >
                           Volver a materias
                         </button>
@@ -799,7 +764,7 @@ export default function DashboardPage() {
             <div className="card">
               <h2 style={{ marginTop: 6 }}>Resumen del año</h2>
               <p style={{ marginTop: 0, color: "var(--muted)" }}>
-                Totales calculados con ponderado por materia (solo materias con notas).
+                Totales calculados con ponderado por materia.
               </p>
 
               {blockedByYear ? (
@@ -816,41 +781,73 @@ export default function DashboardPage() {
                       marginTop: 12,
                     }}
                   >
+                    {/* ✅ PASADAS con “barra de progreso” en el background */}
                     <div
+                      className="btnLight"
                       style={{
-                        padding: 14,
+                        position: "relative",
+                        overflow: "hidden",
                         borderRadius: 18,
-                        border: "1px solid var(--stroke)",
-                        background: "rgba(255,255,255,.65)",
                       }}
                     >
-                      <div className="label">Materias pasadas</div>
-                      <div style={{ fontSize: 26, fontWeight: 900 }}>
-                        {summaryStats ? passed : "—"}
+                      <div
+                        aria-hidden
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          width: `${passPct}%`,
+                          background:
+                            "linear-gradient(180deg, rgba(34,197,94,.22), rgba(21,128,61,.18))",
+                        }}
+                      />
+                      <div style={{ position: "relative" }}>
+                        <div className="label">Materias pasadas</div>
+                        <div style={{ fontSize: 26, fontWeight: 900 }}>
+                          {summaryStats ? passed : "—"}
+                        </div>
+                        <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12, fontWeight: 800 }}>
+                          {summaryStats ? `${passPct}% del total` : "—"}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ✅ PERDIDAS con “barra de progreso” en el background */}
+                    <div
+                      className="btnLight"
+                      style={{
+                        position: "relative",
+                        overflow: "hidden",
+                        borderRadius: 18,
+                      }}
+                    >
+                      <div
+                        aria-hidden
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          width: `${failPct}%`,
+                          background:
+                            "linear-gradient(180deg, rgba(239,68,68,.22), rgba(185,28,28,.18))",
+                        }}
+                      />
+                      <div style={{ position: "relative" }}>
+                        <div className="label">Materias perdidas</div>
+                        <div style={{ fontSize: 26, fontWeight: 900 }}>
+                          {summaryStats ? failed : "—"}
+                        </div>
+                        <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12, fontWeight: 800 }}>
+                          {summaryStats ? `${failPct}% del total` : "—"}
+                        </div>
                       </div>
                     </div>
 
                     <div
-                      style={{
-                        padding: 14,
-                        borderRadius: 18,
-                        border: "1px solid var(--stroke)",
-                        background: "rgba(255,255,255,.65)",
-                      }}
-                    >
-                      <div className="label">Materias perdidas</div>
-                      <div style={{ fontSize: 26, fontWeight: 900 }}>
-                        {summaryStats ? failed : "—"}
-                      </div>
-                    </div>
-
-                    <div
+                      className="btnLight"
                       style={{
                         gridColumn: "1 / span 2",
                         padding: 14,
                         borderRadius: 18,
                         border: "1px solid var(--stroke)",
-                        background: "rgba(255,255,255,.65)",
                       }}
                     >
                       <div className="label">Promedio ponderado total</div>
@@ -866,76 +863,14 @@ export default function DashboardPage() {
                           : summaryStats.avg_weighted.toFixed(2)}
                       </div>
                       <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                        Umbral para “pasada”: {summaryStats ? summaryStats.pass_grade.toFixed(2) : "—"}
+                        Umbral para “pasada”:{" "}
+                        {summaryStats ? summaryStats.pass_grade.toFixed(2) : "—"}
                         {summaryStats?.pending ? ` · Pendientes: ${summaryStats.pending}` : ""}
                       </div>
                     </div>
                   </div>
 
-                  <div style={{ marginTop: 18 }}>
-                    <div className="label">Materias pasadas vs perdidas</div>
-                    <div
-                      style={{
-                        marginTop: 10,
-                        display: "flex",
-                        alignItems: "flex-end",
-                        gap: 18,
-                        height: 110,
-                        padding: 12,
-                        borderRadius: 18,
-                        border: "1px solid var(--stroke)",
-                        background: "rgba(14,165,233,.06)",
-                        overflow: "hidden",
-                        boxSizing: "border-box",
-                      }}
-                    >
-                      <div
-                        style={{
-                          flex: 1,
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: "70%",
-                            height: `${passH}px`,
-                            borderRadius: 14,
-                            background:
-                              "linear-gradient(180deg, rgba(34,197,94,.9), rgba(21,128,61,.9))",
-                          }}
-                        />
-                        <div style={{ fontWeight: 900, fontSize: 13 }}>Pasadas ({passed})</div>
-                      </div>
-
-                      <div
-                        style={{
-                          flex: 1,
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: "70%",
-                            height: `${failH}px`,
-                            borderRadius: 14,
-                            background:
-                              "linear-gradient(180deg, rgba(239,68,68,.9), rgba(185,28,28,.9))",
-                          }}
-                        />
-                        <div style={{ fontWeight: 900, fontSize: 13 }}>Perdidas ({failed})</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 13 }}>
-                    * El promedio usa solo materias con ponderado calculable (con notas).
-                  </div>
+                  {/* ✅ QUITADO: gráfica de barras de abajo */}
                 </>
               )}
             </div>
@@ -965,9 +900,12 @@ export default function DashboardPage() {
               maxWidth: 420,
               borderRadius: 18,
               border: "1px solid var(--stroke)",
-              background: "rgba(255,255,255,.98)",
+              background: "var(--card)",
               boxShadow: "0 20px 70px rgba(0,0,0,.25)",
               padding: 16,
+              color: "var(--text)",
+              backdropFilter: "blur(14px)",
+              WebkitBackdropFilter: "blur(14px)",
             }}
           >
             <div style={{ fontWeight: 900, fontSize: 18 }}>Cambiar contraseña</div>
@@ -1010,18 +948,7 @@ export default function DashboardPage() {
             )}
 
             <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                onClick={() => setPwOpen(false)}
-                style={{
-                  border: "1px solid var(--stroke2)",
-                  background: "rgba(255,255,255,.85)",
-                  borderRadius: 14,
-                  padding: "10px 12px",
-                  cursor: "pointer",
-                  fontWeight: 900,
-                }}
-              >
+              <button type="button" onClick={() => setPwOpen(false)} className="btnLight">
                 Cancelar
               </button>
 
@@ -1029,15 +956,10 @@ export default function DashboardPage() {
                 type="button"
                 disabled={pwLoading}
                 onClick={handleChangePassword}
+                className="btn"
                 style={{
-                  border: 0,
-                  borderRadius: 14,
-                  padding: "10px 12px",
-                  cursor: pwLoading ? "not-allowed" : "pointer",
-                  color: "white",
-                  background: "linear-gradient(180deg, var(--sky), var(--sky2))",
-                  fontWeight: 900,
                   opacity: pwLoading ? 0.7 : 1,
+                  cursor: pwLoading ? "not-allowed" : "pointer",
                 }}
               >
                 {pwLoading ? "Guardando..." : "Guardar"}

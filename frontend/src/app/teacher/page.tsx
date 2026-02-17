@@ -228,7 +228,8 @@ export default function TeacherPage() {
 
   // ✅ títulos existentes en esa materia (para dropdown)
   const titleOptions = useMemo(() => {
-    const list = classFilter === "all" ? [] : items.filter((x) => x.id_class === Number(classFilter));
+    const list =
+      classFilter === "all" ? [] : items.filter((x) => x.id_class === Number(classFilter));
     const seen = new Set<string>();
     const out: string[] = [];
     for (const it of list) {
@@ -252,7 +253,9 @@ export default function TeacherPage() {
     try {
       if (!selectedEval?.id_course) return;
 
-      const rosterRes = await apiFetch(`/api/teacher/course-students?course_id=${selectedEval.id_course}`);
+      const rosterRes = await apiFetch(
+        `/api/teacher/course-students?course_id=${selectedEval.id_course}`
+      );
       const roster: StudentRow[] = rosterRes?.items || [];
       setGRoster(roster);
 
@@ -261,7 +264,8 @@ export default function TeacherPage() {
 
       const mapExisting = new Map<string, number>();
       for (const r of existing) {
-        if (r?.id_student) mapExisting.set(r.id_student, r.grade === null ? NaN : Number(r.grade));
+        if (r?.id_student)
+          mapExisting.set(r.id_student, r.grade === null ? NaN : Number(r.grade));
       }
 
       const drafts: Record<string, string> = {};
@@ -310,12 +314,12 @@ export default function TeacherPage() {
     if (!id_type && !isOtherType) return setMsg("Selecciona un tipo.");
     if (isOtherType && !type_text) return setMsg("Escribe el tipo (Otro).");
 
-    const isOtherTitle = titlePick === "__other__";
     const title = titlePick && titlePick !== "__other__" ? titlePick.trim() : titleOther.trim();
     if (!title) return setMsg("Selecciona o escribe un título.");
 
     const percent = Number(cPercent);
-    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) return setMsg("Percent inválido (1..100)");
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100)
+      return setMsg("Percent inválido (1..100)");
 
     setCreating(true);
     try {
@@ -355,7 +359,6 @@ export default function TeacherPage() {
       flash("✅ Evaluación creada", "ok");
       await loadEvaluations();
 
-      // opcional: al crear, te llevo a "Mis evaluaciones"
       setView("EVALS");
     } catch (e: any) {
       setMsg(e?.message || "Error creando evaluación");
@@ -468,6 +471,11 @@ export default function TeacherPage() {
 
   if (loadingMe) return <div className="container">Cargando...</div>;
 
+  // ✅ medidas UI (igual que student)
+  const SIDEBAR_W = 320;
+  const HAM_PAD = 14;
+  const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
+
   return (
     <div>
       {/* ✅ Toast */}
@@ -482,9 +490,9 @@ export default function TeacherPage() {
             borderRadius: 14,
             fontWeight: 900,
             color: toast.kind === "ok" ? "rgb(21,128,61)" : "rgb(185,28,28)",
-            background: "rgba(255,255,255,.92)",
-            border: "1px solid rgba(2,132,199,.18)",
-            boxShadow: "0 18px 45px rgba(2,132,199,.12)",
+            background: "var(--card)",
+            border: "1px solid var(--stroke)",
+            boxShadow: "var(--shadow)",
             backdropFilter: "blur(10px)",
             WebkitBackdropFilter: "blur(10px)",
           }}
@@ -493,37 +501,68 @@ export default function TeacherPage() {
         </div>
       )}
 
-      {/* ✅ HAMBURGUESA (se mueve pegada al sidebar) */}
+      {/* ✅ HAMBURGUESA (igual que student: franja + botón que se pega) */}
       <div
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
         style={{
           position: "fixed",
-          left: sidebarOpen ? 320 + 14 : 14,
-          top: 14,
-          zIndex: 60,
-          width: 44,
-          height: 44,
-          borderRadius: 14,
-          background: "rgba(255,255,255,.88)",
-          border: "1px solid rgba(2,132,199,.18)",
-          boxShadow: "0 18px 45px rgba(2,132,199,.12)",
-          backdropFilter: "blur(10px)",
-          WebkitBackdropFilter: "blur(10px)",
-          display: "grid",
-          placeItems: "center",
-          cursor: "pointer",
-          transition: "left 180ms ease",
+          top: 0,
+          left: 0,
+          zIndex: 70,
+          width: sidebarOpen ? SIDEBAR_W + HAM_PAD + 44 : HAM_PAD + 44,
+          height: 72,
         }}
       >
-        <div style={{ display: "grid", gap: 5 }}>
-          <div style={{ width: 18, height: 2, borderRadius: 9, background: "rgba(15,23,42,.85)" }} />
-          <div style={{ width: 18, height: 2, borderRadius: 9, background: "rgba(15,23,42,.65)" }} />
-          <div style={{ width: 18, height: 2, borderRadius: 9, background: "rgba(15,23,42,.45)" }} />
+        <div
+          style={{
+            position: "absolute",
+            left: hamLeft,
+            top: HAM_PAD,
+            zIndex: 70,
+            width: 44,
+            height: 44,
+            borderRadius: 14,
+            background: "var(--card)",
+            border: "1px solid var(--stroke)",
+            boxShadow: "var(--shadow)",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            display: "grid",
+            placeItems: "center",
+            cursor: "pointer",
+          }}
+        >
+          <div style={{ display: "grid", gap: 5 }}>
+            <div
+              style={{
+                width: 18,
+                height: 2,
+                borderRadius: 9,
+                background: "color-mix(in srgb, var(--text) 85%, transparent)",
+              }}
+            />
+            <div
+              style={{
+                width: 18,
+                height: 2,
+                borderRadius: 9,
+                background: "color-mix(in srgb, var(--text) 65%, transparent)",
+              }}
+            />
+            <div
+              style={{
+                width: 18,
+                height: 2,
+                borderRadius: 9,
+                background: "color-mix(in srgb, var(--text) 45%, transparent)",
+              }}
+            />
+          </div>
         </div>
       </div>
 
-      {/* ✅ SIDEBAR */}
+      {/* ✅ SIDEBAR (ajustado a tus tokens, como student) */}
       <aside
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -532,16 +571,18 @@ export default function TeacherPage() {
           left: 0,
           top: 0,
           bottom: 0,
-          width: 320,
+          width: SIDEBAR_W,
           padding: 18,
-          background: "rgba(255,255,255,.78)",
-          borderRight: "1px solid rgba(2,132,199,.18)",
+          background: "var(--card)",
+          borderRight: "1px solid var(--stroke)",
+          boxShadow: "var(--shadow)",
           backdropFilter: "blur(10px)",
           WebkitBackdropFilter: "blur(10px)",
           overflow: "auto",
           zIndex: 55,
           transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
           transition: "transform 180ms ease",
+          color: "var(--text)",
         }}
       >
         <div style={{ fontWeight: 900, fontSize: 18 }}>Perfil del profesor</div>
@@ -561,7 +602,9 @@ export default function TeacherPage() {
 
         <div style={{ marginTop: 10 }}>
           <div className="label">Email</div>
-          <div style={{ fontWeight: 900, wordBreak: "break-word" }}>{me?.user?.email ?? "—"}</div>
+          <div style={{ fontWeight: 900, wordBreak: "break-word" }}>
+            {me?.user?.email ?? "—"}
+          </div>
         </div>
 
         <div style={{ marginTop: 10 }}>
@@ -569,37 +612,12 @@ export default function TeacherPage() {
           <div style={{ fontWeight: 900 }}>{roleLabel}</div>
         </div>
 
-        <button
-          onClick={handleChangePassword}
-          style={{
-            width: "100%",
-            border: 0,
-            borderRadius: 14,
-            marginTop: 20,
-            padding: "12px 12px",
-            cursor: "pointer",
-            color: "white",
-            background: "linear-gradient(180deg, var(--sky), var(--sky2))",
-            fontWeight: 900,
-          }}
-        >
+        <button className="btn" onClick={handleChangePassword} style={{ width: "100%", marginTop: 20 }}>
           Cambiar contraseña
         </button>
 
         <div style={{ marginTop: 12 }}>
-          <button
-            onClick={handleLogout}
-            style={{
-              width: "100%",
-              border: 0,
-              borderRadius: 14,
-              padding: "12px 12px",
-              cursor: "pointer",
-              color: "white",
-              background: "linear-gradient(180deg, var(--sky), var(--sky2))",
-              fontWeight: 900,
-            }}
-          >
+          <button className="btn" onClick={handleLogout} style={{ width: "100%" }}>
             Salir
           </button>
         </div>
@@ -608,7 +626,7 @@ export default function TeacherPage() {
       {/* ✅ MAIN */}
       <main
         style={{
-          marginLeft: sidebarOpen ? 320 : 0,
+          marginLeft: sidebarOpen ? SIDEBAR_W : 0,
           transition: "margin-left 180ms ease",
         }}
       >
@@ -620,22 +638,13 @@ export default function TeacherPage() {
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <div
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 999,
-                  border: "1px solid var(--stroke)",
-                  background: "rgba(255,255,255,.75)",
-                  fontWeight: 800,
-                  fontSize: 13,
-                }}
-              >
+              <div className="btnLight" style={{ padding: "8px 12px", borderRadius: 999 }}>
                 {roleLabel} · {me?.user?.email}
               </div>
             </div>
           </div>
 
-          {/* ✅ SELECTOR DE SECCIÓN (AHORA AQUÍ ARRIBA) */}
+          {/* ✅ SELECTOR DE SECCIÓN */}
           <div
             className="card"
             style={{
@@ -655,11 +664,7 @@ export default function TeacherPage() {
             </div>
 
             <div style={{ minWidth: 260 }}>
-              <select
-                className="select"
-                value={view}
-                onChange={(e) => setView(e.target.value as TeacherView)}
-              >
+              <select className="select" value={view} onChange={(e) => setView(e.target.value as TeacherView)}>
                 <option value="EVALS">Mis evaluaciones</option>
                 <option value="CREATE">Crear evaluación</option>
                 <option value="UPSERT">Subir nota manual</option>
@@ -667,26 +672,27 @@ export default function TeacherPage() {
             </div>
           </div>
 
-          {msg && <div className="msgError" style={{ marginTop: 12 }}>{msg}</div>}
+          {msg && (
+            <div className="msgError" style={{ marginTop: 12 }}>
+              {msg}
+            </div>
+          )}
 
           {/* =======================
               PANEL: MIS EVALUACIONES
               ======================= */}
           {view === "EVALS" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
                 <h2 style={{ margin: 0 }}>Mis evaluaciones</h2>
-                <button
-                  onClick={loadEvaluations}
-                  style={{
-                    border: "1px solid var(--stroke2)",
-                    background: "rgba(255,255,255,.85)",
-                    borderRadius: 14,
-                    padding: "10px 12px",
-                    cursor: "pointer",
-                    fontWeight: 900,
-                  }}
-                >
+                <button onClick={loadEvaluations} className="btnLight" style={{ fontWeight: 900 }}>
                   {loadingList ? "Cargando..." : "Refrescar"}
                 </button>
               </div>
@@ -696,7 +702,9 @@ export default function TeacherPage() {
                 <select
                   className="select"
                   value={classFilter}
-                  onChange={(e) => setClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+                  onChange={(e) =>
+                    setClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+                  }
                 >
                   <option value="all">Todas mis materias</option>
                   {myClasses.map((c) => (
@@ -713,7 +721,14 @@ export default function TeacherPage() {
                 )}
               </div>
 
-              <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
+              <div
+                style={{
+                  marginTop: 12,
+                  overflow: "hidden",
+                  borderRadius: 18,
+                  border: "1px solid var(--stroke)",
+                }}
+              >
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: "rgba(14,165,233,.08)" }}>
@@ -761,7 +776,8 @@ export default function TeacherPage() {
                     display: "flex",
                     alignItems: "center",
                     fontWeight: 900,
-                    background: "rgba(255,255,255,.65)",
+                    background: "var(--field-bg)",
+                    border: "1px solid var(--field-border)",
                   }}
                 >
                   {selectedClassName}
@@ -776,7 +792,9 @@ export default function TeacherPage() {
                 <select
                   className="select"
                   value={classFilter}
-                  onChange={(e) => setClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+                  onChange={(e) =>
+                    setClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+                  }
                 >
                   <option value="all">Selecciona una materia</option>
                   {myClasses.map((c) => (
@@ -787,7 +805,14 @@ export default function TeacherPage() {
                 </select>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 12,
+                  marginTop: 12,
+                }}
+              >
                 {/* CURSO */}
                 <div style={{ gridColumn: "1 / span 2" }}>
                   <div className="label">Curso</div>
@@ -858,7 +883,9 @@ export default function TeacherPage() {
                     }}
                     disabled={classFilter === "all"}
                   >
-                    <option value="">{classFilter === "all" ? "Selecciona una materia primero" : "Selecciona..."}</option>
+                    <option value="">
+                      {classFilter === "all" ? "Selecciona una materia primero" : "Selecciona..."}
+                    </option>
                     {titleOptions.map((t) => (
                       <option key={t} value={t}>
                         {t}
@@ -881,7 +908,13 @@ export default function TeacherPage() {
 
                 {/* % */}
                 <div style={{ gridColumn: "1 / span 2", marginTop: 6 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
                     <div className="label">Porcentaje</div>
                     <div style={{ fontWeight: 900, fontSize: 16 }}>{cPercent}%</div>
                   </div>
@@ -896,7 +929,12 @@ export default function TeacherPage() {
                 </div>
               </div>
 
-              <button className="btn" onClick={handleCreate} disabled={creating} style={{ marginTop: 12, width: "100%" }}>
+              <button
+                className="btn"
+                onClick={handleCreate}
+                disabled={creating}
+                style={{ marginTop: 12, width: "100%" }}
+              >
                 {creating ? "Creando..." : "Crear evaluación"}
               </button>
             </div>
@@ -907,10 +945,22 @@ export default function TeacherPage() {
               ================== */}
           {view === "UPSERT" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
                 <h2 style={{ margin: 0 }}>Subir nota manual (upsert)</h2>
 
-                <button className="btn" onClick={saveAll} disabled={savingAll || !selectedEval || gRoster.length === 0} style={{ width: 220 }}>
+                <button
+                  className="btn"
+                  onClick={saveAll}
+                  disabled={savingAll || !selectedEval || gRoster.length === 0}
+                  style={{ width: 220 }}
+                >
                   {savingAll ? "Actualizando..." : "Actualizar todos"}
                 </button>
               </div>
@@ -920,7 +970,9 @@ export default function TeacherPage() {
                 <select
                   className="select"
                   value={classFilter}
-                  onChange={(e) => setClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+                  onChange={(e) =>
+                    setClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+                  }
                 >
                   <option value="all">Selecciona una materia</option>
                   {myClasses.map((c) => (
@@ -937,7 +989,8 @@ export default function TeacherPage() {
                   <option value="">Selecciona...</option>
                   {evalOptions.map((e) => (
                     <option key={e.id} value={String(e.id)}>
-                      #{e.id} · {e.title} ({Number(e.percent).toFixed(0)}%) · {e.course?.name ?? `Curso ${e.id_course}`}
+                      #{e.id} · {e.title} ({Number(e.percent).toFixed(0)}%) ·{" "}
+                      {e.course?.name ?? `Curso ${e.id_course}`}
                     </option>
                   ))}
                 </select>
@@ -953,34 +1006,39 @@ export default function TeacherPage() {
                 </div>
               ) : (
                 <div style={{ marginTop: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "baseline",
+                      gap: 12,
+                    }}
+                  >
                     <div style={{ fontWeight: 900 }}>
                       Curso: {selectedEval.course?.name ?? `ID ${selectedEval.id_course}`} · Materia:{" "}
                       {selectedEval.class?.name ?? `ID ${selectedEval.id_class}`}
                     </div>
-                    <button
-                      type="button"
-                      onClick={loadRosterAndGrades}
-                      style={{
-                        border: "1px solid var(--stroke2)",
-                        background: "rgba(255,255,255,.85)",
-                        borderRadius: 14,
-                        padding: "10px 12px",
-                        cursor: "pointer",
-                        fontWeight: 900,
-                      }}
-                    >
+                    <button type="button" onClick={loadRosterAndGrades} className="btnLight">
                       {gLoadingRoster ? "Cargando..." : "Refrescar lista"}
                     </button>
                   </div>
 
-                  <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
+                  <div
+                    style={{
+                      marginTop: 12,
+                      overflow: "hidden",
+                      borderRadius: 18,
+                      border: "1px solid var(--stroke)",
+                    }}
+                  >
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                       <thead>
                         <tr style={{ background: "rgba(14,165,233,.08)" }}>
                           <th style={{ textAlign: "left", padding: 12, width: 130 }}>Cédula</th>
                           <th style={{ textAlign: "left", padding: 12 }}>Alumno</th>
-                          <th style={{ textAlign: "left", padding: 12, width: 160 }}>Nota (0..100)</th>
+                          <th style={{ textAlign: "left", padding: 12, width: 160 }}>
+                            Nota (0..100)
+                          </th>
                           <th style={{ textAlign: "left", padding: 12, width: 180 }}></th>
                         </tr>
                       </thead>
@@ -995,7 +1053,8 @@ export default function TeacherPage() {
                         ) : gRoster.length === 0 ? (
                           <tr>
                             <td colSpan={4} style={{ padding: 12, color: "var(--muted)" }}>
-                              No se encontraron alumnos para este curso (o tu endpoint no devolvió items).
+                              No se encontraron alumnos para este curso (o tu endpoint no devolvió
+                              items).
                             </td>
                           </tr>
                         ) : (
@@ -1018,7 +1077,12 @@ export default function TeacherPage() {
                                 />
                               </td>
                               <td style={{ padding: 12 }}>
-                                <button className="btn" onClick={() => saveOne(st)} disabled={!!savingOne[st.id] || savingAll} style={{ width: "100%" }}>
+                                <button
+                                  className="btn"
+                                  onClick={() => saveOne(st)}
+                                  disabled={!!savingOne[st.id] || savingAll}
+                                  style={{ width: "100%" }}
+                                >
                                   {savingOne[st.id] ? "Actualizando..." : "Actualizar"}
                                 </button>
                               </td>
@@ -1030,7 +1094,8 @@ export default function TeacherPage() {
                   </div>
 
                   <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 13 }}>
-                    Tip: si un alumno ya tenía nota, el textbox aparece precargado. Puedes editar y guardar uno por uno o “Actualizar todos”.
+                    Tip: si un alumno ya tenía nota, el textbox aparece precargado. Puedes editar y
+                    guardar uno por uno o “Actualizar todos”.
                   </div>
                 </div>
               )}
