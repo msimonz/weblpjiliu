@@ -53,3 +53,10 @@ export function requireRole(...roles) {
     next();
   };
 }
+
+function requireAdmin(req, res, next) {
+  const r = req.auth?.role || req.auth?.profile?.type || req.auth?.profile?.role;
+  if (r !== "A") return res.status(403).json({ error: "Solo Admin" });
+  return next();
+}
+

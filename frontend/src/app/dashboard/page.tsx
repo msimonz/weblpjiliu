@@ -44,7 +44,29 @@ export default function DashboardPage() {
   const [me, setMe] = useState<any>(null);
   const [meLoading, setMeLoading] = useState(true);
 
+  // ✅ Año seleccionado (UI)
   const [level, setLevel] = useState<number>(1);
+
+  // ✅ curso fijo del estudiante (NO depende del dropdown)
+  const studentCourseFixed = useMemo(() => {
+    // Ajusta estas rutas si tu /me viene distinto:
+    // - course: { id, name, level }
+    // - profile.id_course
+    const c = me?.course ?? null;
+    return c;
+  }, [me]);
+
+  const studentLevelFixed = useMemo(() => {
+    // ✅ prioridad: me.course.level
+    const lvl = Number(studentCourseFixed?.level);
+    return Number.isFinite(lvl) && lvl > 0 ? lvl : null;
+  }, [studentCourseFixed]);
+
+  // ✅ mensaje de bloqueo si el estudiante no ha cursado ese año
+  const blockedByYear = useMemo(() => {
+    if (!studentLevelFixed) return false;
+    return level !== studentLevelFixed;
+  }, [level, studentLevelFixed]);
 
   const [q, setQ] = useState("");
   const [suggestions, setSuggestions] = useState<ClassItem[]>([]);
@@ -60,7 +82,9 @@ export default function DashboardPage() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryItems, setSummaryItems] = useState<SummaryItem[]>([]);
   const [summaryStats, setSummaryStats] = useState<SummaryStats | null>(null);
-  const [course, setCourse] = useState<any>(null);
+
+  // ❌ antes: course dependía de loadSummary(level). Ahora NO.
+  // const [course, setCourse] = useState<any>(null);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -89,6 +113,14 @@ export default function DashboardPage() {
     })();
   }, [router]);
 
+  // ✅ al cargar el usuario: setear el año al nivel real del estudiante
+  useEffect(() => {
+    if (!meLoading && studentLevelFixed) {
+      setLevel(studentLevelFixed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meLoading, studentLevelFixed]);
+
   // reset when level changes
   useEffect(() => {
     setSelectedClass(null);
@@ -98,17 +130,25 @@ export default function DashboardPage() {
 
     setItems([]);
     setWeighted(null);
-    setCourse(null);
     setError(null);
   }, [level]);
 
   // cargar resumen por año (cuando hay level y NO hay materia seleccionada)
   async function loadSummary() {
     setError(null);
+
+    // ✅ si el año no corresponde al nivel del estudiante, NO consultes nada
+    if (blockedByYear) {
+      setSummaryItems([]);
+      setSummaryStats(null);
+      return;
+    }
+
     setSummaryLoading(true);
     try {
+      // ✅ igual puedes dejar que el backend reciba level,
+      // pero ya no se dispara si el estudiante no ha cursado ese año.
       const res = await apiFetch(`/api/student/subjects-summary?level=${level}`);
-      setCourse(res?.course || null);
       setSummaryItems(res?.items || []);
       setSummaryStats(res?.stats || null);
     } catch (e: any) {
@@ -123,11 +163,19 @@ export default function DashboardPage() {
   useEffect(() => {
     loadSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [level]);
+  }, [level, blockedByYear]);
 
   // autocomplete
   useEffect(() => {
     setError(null);
+
+    // ✅ bloqueado por año => no autocomplete
+    if (blockedByYear) {
+      setSuggestions([]);
+      setOpenSug(false);
+      setLoadingSug(false);
+      return;
+    }
 
     if (!q.trim()) {
       setSuggestions([]);
@@ -155,9 +203,9 @@ export default function DashboardPage() {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
-  }, [q, level]);
+  }, [q, level, blockedByYear]);
 
-  const canConsult = useMemo(() => !!selectedClass?.id, [selectedClass]);
+  const canConsult = useMemo(() => !!selectedClass?.id && !blockedByYear, [selectedClass, blockedByYear]);
 
   function pickClass(c: ClassItem) {
     setSelectedClass(c);
@@ -166,6 +214,12 @@ export default function DashboardPage() {
   }
 
   async function handleConsult(classOverride?: { id: number; name: string }) {
+    // ✅ bloqueado por año => no consultar
+    if (blockedByYear) {
+      setError("Aún no ha cursado este año.");
+      return;
+    }
+
     const classId = classOverride?.id ?? selectedClass?.id;
     if (!classId) return;
 
@@ -196,14 +250,8 @@ export default function DashboardPage() {
   async function handleChangePassword() {
     setPwMsg(null);
 
-    if (pw1.length < 8) {
-      setPwMsg("La contraseña debe tener mínimo 8 caracteres.");
-      return;
-    }
-    if (pw1 !== pw2) {
-      setPwMsg("Las contraseñas no coinciden.");
-      return;
-    }
+    if (pw1.length < 8) return setPwMsg("La contraseña debe tener mínimo 8 caracteres.");
+    if (pw1 !== pw2) return setPwMsg("Las contraseñas no coinciden.");
 
     setPwLoading(true);
     try {
@@ -213,7 +261,6 @@ export default function DashboardPage() {
       setPwMsg("✅ Contraseña actualizada correctamente.");
       setPw1("");
       setPw2("");
-
       setTimeout(() => setPwOpen(false), 1200);
     } catch (e: any) {
       setPwMsg(e?.message || "No se pudo cambiar la contraseña.");
@@ -221,8 +268,6 @@ export default function DashboardPage() {
       setPwLoading(false);
     }
   }
-
-
 
   // aprobado/reprobado
   const PASS_GRADE = summaryStats?.pass_grade ?? 70;
@@ -239,11 +284,19 @@ export default function DashboardPage() {
   const passH = Math.min(CHART_MAX, Math.round((passed / maxBar) * CHART_MAX));
   const failH = Math.min(CHART_MAX, Math.round((failed / maxBar) * CHART_MAX));
 
+  // ✅ Curso fijo para sidebar (no depende del level)
+  const fixedCourseName = useMemo(() => {
+    return (
+      studentCourseFixed?.name ??
+      (me?.profile?.id_course ? `ID ${me.profile.id_course}` : "—")
+    );
+  }, [studentCourseFixed, me]);
+
   if (meLoading) return <div className="container">Cargando...</div>;
 
   return (
     <div>
-      {/* ✅ SIDEBAR pegada a la izquierda */}
+      {/* ✅ SIDEBAR */}
       <aside
         style={{
           position: "fixed",
@@ -289,26 +342,9 @@ export default function DashboardPage() {
 
         <div style={{ marginTop: 10 }}>
           <div className="label">Curso</div>
-          <div style={{ fontWeight: 900 }}>
-            {course?.name ?? (me?.profile?.id_course ? `ID ${me.profile.id_course}` : "—")}
-          </div>
+          {/* ✅ FIJO */}
+          <div style={{ fontWeight: 900 }}>{fixedCourseName}</div>
         </div>
-
-
-
-        {/* Puedes agregar más campos del profile acá, sin JSON */}
-        {me?.profile?.document && (
-          <div style={{ marginTop: 10 }}>
-            <div className="label">Documento</div>
-            <div style={{ fontWeight: 900 }}>{me.profile.document}</div>
-          </div>
-        )}
-        {me?.profile?.phone && (
-          <div style={{ marginTop: 10 }}>
-            <div className="label">Teléfono</div>
-            <div style={{ fontWeight: 900 }}>{me.profile.phone}</div>
-          </div>
-        )}
 
         <button
           onClick={() => {
@@ -321,7 +357,7 @@ export default function DashboardPage() {
             width: "100%",
             border: 0,
             borderRadius: 14,
-            marginTop: 20, 
+            marginTop: 20,
             padding: "12px 12px",
             cursor: "pointer",
             color: "white",
@@ -331,7 +367,6 @@ export default function DashboardPage() {
         >
           Cambiar contraseña
         </button>
-
 
         <div style={{ marginTop: 16 }}>
           <button
@@ -352,7 +387,7 @@ export default function DashboardPage() {
         </div>
       </aside>
 
-      {/* ✅ CONTENIDO principal desplazado a la derecha para dejar espacio a la sidebar */}
+      {/* ✅ CONTENIDO */}
       <main style={{ marginLeft: 320 }}>
         <div className="container">
           <div className="topbar" style={{ alignItems: "center" }}>
@@ -380,7 +415,6 @@ export default function DashboardPage() {
 
           {error && <div className="msgError">{error}</div>}
 
-          {/* ✅ SOLO 2 columnas (ya no queda apiñado) */}
           <div
             style={{
               marginTop: 18,
@@ -390,7 +424,7 @@ export default function DashboardPage() {
               alignItems: "start",
             }}
           >
-            {/* IZQUIERDA: consultar */}
+            {/* IZQUIERDA */}
             <div className="card">
               <h1 style={{ margin: "6px 0 6px", fontSize: 28, letterSpacing: "-0.02em" }}>
                 Consultar notas
@@ -402,13 +436,24 @@ export default function DashboardPage() {
               <div style={{ display: "grid", gridTemplateColumns: "220px 1fr 160px", gap: 12 }}>
                 <div>
                   <div className="label">Año JILIU</div>
-                  <select className="select" value={level} onChange={(e) => setLevel(Number(e.target.value))}>
+                  <select
+                    className="select"
+                    value={level}
+                    onChange={(e) => setLevel(Number(e.target.value))}
+                  >
                     {LEVELS.map((x) => (
                       <option key={x.value} value={x.value}>
                         {x.label}
                       </option>
                     ))}
                   </select>
+
+                  {/* ✅ Mensaje si el año no corresponde */}
+                  {blockedByYear && (
+                    <div style={{ marginTop: 8, color: "#b45309", fontWeight: 800, fontSize: 13 }}>
+                      Aún no ha cursado este año.
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ position: "relative" }}>
@@ -416,14 +461,17 @@ export default function DashboardPage() {
                   <input
                     className="input"
                     value={q}
+                    disabled={blockedByYear}
                     onChange={(e) => {
                       setQ(e.target.value);
                       setSelectedClass(null);
                       setItems([]);
                       setWeighted(null);
                     }}
-                    placeholder="Escribe: Matemáticas, Inglés, Historia..."
-                    onFocus={() => q.trim() && setOpenSug(true)}
+                    placeholder={
+                      blockedByYear ? "Aún no ha cursado este año" : "Escribe: Matemáticas, Inglés, Historia..."
+                    }
+                    onFocus={() => !blockedByYear && q.trim() && setOpenSug(true)}
                   />
 
                   {openSug && (suggestions.length > 0 || loadingSug) && (
@@ -480,244 +528,262 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {!selectedClass && (
-                <div style={{ marginTop: 18 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-                    <div>
-                      <div className="label">Materias del año (ponderado total)</div>
-                      <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                        Dale “Consultar” para ver el detalle de esa materia.
+              {/* ✅ Si está bloqueado, muestra el mensaje y no dibujes tablas */}
+              {blockedByYear ? (
+                <div style={{ marginTop: 18, color: "var(--muted)", fontWeight: 800 }}>
+                  Aún no ha cursado este año.
+                </div>
+              ) : (
+                <>
+                  {!selectedClass && (
+                    <div style={{ marginTop: 18 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                        <div>
+                          <div className="label">Materias del año (ponderado total)</div>
+                          <div style={{ color: "var(--muted)", fontSize: 13 }}>
+                            Dale “Consultar” para ver el detalle de esa materia.
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={loadSummary}
+                          style={{
+                            border: "1px solid var(--stroke2)",
+                            background: "rgba(255,255,255,.85)",
+                            borderRadius: 14,
+                            padding: "10px 12px",
+                            cursor: "pointer",
+                            fontWeight: 900,
+                          }}
+                        >
+                          {summaryLoading ? "Cargando..." : "Refrescar"}
+                        </button>
+                      </div>
+
+                      <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ background: "rgba(14,165,233,.08)" }}>
+                              <th style={{ textAlign: "left", padding: 12 }}>Materia</th>
+                              <th style={{ textAlign: "left", padding: 12, width: 120 }}>Nota</th>
+                              <th style={{ textAlign: "left", padding: 12, width: 140 }}></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {summaryLoading ? (
+                              <tr>
+                                <td colSpan={3} style={{ padding: 12, color: "var(--muted)" }}>
+                                  Cargando materias...
+                                </td>
+                              </tr>
+                            ) : summaryItems.length === 0 ? (
+                              <tr>
+                                <td colSpan={3} style={{ padding: 12, color: "var(--muted)" }}>
+                                  No hay materias/evaluaciones registradas para este año todavía.
+                                </td>
+                              </tr>
+                            ) : (
+                              summaryItems.map((s) => (
+                                <tr key={s.class_id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
+                                  <td style={{ padding: 12, fontWeight: 900 }}>{s.name}</td>
+                                  <td style={{ padding: 12, fontWeight: 900, color: gradeTextColor(s.weighted) }}>
+                                    {s.weighted === null ? "—" : s.weighted.toFixed(2)}
+                                  </td>
+                                  <td style={{ padding: 12 }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleConsult({ id: s.class_id, name: s.name })}
+                                      style={{
+                                        width: "100%",
+                                        border: 0,
+                                        borderRadius: 14,
+                                        padding: "10px 12px",
+                                        cursor: "pointer",
+                                        color: "white",
+                                        background: "linear-gradient(180deg, var(--sky), var(--sky2))",
+                                        fontWeight: 900,
+                                      }}
+                                    >
+                                      Consultar
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={loadSummary}
-                      style={{
-                        border: "1px solid var(--stroke2)",
-                        background: "rgba(255,255,255,.85)",
-                        borderRadius: 14,
-                        padding: "10px 12px",
-                        cursor: "pointer",
-                        fontWeight: 900,
-                      }}
-                    >
-                      {summaryLoading ? "Cargando..." : "Refrescar"}
-                    </button>
-                  </div>
+                  )}
 
-                  <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                          <th style={{ textAlign: "left", padding: 12 }}>Materia</th>
-                          <th style={{ textAlign: "left", padding: 12, width: 120 }}>Nota</th>
-                          <th style={{ textAlign: "left", padding: 12, width: 140 }}></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {summaryLoading ? (
-                          <tr>
-                            <td colSpan={3} style={{ padding: 12, color: "var(--muted)" }}>
-                              Cargando materias...
-                            </td>
-                          </tr>
-                        ) : summaryItems.length === 0 ? (
-                          <tr>
-                            <td colSpan={3} style={{ padding: 12, color: "var(--muted)" }}>
-                              No hay materias/evaluaciones registradas para este año todavía.
-                            </td>
-                          </tr>
-                        ) : (
-                          summaryItems.map((s) => (
-                            <tr key={s.class_id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                              <td style={{ padding: 12, fontWeight: 900 }}>{s.name}</td>
-                              <td style={{ padding: 12, fontWeight: 900, color: gradeTextColor(s.weighted) }}>
-                                {s.weighted === null ? "—" : s.weighted.toFixed(2)}
-                              </td>
-                              <td style={{ padding: 12 }}>
-                                <button
-                                  type="button"
-                                  onClick={() => handleConsult({ id: s.class_id, name: s.name })}
-                                  style={{
-                                    width: "100%",
-                                    border: 0,
-                                    borderRadius: 14,
-                                    padding: "10px 12px",
-                                    cursor: "pointer",
-                                    color: "white",
-                                    background: "linear-gradient(180deg, var(--sky), var(--sky2))",
-                                    fontWeight: 900,
-                                  }}
-                                >
-                                  Consultar
-                                </button>
-                              </td>
+                  {selectedClass && (
+                    <div style={{ marginTop: 18 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-end" }}>
+                        <div>
+                          <div className="label">Materia seleccionada</div>
+                          <div style={{ fontWeight: 900, fontSize: 16 }}>{selectedClass.name}</div>
+                        </div>
+
+                        <div style={{ textAlign: "right" }}>
+                          <div className="label">Ponderado total</div>
+                          <div style={{ fontWeight: 900, fontSize: 22, color: gradeTextColor(weighted) }}>
+                            {weighted === null ? "—" : weighted.toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ background: "rgba(14,165,233,.08)" }}>
+                              <th style={{ textAlign: "left", padding: 12 }}>Evaluación</th>
+                              <th style={{ textAlign: "left", padding: 12, width: 70 }}>%</th>
+                              <th style={{ textAlign: "left", padding: 12, width: 90 }}>Nota</th>
+                              <th style={{ textAlign: "left", padding: 12, width: 120 }}>Fecha</th>
                             </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+                          </thead>
+                          <tbody>
+                            {items.length === 0 ? (
+                              <tr>
+                                <td colSpan={4} style={{ padding: 12, color: "var(--muted)" }}>
+                                  No hay evaluaciones/notas para esta materia en este año.
+                                </td>
+                              </tr>
+                            ) : (
+                              items.map((it) => (
+                                <tr key={it.exam_id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
+                                  <td style={{ padding: 12, fontWeight: 900 }}>{it.title}</td>
+                                  <td style={{ padding: 12 }}>{Number(it.percent).toFixed(0)}%</td>
+                                  <td style={{ padding: 12, fontWeight: 900, color: gradeTextColor(it.grade) }}>
+                                    {it.grade === null ? "—" : Number(it.grade).toFixed(2)}
+                                  </td>
+                                  <td style={{ padding: 12 }}>
+                                    {it.finished_at ? new Date(it.finished_at).toLocaleDateString() : "—"}
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
 
-              {selectedClass && (
-                <div style={{ marginTop: 18 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-end" }}>
-                    <div>
-                      <div className="label">Materia seleccionada</div>
-                      <div style={{ fontWeight: 900, fontSize: 16 }}>{selectedClass.name}</div>
-                    </div>
-
-                    <div style={{ textAlign: "right" }}>
-                      <div className="label">Ponderado total</div>
-                      <div style={{ fontWeight: 900, fontSize: 22, color: gradeTextColor(weighted) }}>
-                        {weighted === null ? "—" : weighted.toFixed(2)}
+                      <div style={{ marginTop: 12 }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedClass(null);
+                            setQ("");
+                            setItems([]);
+                            setWeighted(null);
+                            loadSummary();
+                          }}
+                          style={{
+                            border: "1px solid var(--stroke2)",
+                            background: "rgba(255,255,255,.85)",
+                            borderRadius: 14,
+                            padding: "10px 12px",
+                            cursor: "pointer",
+                            fontWeight: 900,
+                          }}
+                        >
+                          Volver a materias
+                        </button>
                       </div>
                     </div>
-                  </div>
-
-                  <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                          <th style={{ textAlign: "left", padding: 12 }}>Evaluación</th>
-                          <th style={{ textAlign: "left", padding: 12, width: 70 }}>%</th>
-                          <th style={{ textAlign: "left", padding: 12, width: 90 }}>Nota</th>
-                          <th style={{ textAlign: "left", padding: 12, width: 120 }}>Fecha</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {items.length === 0 ? (
-                          <tr>
-                            <td colSpan={4} style={{ padding: 12, color: "var(--muted)" }}>
-                              No hay evaluaciones/notas para esta materia en este año.
-                            </td>
-                          </tr>
-                        ) : (
-                          items.map((it) => (
-                            <tr key={it.exam_id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                              <td style={{ padding: 12, fontWeight: 900 }}>{it.title}</td>
-                              <td style={{ padding: 12 }}>{Number(it.percent).toFixed(0)}%</td>
-                              <td style={{ padding: 12, fontWeight: 900, color: gradeTextColor(it.grade) }}>
-                                {it.grade === null ? "—" : Number(it.grade).toFixed(2)}
-                              </td>
-                              <td style={{ padding: 12 }}>
-                                {it.finished_at ? new Date(it.finished_at).toLocaleDateString() : "—"}
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div style={{ marginTop: 12 }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedClass(null);
-                        setQ("");
-                        setItems([]);
-                        setWeighted(null);
-                        loadSummary();
-                      }}
-                      style={{
-                        border: "1px solid var(--stroke2)",
-                        background: "rgba(255,255,255,.85)",
-                        borderRadius: 14,
-                        padding: "10px 12px",
-                        cursor: "pointer",
-                        fontWeight: 900,
-                      }}
-                    >
-                      Volver a materias
-                    </button>
-                  </div>
-                </div>
+                  )}
+                </>
               )}
             </div>
 
-            {/* DERECHA: mini dashboard */}
+            {/* DERECHA: resumen */}
             <div className="card">
               <h2 style={{ marginTop: 6 }}>Resumen del año</h2>
               <p style={{ marginTop: 0, color: "var(--muted)" }}>
                 Totales calculados con ponderado por materia (solo materias con notas).
               </p>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-                <div style={{ padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(255,255,255,.65)" }}>
-                  <div className="label">Materias pasadas</div>
-                  <div style={{ fontSize: 26, fontWeight: 900 }}>{summaryStats ? passed : "—"}</div>
+              {blockedByYear ? (
+                <div style={{ marginTop: 12, color: "var(--muted)", fontWeight: 800 }}>
+                  Aún no ha cursado este año.
                 </div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+                    <div style={{ padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(255,255,255,.65)" }}>
+                      <div className="label">Materias pasadas</div>
+                      <div style={{ fontSize: 26, fontWeight: 900 }}>{summaryStats ? passed : "—"}</div>
+                    </div>
 
-                <div style={{ padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(255,255,255,.65)" }}>
-                  <div className="label">Materias perdidas</div>
-                  <div style={{ fontSize: 26, fontWeight: 900 }}>{summaryStats ? failed : "—"}</div>
-                </div>
+                    <div style={{ padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(255,255,255,.65)" }}>
+                      <div className="label">Materias perdidas</div>
+                      <div style={{ fontSize: 26, fontWeight: 900 }}>{summaryStats ? failed : "—"}</div>
+                    </div>
 
-                <div style={{ gridColumn: "1 / span 2", padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(255,255,255,.65)" }}>
-                  <div className="label">Promedio ponderado total</div>
-                  <div style={{ fontSize: 26, fontWeight: 900, color: gradeTextColor(summaryStats?.avg_weighted ?? null) }}>
-                    {summaryStats?.avg_weighted === null || !summaryStats ? "—" : summaryStats.avg_weighted.toFixed(2)}
+                    <div style={{ gridColumn: "1 / span 2", padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(255,255,255,.65)" }}>
+                      <div className="label">Promedio ponderado total</div>
+                      <div style={{ fontSize: 26, fontWeight: 900, color: gradeTextColor(summaryStats?.avg_weighted ?? null) }}>
+                        {summaryStats?.avg_weighted === null || !summaryStats ? "—" : summaryStats.avg_weighted.toFixed(2)}
+                      </div>
+                      <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                        Umbral para “pasada”: {summaryStats ? summaryStats.pass_grade.toFixed(2) : "—"}
+                        {summaryStats?.pending ? ` · Pendientes: ${summaryStats.pending}` : ""}
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                    Umbral para “pasada”: {summaryStats ? summaryStats.pass_grade.toFixed(2) : "—"}
-                    {summaryStats?.pending ? ` · Pendientes: ${summaryStats.pending}` : ""}
-                  </div>
-                </div>
-              </div>
 
-              <div style={{ marginTop: 18 }}>
-                <div className="label">Materias pasadas vs perdidas</div>
-                <div
-                  style={{
-                    marginTop: 10,
-                    display: "flex",
-                    alignItems: "flex-end",
-                    gap: 18,
-                    height: 110,
-                    padding: 12,
-                    borderRadius: 18,
-                    border: "1px solid var(--stroke)",
-                    background: "rgba(14,165,233,.06)",
-                    overflow: "hidden",
-                    boxSizing: "border-box",
-                  }}
-                >
-                  <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                  <div style={{ marginTop: 18 }}>
+                    <div className="label">Materias pasadas vs perdidas</div>
                     <div
                       style={{
-                        width: "70%",
-                        height: `${passH}px`,
-                        borderRadius: 14,
-                        background: "linear-gradient(180deg, rgba(34,197,94,.9), rgba(21,128,61,.9))",
+                        marginTop: 10,
+                        display: "flex",
+                        alignItems: "flex-end",
+                        gap: 18,
+                        height: 110,
+                        padding: 12,
+                        borderRadius: 18,
+                        border: "1px solid var(--stroke)",
+                        background: "rgba(14,165,233,.06)",
+                        overflow: "hidden",
+                        boxSizing: "border-box",
                       }}
-                    />
-                    <div style={{ fontWeight: 900, fontSize: 13 }}>Pasadas ({passed})</div>
+                    >
+                      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                        <div
+                          style={{
+                            width: "70%",
+                            height: `${passH}px`,
+                            borderRadius: 14,
+                            background: "linear-gradient(180deg, rgba(34,197,94,.9), rgba(21,128,61,.9))",
+                          }}
+                        />
+                        <div style={{ fontWeight: 900, fontSize: 13 }}>Pasadas ({passed})</div>
+                      </div>
+
+                      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                        <div
+                          style={{
+                            width: "70%",
+                            height: `${failH}px`,
+                            borderRadius: 14,
+                            background: "linear-gradient(180deg, rgba(239,68,68,.9), rgba(185,28,28,.9))",
+                          }}
+                        />
+                        <div style={{ fontWeight: 900, fontSize: 13 }}>Perdidas ({failed})</div>
+                      </div>
+                    </div>
                   </div>
 
-                  <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-                    <div
-                      style={{
-                        width: "70%",
-                        height: `${failH}px`,
-                        borderRadius: 14,
-                        background: "linear-gradient(180deg, rgba(239,68,68,.9), rgba(185,28,28,.9))",
-                      }}
-                    />
-                    <div style={{ fontWeight: 900, fontSize: 13 }}>Perdidas ({failed})</div>
+                  <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 13 }}>
+                    * El promedio usa solo materias con ponderado calculable (con notas).
                   </div>
-                </div>
-              </div>
-
-              <div style={{ marginTop: 16, color: "var(--muted)", fontSize: 13 }}>
-                * El promedio usa solo materias con ponderado calculable (con notas).
-              </div>
+                </>
+              )}
             </div>
           </div>
         </div>
       </main>
+
       {/* ✅ MODAL cambiar contraseña */}
       {pwOpen && (
         <div
@@ -752,34 +818,16 @@ export default function DashboardPage() {
 
             <div style={{ marginTop: 14 }}>
               <div className="label">Nueva contraseña</div>
-              <input
-                className="input"
-                type="password"
-                value={pw1}
-                onChange={(e) => setPw1(e.target.value)}
-                placeholder="********"
-              />
+              <input className="input" type="password" value={pw1} onChange={(e) => setPw1(e.target.value)} placeholder="********" />
             </div>
 
             <div style={{ marginTop: 10 }}>
               <div className="label">Confirmar contraseña</div>
-              <input
-                className="input"
-                type="password"
-                value={pw2}
-                onChange={(e) => setPw2(e.target.value)}
-                placeholder="********"
-              />
+              <input className="input" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="********" />
             </div>
 
             {pwMsg && (
-              <div
-                style={{
-                  marginTop: 10,
-                  fontWeight: 800,
-                  color: pwMsg.startsWith("✅") ? "#15803d" : "#b91c1c",
-                }}
-              >
+              <div style={{ marginTop: 10, fontWeight: 800, color: pwMsg.startsWith("✅") ? "#15803d" : "#b91c1c" }}>
                 {pwMsg}
               </div>
             )}

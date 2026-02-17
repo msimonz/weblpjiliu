@@ -1,63 +1,367 @@
-import { Router } from 'express';
-import { requireRole } from '../middlewares/auth.js';
-import { supabaseAdmin } from '../supabase.js';
+import { Router } from "express";
+import { requireAuth } from "../middlewares/auth.js";
+import { supabaseAdmin } from "../supabase.js";
 
 export const teacherRouter = Router();
-teacherRouter.use(requireRole('T','A'));
 
-// matricular estudiante a course + historial
-teacherRouter.post('/enroll', async (req, res) => {
-  const { student_id, course_id } = req.body;
+// ✅ middleware simple: solo teachers (o admin)
+function requireTeacher(req, res, next) {
+  const r = req.auth?.role || req.auth?.profile?.type || req.auth?.profile?.role;
+  if (r !== "T" && r !== "A") return res.status(403).json({ error: "Solo Teacher/Admin" });
+  return next();
+}
 
-  // 1) update users.id_course
-  const upd = await supabaseAdmin.from('users').update({ id_course: course_id }).eq('id', student_id);
-  if (upd.error) return res.status(400).json({ error: upd.error.message });
-
-  // 2) ensure history row exists
-  await supabaseAdmin.from('user_history').upsert({ id_student: student_id, id_course: course_id });
-
-  res.json({ ok: true });
-});
-
-// crear evaluación (asignación)
-teacherRouter.post('/evaluations', async (req, res) => {
-  const { id_course, id_class, id_type, percent, title } = req.body;
-  const id_teacher = req.auth.profile.id;
+/**
+ * ✅ 0) Listar mis materias asignadas (para dropdown)
+ * GET /api/teacher/classes
+ */
+teacherRouter.get("/classes", requireAuth, requireTeacher, async (req, res) => {
+  const teacherId = req.auth.user.id;
 
   const { data, error } = await supabaseAdmin
-    .from('evaluation')
-    .insert({ id_course, id_class, id_type, percent, title, id_teacher })
-    .select()
-    .single();
+    .from("class_teacher")
+    .select("id_class, class:class(id,name,level)")
+    .eq("id_teacher", teacherId)
+    .order("id_class", { ascending: true });
 
-  if (error) return res.status(400).json({ error: error.message });
-  res.json(data);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const items = (data || []).map((r) => r.class).filter(Boolean);
+  return res.json({ items });
 });
 
-// listar mis evaluaciones
-teacherRouter.get('/evaluations', async (req, res) => {
-  const id_teacher = req.auth.profile.id;
+teacherRouter.get("/courses", requireAuth, requireTeacher, async (req, res) => {
+  const classId = Number(req.query.class_id);
+  if (!classId) return res.status(400).json({ error: "class_id requerido" });
 
-  const { data, error } = await supabaseAdmin
-    .from('evaluation')
-    .select('id,title,percent,created_at, course:course(id,name,level), class:class(id,name), type:evaluation_type(id,type)')
-    .eq('id_teacher', id_teacher)
-    .order('created_at', { ascending: false });
+  // 1) Intento 1: cursos donde ya existen evaluaciones para esa materia (cualquier teacher)
+  const { data: evCourses, error: evErr } = await supabaseAdmin
+    .from("evaluation")
+    .select("id_course, course:course(id,name,level,year)")
+    .eq("id_class", classId);
 
-  if (error) return res.status(400).json({ error: error.message });
-  res.json(data);
+  if (evErr) return res.status(500).json({ error: evErr.message });
+
+  // distinct por id_course
+  const seen = new Set();
+  const items1 = (evCourses || [])
+    .map((r) => r.course)
+    .filter(Boolean)
+    .filter((c) => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+
+  // 2) Fallback: si no hay nada aún, devolvemos cursos por nivel de la materia
+  if (items1.length > 0) return res.json({ items: items1 });
+
+  const { data: cls, error: clsErr } = await supabaseAdmin
+    .from("class")
+    .select("id,level")
+    .eq("id", classId)
+    .maybeSingle();
+
+  if (clsErr) return res.status(500).json({ error: clsErr.message });
+
+  const level = cls?.level;
+  if (!level) return res.json({ items: [] });
+
+  const { data: courses, error: cErr } = await supabaseAdmin
+    .from("course")
+    .select("id,name,level,year")
+    .eq("level", level)
+    .order("id", { ascending: true });
+
+  if (cErr) return res.status(500).json({ error: cErr.message });
+  return res.json({ items: courses || [] });
 });
 
-// subir/actualizar nota (manual)
-teacherRouter.post('/grades', async (req, res) => {
-  const { id_student, id_exam, grade, finished_at, attempts = 1, source = 'manual' } = req.body;
+teacherRouter.get("/evaluation-types", requireAuth, requireTeacher, async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from("evaluation_type")
+    .select("id,type,created_at")
+    .order("id", { ascending: true });
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ items: data || [] });
+});
+
+teacherRouter.post("/evaluation-types", requireAuth, requireTeacher, async (req, res) => {
+  const raw = String(req.body?.type || "").trim();
+  if (!raw) return res.status(400).json({ error: "type requerido" });
+
+  // normaliza (opcional)
+  const type = raw;
+
+  // si ya existe, devolvemos el existente
+  const { data: existing, error: exErr } = await supabaseAdmin
+    .from("evaluation_type")
+    .select("id,type")
+    .eq("type", type)
+    .maybeSingle();
+
+  if (exErr) return res.status(500).json({ error: exErr.message });
+  if (existing?.id) return res.json({ item: existing });
+
+  // si no existe, lo insertamos
+  const { data, error } = await supabaseAdmin
+    .from("evaluation_type")
+    .insert({ type })
+    .select("id,type")
+    .maybeSingle();
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ item: data });
+});
+
+/**
+ * ✅ 1) Listar mis evaluaciones (opcional filtrar por materia)
+ * GET /api/teacher/evaluations?class_id=1
+ */
+teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) => {
+  const teacherId = req.auth.user.id;
+  const classId = req.query.class_id ? Number(req.query.class_id) : null;
+
+  let q = supabaseAdmin
+    .from("evaluation")
+    .select(`
+      id,
+      title,
+      percent,
+      created_at,
+      id_course,
+      id_class,
+      id_type,
+      course:course(id,name,level,year),
+      class:class(id,name,level),
+      evaluation_type:evaluation_type(id,type)
+    `)
+    .eq("id_teacher", teacherId)
+    .order("created_at", { ascending: false });
+
+  if (classId) q = q.eq("id_class", classId);
+
+  const { data, error } = await q;
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ items: data || [] });
+});
+
+/**
+ * ✅ 4) Alumnos de un curso
+ * GET /api/teacher/course-students?course_id=1
+ * retorna: [{ id, name, cedula }]
+ *
+ * Nota: aquí asumimos que users.id_course = course.id
+ */
+teacherRouter.get("/course-students", requireAuth, requireTeacher, async (req, res) => {
+  const courseId = Number(req.query.course_id);
+  if (!courseId) return res.status(400).json({ error: "course_id requerido" });
 
   const { data, error } = await supabaseAdmin
-    .from('grades')
-    .upsert({ id_student, id_exam, grade, finished_at, attempts, source }, { onConflict: 'id_student,id_exam' })
-    .select()
-    .single();
+    .from("users")
+    .select("id,name,cedula,type,id_course")
+    .eq("id_course", courseId)
+    .eq("type", "S") // solo estudiantes
+    .order("name", { ascending: true });
 
-  if (error) return res.status(400).json({ error: error.message });
-  res.json(data);
+  if (error) return res.status(500).json({ error: error.message });
+
+  // devolver solo campos necesarios
+  const items = (data || []).map((u) => ({
+    id: u.id,
+    name: u.name,
+    cedula: u.cedula,
+  }));
+
+  return res.json({ items });
+});
+
+/**
+ * ✅ 5) Notas existentes de una evaluación (para precargar tabla)
+ * GET /api/teacher/exam-grades?exam_id=1
+ * retorna: [{ id_student, grade }]
+ */
+teacherRouter.get("/exam-grades", requireAuth, requireTeacher, async (req, res) => {
+  const teacherId = req.auth.user.id;
+  const examId = Number(req.query.exam_id);
+  if (!examId) return res.status(400).json({ error: "exam_id requerido" });
+
+  // 1) validar que la evaluación pertenece al teacher
+  const { data: ev, error: evErr } = await supabaseAdmin
+    .from("evaluation")
+    .select("id,id_teacher")
+    .eq("id", examId)
+    .maybeSingle();
+
+  if (evErr) return res.status(500).json({ error: evErr.message });
+  if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
+  if (ev.id_teacher !== teacherId) return res.status(403).json({ error: "No es tu evaluación" });
+
+  // 2) traer notas
+  const { data, error } = await supabaseAdmin
+    .from("grades")
+    .select("id_student,grade")
+    .eq("id_exam", examId);
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  return res.json({ items: data || [] });
+});
+
+
+/**
+ * ✅ 2) Crear evaluación
+ * POST /api/teacher/evaluations
+ * body: { id_course, id_class, id_type, percent, title }
+ */
+teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res) => {
+  const teacherId = req.auth.user.id;
+
+  const {
+    id_course,
+    id_class,
+    percent,
+    title,
+    id_type,     // opcional si viene del dropdown
+    type_text,   // opcional si viene "Otro"
+  } = req.body || {};
+
+  if (!id_course || !id_class) {
+    return res.status(400).json({ error: "Faltan campos: id_course, id_class" });
+  }
+
+  const p = Number(percent);
+  if (!Number.isFinite(p) || p <= 0 || p > 100) {
+    return res.status(400).json({ error: "percent inválido (1..100)" });
+  }
+
+  const t = String(title || "").trim();
+  if (!t) return res.status(400).json({ error: "title requerido" });
+
+  // ✅ Resolver id_type:
+  let typeId = Number(id_type || 0);
+
+  if (!typeId) {
+    const raw = String(type_text || "").trim();
+    if (!raw) return res.status(400).json({ error: "Selecciona un tipo o escribe type_text" });
+
+    // buscar si existe
+    const { data: existing, error: exErr } = await supabaseAdmin
+      .from("evaluation_type")
+      .select("id,type")
+      .eq("type", raw)
+      .maybeSingle();
+
+    if (exErr) return res.status(500).json({ error: exErr.message });
+
+    if (existing?.id) {
+      typeId = existing.id;
+    } else {
+      // crear
+      const { data: created, error: crErr } = await supabaseAdmin
+        .from("evaluation_type")
+        .insert({ type: raw })
+        .select("id,type")
+        .maybeSingle();
+
+      if (crErr) return res.status(500).json({ error: crErr.message });
+      typeId = created.id;
+    }
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("evaluation")
+    .insert({
+      id_course: Number(id_course),
+      id_class: Number(id_class),
+      id_teacher: teacherId,
+      id_type: Number(typeId),
+      percent: p,
+      title: t,
+    })
+    .select("id,title,percent,created_at,id_course,id_class,id_type")
+    .maybeSingle();
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ item: data });
+});
+
+/**
+ * ✅ 3) Subir nota manual (upsert)
+ * POST /api/teacher/grades
+ * body: { exam_id, student_cedula, grade }
+ */
+teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
+  const teacherId = req.auth.user.id;
+  const { exam_id, student_cedula, grade } = req.body || {};
+
+  const examId = Number(exam_id);
+  if (!examId) return res.status(400).json({ error: "exam_id requerido" });
+
+  const ced = String(student_cedula || "").trim();
+  if (!ced) return res.status(400).json({ error: "student_cedula requerida" });
+
+  const g = Number(grade);
+  if (!Number.isFinite(g) || g < 0 || g > 100) {
+    return res.status(400).json({ error: "grade inválida (0..100)" });
+  }
+
+  // ✅ 1) verificar que la evaluación es del teacher
+  const { data: ev, error: evErr } = await supabaseAdmin
+    .from("evaluation")
+    .select("id,id_teacher")
+    .eq("id", examId)
+    .maybeSingle();
+
+  if (evErr) return res.status(500).json({ error: evErr.message });
+  if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
+  if (ev.id_teacher !== teacherId) return res.status(403).json({ error: "No es tu evaluación" });
+
+  // ✅ 2) buscar estudiante por cédula (tabla users)
+  const { data: st, error: stErr } = await supabaseAdmin
+    .from("users")
+    .select("id,cedula,name,email,type,id_course")
+    .eq("cedula", ced)
+    .maybeSingle();
+
+  if (stErr) return res.status(500).json({ error: stErr.message });
+  if (!st?.id) return res.status(404).json({ error: "No existe estudiante con esa cédula" });
+    // ✅ 2.1) validar que el estudiante pertenece al curso de la evaluación
+  const { data: ev2, error: ev2Err } = await supabaseAdmin
+    .from("evaluation")
+    .select("id,id_course")
+    .eq("id", examId)
+    .maybeSingle();
+
+  if (ev2Err) return res.status(500).json({ error: ev2Err.message });
+
+  if (Number(st.id_course) !== Number(ev2.id_course)) {
+    return res.status(400).json({ error: "El estudiante no pertenece al curso de esta evaluación" });
+  }
+
+
+  // ✅ 3) upsert en grades (requiere UNIQUE(id_exam,id_student))
+  const payload = {
+    id_exam: examId,
+    id_student: st.id,
+    grade: g,
+    source: "MANUAL",
+    finished_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabaseAdmin
+    .from("grades")
+    .upsert(payload, { onConflict: "id_exam,id_student" })
+    .select("id_exam,id_student,grade,finished_at,source")
+    .maybeSingle();
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  return res.json({
+    ok: true,
+    student: { id: st.id, cedula: st.cedula, name: st.name },
+    grade: data,
+  });
 });

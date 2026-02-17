@@ -4,9 +4,45 @@ import { supabaseAdmin } from "../supabase.js";
 
 export const studentRouter = Router();
 
+const PASS_GRADE = 70;
+
+// ✅ helper: curso real del estudiante (fijo)
+async function getStudentCourse(req, res) {
+  const courseId = Number(req.auth.profile?.id_course || 0);
+
+  if (!courseId) {
+    res.status(400).json({ error: "El usuario no tiene id_course en el profile" });
+    return null;
+  }
+
+  const { data: course, error } = await supabaseAdmin
+    .from("course")
+    .select("id,year,level,name")
+    .eq("id", courseId)
+    .maybeSingle();
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return null;
+  }
+  if (!course?.id) {
+    res.status(404).json({ error: "El course del usuario no existe" });
+    return null;
+  }
+
+  return course;
+}
+
+// ✅ helper: valida level solicitado vs level real del estudiante
+function checkLevelAllowed(level, course) {
+  return Number(level) === Number(course.level);
+}
+
 /**
  * Autocomplete de materias (tabla class)
  * GET /api/student/classes?level=1&q=mate
+ *
+ * ✅ Ahora: si el estudiante no ha cursado ese año => devuelve vacío.
  */
 studentRouter.get("/classes", requireAuth, async (req, res) => {
   const level = Number(req.query.level || 1);
@@ -17,6 +53,18 @@ studentRouter.get("/classes", requireAuth, async (req, res) => {
   }
   if (!q) return res.json({ items: [] });
 
+  const course = await getStudentCourse(req, res);
+  if (!course) return;
+
+  if (!checkLevelAllowed(level, course)) {
+    return res.json({
+      blocked: true,
+      message: "Aún no ha cursado este año.",
+      items: [],
+      course,
+    });
+  }
+
   const { data, error } = await supabaseAdmin
     .from("class")
     .select("id,name,level")
@@ -26,64 +74,50 @@ studentRouter.get("/classes", requireAuth, async (req, res) => {
     .limit(10);
 
   if (error) return res.status(500).json({ error: error.message });
-  return res.json({ items: data || [] });
+  return res.json({ blocked: false, items: data || [], course });
 });
 
 /**
  * Resumen por año: ponderado total por materia + stats
  * GET /api/student/subjects-summary?level=1
+ *
+ * ✅ Ahora: usa SIEMPRE el course real del estudiante (id_course) y
+ * bloquea si level != course.level
  */
 studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   const userId = req.auth.user.id;
   const level = Number(req.query.level || 1);
-  const PASS_GRADE = 70;
-
-  console.log("\n=== /subjects-summary ===");
-  console.log("userId:", userId);
-  console.log("email:", req.auth.user.email);
-  console.log("profile.id_course:", req.auth.profile?.id_course);
-  console.log("level query:", level);
 
   if (!level || level < 1 || level > 4) {
     return res.status(400).json({ error: "level inválido (1..4)" });
   }
 
-  // 1) course del año (por level) más reciente
-  const { data: course, error: courseErr } = await supabaseAdmin
-    .from("course")
-    .select("id,year,level,name")
-    .eq("level", level)
-    .order("year", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const course = await getStudentCourse(req, res);
+  if (!course) return;
 
-  console.log("course picked:", course);
+  // ✅ si el estudiante no está en ese año, NO se consulta nada
+  if (!checkLevelAllowed(level, course)) {
+    return res.json({
+      blocked: true,
+      message: "Aún no ha cursado este año.",
+      course,
+      items: [],
+      stats: null,
+    });
+  }
 
-  if (courseErr) return res.status(500).json({ error: courseErr.message });
-  if (!course?.id) return res.json({ course: null, items: [], stats: null });
-
-  // 2) evaluaciones del course (traemos también class.name via join)
+  // ✅ evaluaciones del course REAL del estudiante
   const { data: evals, error: evalErr } = await supabaseAdmin
     .from("evaluation")
     .select("id,id_class,percent,title,class:class(id,name)")
     .eq("id_course", course.id);
-
-  console.log("evaluations count:", (evals || []).length);
-  if (evals?.[0]) {
-    console.log("first eval sample:", {
-      id: evals[0].id,
-      id_class: evals[0].id_class,
-      percent: evals[0].percent,
-      title: evals[0].title,
-      class_name: evals[0].class?.name,
-    });
-  }
 
   if (evalErr) return res.status(500).json({ error: evalErr.message });
 
   const evaluations = evals || [];
   if (evaluations.length === 0) {
     return res.json({
+      blocked: false,
       course,
       items: [],
       stats: { passed: 0, failed: 0, pending: 0, avg_weighted: null, pass_grade: PASS_GRADE },
@@ -91,49 +125,41 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   }
 
   const evalIds = evaluations.map((e) => e.id);
-  console.log("evalIds:", evalIds);
 
-  // 3) notas del estudiante SOLO para esas evaluaciones
+  // notas del estudiante SOLO para esas evaluaciones
   const { data: gradeRows, error: gradesErr } = await supabaseAdmin
     .from("grades")
     .select("id_exam,grade,id_student")
     .eq("id_student", userId)
     .in("id_exam", evalIds);
 
-  console.log("gradeRows count:", (gradeRows || []).length);
-  if (gradeRows?.[0]) console.log("first grade sample:", gradeRows[0]);
-
   if (gradesErr) return res.status(500).json({ error: gradesErr.message });
 
-  // map examId -> grade
+  // map examId -> grade row
   const gradeMap = new Map();
   for (const g of gradeRows || []) gradeMap.set(g.id_exam, g);
 
-  // 4) agrupar por materia (id_class) y calcular ponderado por materia
+  // agrupar por materia (id_class) y calcular ponderado por materia
   const byClass = new Map(); // classId -> { class_id, name, sumW, sum }
   for (const ev of evaluations) {
     const classId = Number(ev.id_class);
-    const className =
-      (ev.class && ev.class.name) ? String(ev.class.name) : `Materia ${classId}`;
+    const className = ev.class?.name ? String(ev.class.name) : `Materia ${classId}`;
 
     const percent = Number(ev.percent ?? 0);
     const g = gradeMap.get(ev.id) || null;
     const grade = g ? Number(g.grade ?? 0) : null;
 
     if (!byClass.has(classId)) {
-      byClass.set(classId, { class_id: classId, name: className, sumW: 0, sum: 0, hasAnyGrade: false });
+      byClass.set(classId, { class_id: classId, name: className, sumW: 0, sum: 0 });
     }
 
-    // solo suma si hay nota
     if (grade !== null) {
       const obj = byClass.get(classId);
-      obj.hasAnyGrade = true;
       obj.sumW += percent;
       obj.sum += grade * percent;
     }
   }
 
-  // construir items finales
   const items = Array.from(byClass.values())
     .map((x) => {
       const weighted = x.sumW > 0 ? Number((x.sum / x.sumW).toFixed(2)) : null;
@@ -141,11 +167,12 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  console.log("items computed:", items);
-
-  // 5) stats
-  let passed = 0, failed = 0, pending = 0;
-  let avgSum = 0, avgCount = 0;
+  // stats
+  let passed = 0,
+    failed = 0,
+    pending = 0;
+  let avgSum = 0,
+    avgCount = 0;
 
   for (const it of items) {
     if (it.weighted === null) {
@@ -160,15 +187,19 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
 
   const avg_weighted = avgCount > 0 ? Number((avgSum / avgCount).toFixed(2)) : null;
 
-  const stats = { passed, failed, pending, avg_weighted, pass_grade: PASS_GRADE };
-  console.log("stats computed:", stats);
-
-  return res.json({ course, items, stats });
+  return res.json({
+    blocked: false,
+    course,
+    items,
+    stats: { passed, failed, pending, avg_weighted, pass_grade: PASS_GRADE },
+  });
 });
 
 /**
  * Notas por materia + ponderado
  * GET /api/student/grades?level=1&class_id=123
+ *
+ * ✅ Ahora: usa course real del estudiante + bloquea si level no corresponde
  */
 studentRouter.get("/grades", requireAuth, async (req, res) => {
   const userId = req.auth.user.id;
@@ -180,19 +211,20 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
   }
   if (!classId) return res.status(400).json({ error: "class_id requerido" });
 
-  // course del level (más reciente por year)
-  const { data: course, error: courseErr } = await supabaseAdmin
-    .from("course")
-    .select("id,year,level,name")
-    .eq("level", level)
-    .order("year", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const course = await getStudentCourse(req, res);
+  if (!course) return;
 
-  if (courseErr) return res.status(500).json({ error: courseErr.message });
-  if (!course?.id) return res.status(404).json({ error: "No hay course para ese level" });
+  if (!checkLevelAllowed(level, course)) {
+    return res.json({
+      blocked: true,
+      message: "Aún no ha cursado este año.",
+      course,
+      items: [],
+      weighted: null,
+    });
+  }
 
-  // evaluaciones de esa materia en ese course
+  // evaluaciones de esa materia en el course REAL del estudiante
   const { data: evals, error: evalErr } = await supabaseAdmin
     .from("evaluation")
     .select("id,title,percent,created_at")
@@ -204,7 +236,7 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
 
   const evaluations = evals || [];
   if (evaluations.length === 0) {
-    return res.json({ items: [], weighted: null, course });
+    return res.json({ blocked: false, items: [], weighted: null, course });
   }
 
   const evalIds = evaluations.map((e) => e.id);
@@ -221,7 +253,6 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
   const gradeMap = new Map();
   for (const g of gradeRows || []) gradeMap.set(g.id_exam, g);
 
-  // unir evaluación + nota (aunque no exista nota aún)
   const items = evaluations.map((ev) => {
     const g = gradeMap.get(ev.id) || null;
     return {
@@ -235,7 +266,6 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
     };
   });
 
-  // ponderado: Σ(grade * percent) / Σ(percent) usando solo las que tienen grade
   let sumW = 0;
   let sum = 0;
   for (const it of items) {
@@ -246,5 +276,5 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
   }
   const weighted = sumW > 0 ? Number((sum / sumW).toFixed(2)) : null;
 
-  return res.json({ items, weighted, course });
+  return res.json({ blocked: false, items, weighted, course });
 });
