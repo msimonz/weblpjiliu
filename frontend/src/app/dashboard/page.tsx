@@ -66,6 +66,12 @@ export default function DashboardPage() {
 
   const debounceRef = useRef<number | null>(null);
 
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pw1, setPw1] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [pwLoading, setPwLoading] = useState(false);
+  const [pwMsg, setPwMsg] = useState<string | null>(null);
+
   // auth guard
   useEffect(() => {
     (async () => {
@@ -187,6 +193,37 @@ export default function DashboardPage() {
     router.replace("/login");
   }
 
+  async function handleChangePassword() {
+    setPwMsg(null);
+
+    if (pw1.length < 8) {
+      setPwMsg("La contraseña debe tener mínimo 8 caracteres.");
+      return;
+    }
+    if (pw1 !== pw2) {
+      setPwMsg("Las contraseñas no coinciden.");
+      return;
+    }
+
+    setPwLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: pw1 });
+      if (error) throw error;
+
+      setPwMsg("✅ Contraseña actualizada correctamente.");
+      setPw1("");
+      setPw2("");
+
+      setTimeout(() => setPwOpen(false), 1200);
+    } catch (e: any) {
+      setPwMsg(e?.message || "No se pudo cambiar la contraseña.");
+    } finally {
+      setPwLoading(false);
+    }
+  }
+
+
+
   // aprobado/reprobado
   const PASS_GRADE = summaryStats?.pass_grade ?? 70;
   const gradeTextColor = (value: number | null) => {
@@ -272,6 +309,29 @@ export default function DashboardPage() {
             <div style={{ fontWeight: 900 }}>{me.profile.phone}</div>
           </div>
         )}
+
+        <button
+          onClick={() => {
+            setPwMsg(null);
+            setPw1("");
+            setPw2("");
+            setPwOpen(true);
+          }}
+          style={{
+            width: "100%",
+            border: 0,
+            borderRadius: 14,
+            marginTop: 20, 
+            padding: "12px 12px",
+            cursor: "pointer",
+            color: "white",
+            background: "linear-gradient(180deg, var(--sky), var(--sky2))",
+            fontWeight: 900,
+          }}
+        >
+          Cambiar contraseña
+        </button>
+
 
         <div style={{ marginTop: 16 }}>
           <button
@@ -658,6 +718,109 @@ export default function DashboardPage() {
           </div>
         </div>
       </main>
+      {/* ✅ MODAL cambiar contraseña */}
+      {pwOpen && (
+        <div
+          onClick={() => setPwOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,.25)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 420,
+              borderRadius: 18,
+              border: "1px solid var(--stroke)",
+              background: "rgba(255,255,255,.98)",
+              boxShadow: "0 20px 70px rgba(0,0,0,.25)",
+              padding: 16,
+            }}
+          >
+            <div style={{ fontWeight: 900, fontSize: 18 }}>Cambiar contraseña</div>
+            <div style={{ color: "var(--muted)", marginTop: 6, fontSize: 13 }}>
+              Debe tener mínimo 8 caracteres.
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <div className="label">Nueva contraseña</div>
+              <input
+                className="input"
+                type="password"
+                value={pw1}
+                onChange={(e) => setPw1(e.target.value)}
+                placeholder="********"
+              />
+            </div>
+
+            <div style={{ marginTop: 10 }}>
+              <div className="label">Confirmar contraseña</div>
+              <input
+                className="input"
+                type="password"
+                value={pw2}
+                onChange={(e) => setPw2(e.target.value)}
+                placeholder="********"
+              />
+            </div>
+
+            {pwMsg && (
+              <div
+                style={{
+                  marginTop: 10,
+                  fontWeight: 800,
+                  color: pwMsg.startsWith("✅") ? "#15803d" : "#b91c1c",
+                }}
+              >
+                {pwMsg}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => setPwOpen(false)}
+                style={{
+                  border: "1px solid var(--stroke2)",
+                  background: "rgba(255,255,255,.85)",
+                  borderRadius: 14,
+                  padding: "10px 12px",
+                  cursor: "pointer",
+                  fontWeight: 900,
+                }}
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                disabled={pwLoading}
+                onClick={handleChangePassword}
+                style={{
+                  border: 0,
+                  borderRadius: 14,
+                  padding: "10px 12px",
+                  cursor: pwLoading ? "not-allowed" : "pointer",
+                  color: "white",
+                  background: "linear-gradient(180deg, var(--sky), var(--sky2))",
+                  fontWeight: 900,
+                  opacity: pwLoading ? 0.7 : 1,
+                }}
+              >
+                {pwLoading ? "Guardando..." : "Guardar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
