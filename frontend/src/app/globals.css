@@ -442,3 +442,12 @@ button{
   flex: 1;
 }
 
+.msgOk{
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(34,197,94,.35);
+  background: rgba(34,197,94,.12);
+  color: color-mix(in srgb, var(--text) 92%, transparent);
+  font-weight: 800;
+}

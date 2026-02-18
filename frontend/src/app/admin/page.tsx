@@ -9,7 +9,6 @@ import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 
-
 type Course = { id: number; name: string; level: number; year: string | null };
 type ClassItem = { id: number; name: string; level: number };
 type EvalType = { id: number; type: string };
@@ -36,7 +35,13 @@ type AdminView =
   | "TYPES"
   | "ASSIGN_TEACHER"
   | "ASSIGN_STUDENTS"
-  | "UPLOAD_EXCEL";
+  | "UPLOAD_EXCEL"; // crear users (manual + excel)
+
+const ROLE_OPTIONS = [
+  { value: "S", label: "Student (S)" },
+  { value: "T", label: "Teacher (T)" },
+  { value: "A", label: "Admin (A)" },
+] as const;
 
 export default function AdminPage() {
   const router = useRouter();
@@ -45,11 +50,12 @@ export default function AdminPage() {
   const [loadingMe, setLoadingMe] = useState(true);
 
   const [msg, setMsg] = useState<string | null>(null);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
 
-  // ✅ sidebar + hamburguesa (igual que student)
+  // ✅ sidebar + hamburguesa
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // ✅ selector de panel (arriba)
+  // ✅ selector de panel
   const [view, setView] = useState<AdminView>("COURSES");
 
   // ===== data lists =====
@@ -87,17 +93,24 @@ export default function AdminPage() {
     [selectedStudents]
   );
 
-  // ===== upload excel =====
+  // ===== upload excel (crear usuarios) =====
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadReport, setUploadReport] = useState<any>(null);
 
-  // ===== change password modal =====
-  const [pwOpen, setPwOpen] = useState(false);
-  const [pw1, setPw1] = useState("");
-  const [pw2, setPw2] = useState("");
-  const [pwLoading, setPwLoading] = useState(false);
-  const [pwMsg, setPwMsg] = useState<string | null>(null);
+  // ===== crear usuario manual =====
+  const [uEmail, setUEmail] = useState("");
+  const [uName, setUName] = useState("");
+  const [uCedula, setUCedula] = useState("");
+  const [uCodeJiliu, setUCodeJiliu] = useState("");
+  const [uCourseId, setUCourseId] = useState<string>(""); // string -> number
+  const [uRoles, setURoles] = useState<Record<"S" | "T" | "A", boolean>>({
+    S: true,
+    T: false,
+    A: false,
+  });
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [createUserReport, setCreateUserReport] = useState<any>(null);
 
   // ===== auth guard =====
   useEffect(() => {
@@ -273,8 +286,8 @@ export default function AdminPage() {
     }
   }
 
-  // ===== Upload excel =====
-  async function uploadExcel() {
+  // ===== Upload excel: crear usuarios =====
+  async function uploadExcelUsers() {
     setMsg(null);
     setUploadReport(null);
 
@@ -314,12 +327,68 @@ export default function AdminPage() {
     }
   }
 
+  function resetManualUserForm() {
+    setUEmail("");
+    setUName("");
+    setUCedula("");
+    setUCodeJiliu("");
+    setUCourseId("");
+    setURoles({ S: true, T: false, A: false });
+    setCreateUserReport(null);
+  }
+
+  // ===== Crear 1 usuario manual =====
+  async function createUserManual() {
+    setMsg(null);
+    setOkMsg(null);
+
+    setCreateUserReport(null);
+
+    const email = uEmail.trim().toLowerCase();
+    const name = uName.trim();
+    const cedula = uCedula.trim();
+    const code_jiliu = uCodeJiliu.trim();
+    const id_course = uCourseId ? Number(uCourseId) : null;
+
+    const roles = (Object.entries(uRoles) as Array<[string, boolean]>)
+      .filter(([, v]) => v)
+      .map(([k]) => k) as Array<"S" | "T" | "A">;
+
+    if (!email || !email.includes("@")) return setMsg("Email inválido.");
+    if (!name) return setMsg("Nombre requerido.");
+    if (roles.length === 0) return setMsg("Selecciona al menos 1 rol (S/T/A).");
+
+    setCreatingUser(true);
+    try {
+      // ✅ Este endpoint lo debes tener en backend:
+      // POST /api/admin/create-user
+      const res = await apiFetch("/api/admin/create-user", {
+        method: "POST",
+        body: JSON.stringify({
+          email,
+          name,
+          roles,
+          cedula: cedula || null,
+          code_jiliu: code_jiliu || null,
+          id_course: id_course || null,
+        }),
+      });
+
+      setCreateUserReport(res);
+      setOkMsg("✅ Usuario creado/actualizado");
+      resetManualUserForm();
+      await loadAll();
+    } catch (e: any) {
+      setMsg(e?.message || "Error creando usuario");
+    } finally {
+      setCreatingUser(false);
+    }
+  }
+
   async function handleLogout() {
     await supabase.auth.signOut();
     router.replace("/login");
   }
-
-
 
   const roleLabel = useMemo(() => roleLabelFromRole(primaryRole(me)), [me]);
 
@@ -336,14 +405,14 @@ export default function AdminPage() {
 
   if (loadingMe) return <div className="container">Cargando...</div>;
 
-  // ✅ medidas UI (igual que student)
+  // ✅ medidas UI
   const SIDEBAR_W = 320;
   const HAM_PAD = 14;
   const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
 
   return (
     <div>
-      {/* ✅ HAMBURGUESA (igual que student: franja + botón que se pega) */}
+      {/* ✅ HAMBURGUESA */}
       <div
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -404,7 +473,7 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* ✅ SIDEBAR (ajustado a tus tokens, como student) */}
+      {/* ✅ SIDEBAR */}
       <aside
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -453,7 +522,9 @@ export default function AdminPage() {
           <div className="label">Rol</div>
           <div style={{ fontWeight: 900 }}>{roleLabel}</div>
         </div>
+
         <ChangePasswordButton email={me?.user?.email} className="btn" />
+
         <div style={{ marginTop: 12 }}>
           <button className="btn" onClick={handleLogout} style={{ width: "100%" }}>
             Salir
@@ -503,7 +574,11 @@ export default function AdminPage() {
             </div>
 
             <div style={{ minWidth: 320 }}>
-              <select className="select" value={view} onChange={(e) => setView(e.target.value as AdminView)}>
+              <select
+                className="select"
+                value={view}
+                onChange={(e) => setView(e.target.value as AdminView)}
+              >
                 <option value="COURSES">Crear course</option>
                 <option value="CLASSES">Crear materia</option>
                 <option value="TYPES">Crear tipo de evaluación</option>
@@ -519,6 +594,13 @@ export default function AdminPage() {
               {msg}
             </div>
           )}
+
+          {okMsg && (
+            <div className="msgOk" style={{ marginTop: 12 }}>
+              {okMsg}
+            </div>
+          )}
+
 
           {/* =========================
               PANEL: CREAR COURSE
@@ -745,7 +827,11 @@ export default function AdminPage() {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div>
                   <div className="label">Teacher</div>
-                  <select className="select" value={selTeacher} onChange={(e) => setSelTeacher(e.target.value)}>
+                  <select
+                    className="select"
+                    value={selTeacher}
+                    onChange={(e) => setSelTeacher(e.target.value)}
+                  >
                     <option value="">Selecciona...</option>
                     {teachers.map((t) => (
                       <option key={t.id} value={t.id}>
@@ -757,7 +843,11 @@ export default function AdminPage() {
 
                 <div>
                   <div className="label">Materia</div>
-                  <select className="select" value={selClass} onChange={(e) => setSelClass(e.target.value)}>
+                  <select
+                    className="select"
+                    value={selClass}
+                    onChange={(e) => setSelClass(e.target.value)}
+                  >
                     <option value="">Selecciona...</option>
                     {classes.map((c) => (
                       <option key={c.id} value={String(c.id)}>
@@ -880,7 +970,10 @@ export default function AdminPage() {
                         </div>
                       ) : (
                         courseStudents.map((s) => (
-                          <div key={s.id} style={{ padding: 12, borderTop: "1px solid rgba(2,132,199,.10)" }}>
+                          <div
+                            key={s.id}
+                            style={{ padding: 12, borderTop: "1px solid rgba(2,132,199,.10)" }}
+                          >
                             <div style={{ fontWeight: 900 }}>{s.name}</div>
                             <div style={{ color: "var(--muted)", fontSize: 13 }}>
                               {s.email} {s.cedula ? `· ${s.cedula}` : ""}
@@ -896,66 +989,225 @@ export default function AdminPage() {
           )}
 
           {/* =========================
-              PANEL: SUBIR EXCEL
+              PANEL: USERS (manual + excel)
               ========================= */}
           {view === "UPLOAD_EXCEL" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Subir Excel: crear usuarios</h2>
+              <h2 style={{ marginTop: 0 }}>Usuarios</h2>
 
-              <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
-                Columnas esperadas: <b>email</b>, <b>name</b>, <b>type</b> (S/T/A), <b>cedula</b> (opcional),{" "}
-                <b>id_course</b> (opcional), <b>code_jiliu</b> (opcional).
-                <br />
-                Password por defecto: <b>password</b> (o <b>DEFAULT_PASSWORD</b> en el backend).
-              </div>
+              {/* ====== MANUAL (1) ====== */}
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: 14,
+                  borderRadius: 18,
+                  border: "1px solid var(--stroke)",
+                  background: "rgba(14,165,233,.06)",
+                }}
+              >
+                <div style={{ fontWeight: 900, fontSize: 16 }}>Crear usuario manual (1)</div>
+                <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>
+                  Crea o actualiza 1 usuario sin Excel. Roles: S/T/A. (Password por defecto lo maneja el backend)
+                </div>
 
-              <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12 }}>
-                <input ref={fileRef} type="file" accept=".xlsx" />
-                <button className="btn" onClick={uploadExcel} disabled={uploading} style={{ width: 220 }}>
-                  {uploading ? "Subiendo..." : "Procesar Excel"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setUploadReport(null);
-                    setMsg(null);
-                    if (fileRef.current) fileRef.current.value = "";
+                <div
+                  style={{
+                    marginTop: 12,
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 12,
                   }}
-                  className="btnLight"
                 >
-                  Limpiar
-                </button>
-              </div>
-
-              {uploadReport && (
-                <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
-                  <div style={{ padding: 12, fontWeight: 900, background: "rgba(14,165,233,.08)" }}>
-                    Resultado
+                  <div>
+                    <div className="label">Email</div>
+                    <input
+                      className="input"
+                      value={uEmail}
+                      onChange={(e) => setUEmail(e.target.value)}
+                      placeholder="correo@dominio.com"
+                      autoComplete="off"
+                    />
                   </div>
-                  <div style={{ padding: 12 }}>
-                    <div style={{ fontWeight: 900 }}>Creados: {uploadReport.created}</div>
-                    <div style={{ fontWeight: 900 }}>Actualizados: {uploadReport.updated}</div>
-                    <div style={{ fontWeight: 900 }}>Saltados: {uploadReport.skipped}</div>
 
-                    {Array.isArray(uploadReport.errors) && uploadReport.errors.length > 0 && (
-                      <div style={{ marginTop: 10 }}>
-                        <div style={{ fontWeight: 900, color: "#b91c1c" }}>Errores:</div>
-                        <ul style={{ marginTop: 6 }}>
-                          {uploadReport.errors.slice(0, 25).map((x: any, idx: number) => (
-                            <li key={idx} style={{ color: "#b91c1c", fontWeight: 700 }}>
-                              Fila {x.row}: {x.error}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+                  <div>
+                    <div className="label">Nombre</div>
+                    <input
+                      className="input"
+                      value={uName}
+                      onChange={(e) => setUName(e.target.value)}
+                      placeholder="Nombre completo"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="label">Cédula (opcional)</div>
+                    <input
+                      className="input"
+                      value={uCedula}
+                      onChange={(e) => setUCedula(e.target.value)}
+                      placeholder="123..."
+                    />
+                  </div>
+
+                  <div>
+                    <div className="label">code_jiliu (opcional)</div>
+                    <input
+                      className="input"
+                      value={uCodeJiliu}
+                      onChange={(e) => setUCodeJiliu(e.target.value)}
+                      placeholder="Código interno"
+                    />
+                  </div>
+
+                  <div style={{ gridColumn: "1 / span 2" }}>
+                    <div className="label">Course (opcional)</div>
+                    <select
+                      className="select"
+                      value={uCourseId}
+                      onChange={(e) => setUCourseId(e.target.value)}
+                    >
+                      <option value="">Sin course</option>
+                      {courses.map((c) => (
+                        <option key={c.id} value={String(c.id)}>
+                          {c.name} (Nivel {c.level})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ gridColumn: "1 / span 2" }}>
+                    <div className="label">Roles</div>
+                    <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                      {ROLE_OPTIONS.map((r) => (
+                        <label
+                          key={r.value}
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                            padding: "10px 12px",
+                            borderRadius: 14,
+                            border: "1px solid var(--stroke)",
+                            background: "var(--card)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!!uRoles[r.value]}
+                            onChange={(e) =>
+                              setURoles((p) => ({ ...p, [r.value]: e.target.checked }))
+                            }
+                          />
+                          <span style={{ fontWeight: 900 }}>{r.label}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              )}
+
+                <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+                  <button
+                    className="btn"
+                    onClick={createUserManual}
+                    disabled={creatingUser}
+                    style={{ width: 240 }}
+                  >
+                    {creatingUser ? "Creando..." : "Crear / Actualizar"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMsg(null);
+                      resetManualUserForm();
+                    }}
+                    className="btnLight"
+                  >
+                    Limpiar
+                  </button>
+                </div>
+
+                {createUserReport && (
+                  <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 13 }}>
+                    {typeof createUserReport === "string"
+                      ? createUserReport
+                      : "Listo. (Mira el log/response si deseas más detalle)"}
+                  </div>
+                )}
+              </div>
+
+              {/* ====== EXCEL ====== */}
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>Subir Excel: crear usuarios</div>
+                <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
+                  Columnas esperadas: <b>email</b>, <b>name</b>, <b>type</b> (S/T/A o lista S,T),{" "}
+                  <b>cedula</b> (opcional), <b>id_course</b> (opcional), <b>code_jiliu</b> (opcional).
+                  <br />
+                  Password por defecto: <b>password</b> (o <b>DEFAULT_PASSWORD</b> en el backend).
+                </div>
+
+                <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12 }}>
+                  <input ref={fileRef} type="file" accept=".xlsx" />
+                  <button
+                    className="btn"
+                    onClick={uploadExcelUsers}
+                    disabled={uploading}
+                    style={{ width: 220 }}
+                  >
+                    {uploading ? "Subiendo..." : "Procesar Excel"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUploadReport(null);
+                      setMsg(null);
+                      if (fileRef.current) fileRef.current.value = "";
+                    }}
+                    className="btnLight"
+                  >
+                    Limpiar
+                  </button>
+                </div>
+
+                {uploadReport && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      overflow: "hidden",
+                      borderRadius: 18,
+                      border: "1px solid var(--stroke)",
+                    }}
+                  >
+                    <div style={{ padding: 12, fontWeight: 900, background: "rgba(14,165,233,.08)" }}>
+                      Resultado
+                    </div>
+                    <div style={{ padding: 12 }}>
+                      <div style={{ fontWeight: 900 }}>Creados: {uploadReport.created}</div>
+                      <div style={{ fontWeight: 900 }}>Actualizados: {uploadReport.updated}</div>
+                      <div style={{ fontWeight: 900 }}>Saltados: {uploadReport.skipped}</div>
+
+                      {Array.isArray(uploadReport.errors) && uploadReport.errors.length > 0 && (
+                        <div style={{ marginTop: 10 }}>
+                          <div style={{ fontWeight: 900, color: "#b91c1c" }}>Errores:</div>
+                          <ul style={{ marginTop: 6 }}>
+                            {uploadReport.errors.slice(0, 25).map((x: any, idx: number) => (
+                              <li key={idx} style={{ color: "#b91c1c", fontWeight: 700 }}>
+                                Fila {x.row}: {x.error}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
       </main>
+
       <Footer rightText="Made for Iglesia La Promesa." />
     </div>
   );

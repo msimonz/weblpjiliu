@@ -473,3 +473,223 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
     return res.status(500).json({ error: e?.message || "Error procesando Excel" });
   }
 });
+
+adminRouter.post(
+  "/upload-assign-students",
+  requireAuth,
+  requireAdmin, // Admin only (ajusta si tu middleware usa otro esquema)
+  upload.single("file"),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "Archivo requerido (.xlsx)" });
+
+      const wb = XLSX.read(req.file.buffer, { type: "buffer" });
+      const sheetName = wb.SheetNames?.[0];
+      if (!sheetName) return res.status(400).json({ error: "El Excel no tiene hojas" });
+
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" }); // objetos por fila
+
+      let assigned = 0;
+      let updated = 0;
+      let skipped = 0;
+      const errors = [];
+
+      // Helpers
+      const norm = (v) => String(v ?? "").trim();
+      const asInt = (v) => {
+        const n = Number(String(v).trim());
+        return Number.isFinite(n) ? Math.trunc(n) : 0;
+      };
+
+      for (let i = 0; i < rows.length; i++) {
+        const rowNum = i + 2; // asumiendo header en fila 1
+        const r = rows[i] || {};
+
+        const course_id = asInt(r.course_id || r.courseId || r.id_course || r.course);
+        const email = norm(r.email);
+        const cedula = norm(r.cedula);
+
+        if (!course_id) {
+          skipped++;
+          errors.push({ row: rowNum, error: "course_id requerido" });
+          continue;
+        }
+        if (!email && !cedula) {
+          skipped++;
+          errors.push({ row: rowNum, error: "Debe venir email o cedula" });
+          continue;
+        }
+
+        // 1) Encontrar usuario (tabla users) por email o cedula
+        let user = null;
+
+        if (email) {
+          const { data, error } = await supabaseAdmin
+            .from("users")
+            .select("id,email,cedula,id_course")
+            .ilike("email", email)
+            .maybeSingle();
+
+          if (error) {
+            errors.push({ row: rowNum, error: `Error buscando por email: ${error.message}` });
+            skipped++;
+            continue;
+          }
+          user = data;
+        }
+
+        if (!user && cedula) {
+          const { data, error } = await supabaseAdmin
+            .from("users")
+            .select("id,email,cedula,id_course")
+            .eq("cedula", cedula)
+            .maybeSingle();
+
+          if (error) {
+            errors.push({ row: rowNum, error: `Error buscando por cedula: ${error.message}` });
+            skipped++;
+            continue;
+          }
+          user = data;
+        }
+
+        if (!user?.id) {
+          skipped++;
+          errors.push({ row: rowNum, error: "Usuario no encontrado (email/cedula)" });
+          continue;
+        }
+
+        // 2) Actualizar users.id_course
+        const { error: updErr } = await supabaseAdmin
+          .from("users")
+          .update({ id_course: course_id })
+          .eq("id", user.id);
+
+        if (updErr) {
+          skipped++;
+          errors.push({ row: rowNum, error: `Error asignando course: ${updErr.message}` });
+          continue;
+        }
+
+        // 3) (Opcional pero recomendado) Insertar historial
+        // Si tu tabla user_history existe como en tu diagrama:
+        const { error: histErr } = await supabaseAdmin
+          .from("user_history")
+          .insert([{ id_student: user.id, id_course: course_id }]);
+
+        // Si falla historial, NO tiramos el proceso completo (solo log)
+        if (histErr) {
+          errors.push({ row: rowNum, error: `WARN historial: ${histErr.message}` });
+        }
+
+        // contadores
+        assigned++;
+        if (user.id_course !== course_id) updated++;
+      }
+
+      return res.json({
+        results: {
+          assigned,
+          updated,
+          skipped,
+          errors,
+          total_rows: rows.length,
+        },
+      });
+    } catch (e) {
+      return res.status(500).json({ error: e?.message || "Error procesando Excel" });
+    }
+  }
+);
+
+
+adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const email = cleanStr(req.body?.email).toLowerCase();
+    const name = cleanStr(req.body?.name);
+    const roles = Array.isArray(req.body?.roles) ? req.body.roles : [];
+    const cedula = cleanStr(req.body?.cedula);
+    const code_jiliu = cleanStr(req.body?.code_jiliu);
+    const id_course = toInt(req.body?.id_course);
+
+    if (!email || !email.includes("@")) return res.status(400).json({ error: "email inválido" });
+    if (!name) return res.status(400).json({ error: "name requerido" });
+    if (roles.length === 0 || roles.some(r => !["S","T","A"].includes(String(r).toUpperCase()))) {
+      return res.status(400).json({ error: "roles inválidos (S/T/A)" });
+    }
+
+    const roleList = roles.map(r => String(r).toUpperCase());
+
+    const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || "password";
+
+    // 1) Crear en Auth (si existe, caemos a users por email)
+    let authUserId = null;
+
+    const createRes = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password: DEFAULT_PASSWORD,
+      email_confirm: true,
+      user_metadata: { name, roles: roleList },
+    });
+
+    if (createRes?.error) {
+      const { data: existing, error: exErr } = await supabaseAdmin
+        .from("users")
+        .select("id,email")
+        .eq("email", email)
+        .maybeSingle();
+
+      if (exErr) return res.status(500).json({ error: exErr.message });
+      if (!existing?.id) return res.status(400).json({ error: createRes.error.message || "No se pudo crear" });
+
+      authUserId = existing.id;
+    } else {
+      authUserId = createRes.data.user.id;
+    }
+
+    // 2) Upsert en public.users
+    const payload = {
+      id: authUserId,
+      email,
+      name,
+      cedula: cedula || null,
+      code_jiliu: code_jiliu || null,
+      id_course: id_course || null,
+    };
+
+    const { data: up, error: upDbErr } = await supabaseAdmin
+      .from("users")
+      .upsert(payload, { onConflict: "id" })
+      .select("id,email,name,cedula,code_jiliu,id_course")
+      .maybeSingle();
+
+    if (upDbErr) return res.status(500).json({ error: upDbErr.message });
+
+    // 3) roles en user_type
+    for (const t of roleList) {
+      const typeId = await getTypeIdByCode(t);
+      const { error: utErr } = await supabaseAdmin
+        .from("user_type")
+        .upsert({ id_user: authUserId, id_type: typeId }, { onConflict: "id_user,id_type" });
+
+      if (utErr) return res.status(500).json({ error: `user_type(${t}): ${utErr.message}` });
+    }
+
+    // 4) history si asigna course
+    if (id_course) {
+      const { error: histErr } = await supabaseAdmin
+        .from("user_history")
+        .upsert({ id_student: authUserId, id_course }, { onConflict: "id_student,id_course" });
+
+      if (histErr) {
+        // warn, no fatal
+        return res.json({ ok: true, item: up, warn: `history: ${histErr.message}` });
+      }
+    }
+
+    return res.json({ ok: true, item: up, created: !createRes?.error });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error creando usuario" });
+  }
+});
