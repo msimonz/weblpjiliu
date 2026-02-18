@@ -7,6 +7,8 @@ import { apiFetch } from "@/lib/api";
 import { primaryRole, roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
+import ChangePasswordButton from "@/components/ChangePasswordButton";
+
 
 type TeacherClass = { id: number; name: string; level: number };
 
@@ -521,28 +523,6 @@ export default function TeacherPage() {
     }
   }
 
-  // ✅ Cambiar contraseña (email de recuperación Supabase)
-  async function handleChangePassword() {
-    try {
-      setMsg(null);
-      const email = me?.user?.email;
-      if (!email) {
-        setMsg("No se encontró el email del usuario.");
-        flash("❌ No hay email", "err");
-        return;
-      }
-
-      const redirectTo = `${window.location.origin}/update-password`;
-      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-      if (error) throw error;
-
-      flash("✅ Te envié un correo para cambiar la contraseña", "ok");
-    } catch (e: any) {
-      setMsg(e?.message || "Error enviando correo de cambio de contraseña");
-      flash("❌ No se pudo enviar el correo", "err");
-    }
-  }
-
   async function handleLogout() {
     await supabase.auth.signOut();
     router.replace("/login");
@@ -692,15 +672,7 @@ export default function TeacherPage() {
           <div className="label">Rol</div>
           <div style={{ fontWeight: 900 }}>{roleLabel}</div>
         </div>
-
-        <button
-          className="btn"
-          onClick={handleChangePassword}
-          style={{ width: "100%", marginTop: 20 }}
-        >
-          Cambiar contraseña
-        </button>
-
+        <ChangePasswordButton email={me?.user?.email} className="btn" />
         <div style={{ marginTop: 12 }}>
           <button className="btn" onClick={handleLogout} style={{ width: "100%" }}>
             Salir

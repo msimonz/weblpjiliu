@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import { primaryRole, roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
+import ChangePasswordButton from "@/components/ChangePasswordButton";
 
 type ClassItem = { id: number; name: string; level: number };
 
@@ -242,28 +243,6 @@ export default function DashboardPage() {
     router.replace("/login");
   }
 
-  async function handleChangePassword() {
-    setPwMsg(null);
-
-    if (pw1.length < 8) return setPwMsg("La contraseña debe tener mínimo 8 caracteres.");
-    if (pw1 !== pw2) return setPwMsg("Las contraseñas no coinciden.");
-
-    setPwLoading(true);
-    try {
-      const { error } = await supabase.auth.updateUser({ password: pw1 });
-      if (error) throw error;
-
-      setPwMsg("✅ Contraseña actualizada correctamente.");
-      setPw1("");
-      setPw2("");
-      setTimeout(() => setPwOpen(false), 1200);
-    } catch (e: any) {
-      setPwMsg(e?.message || "No se pudo cambiar la contraseña.");
-    } finally {
-      setPwLoading(false);
-    }
-  }
-
   const PASS_GRADE = summaryStats?.pass_grade ?? 70;
   const gradeTextColor = (value: number | null) => {
     if (value === null) return "inherit";
@@ -407,20 +386,7 @@ export default function DashboardPage() {
           <div className="label">Curso</div>
           <div style={{ fontWeight: 900 }}>{fixedCourseName}</div>
         </div>
-
-        <button
-          className="btn"
-          onClick={() => {
-            setPwMsg(null);
-            setPw1("");
-            setPw2("");
-            setPwOpen(true);
-          }}
-          style={{ width: "100%", marginTop: 20 }}
-        >
-          Cambiar contraseña
-        </button>
-
+        <ChangePasswordButton email={me?.user?.email} className="btn" />
         <div style={{ marginTop: 12 }}>
           <button className="btn" onClick={handleLogout} style={{ width: "100%" }}>
             Salir
@@ -878,97 +844,6 @@ export default function DashboardPage() {
           </div>
         </div>
       </main>
-
-      {/* ✅ MODAL cambiar contraseña */}
-      {pwOpen && (
-        <div
-          onClick={() => setPwOpen(false)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,.25)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: sidebarOpen ? 40 : 60,
-            padding: 16,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "100%",
-              maxWidth: 420,
-              borderRadius: 18,
-              border: "1px solid var(--stroke)",
-              background: "var(--card)",
-              boxShadow: "0 20px 70px rgba(0,0,0,.25)",
-              padding: 16,
-              color: "var(--text)",
-              backdropFilter: "blur(14px)",
-              WebkitBackdropFilter: "blur(14px)",
-            }}
-          >
-            <div style={{ fontWeight: 900, fontSize: 18 }}>Cambiar contraseña</div>
-            <div style={{ color: "var(--muted)", marginTop: 6, fontSize: 13 }}>
-              Debe tener mínimo 8 caracteres.
-            </div>
-
-            <div style={{ marginTop: 14 }}>
-              <div className="label">Nueva contraseña</div>
-              <input
-                className="input"
-                type="password"
-                value={pw1}
-                onChange={(e) => setPw1(e.target.value)}
-                placeholder="********"
-              />
-            </div>
-
-            <div style={{ marginTop: 10 }}>
-              <div className="label">Confirmar contraseña</div>
-              <input
-                className="input"
-                type="password"
-                value={pw2}
-                onChange={(e) => setPw2(e.target.value)}
-                placeholder="********"
-              />
-            </div>
-
-            {pwMsg && (
-              <div
-                style={{
-                  marginTop: 10,
-                  fontWeight: 800,
-                  color: pwMsg.startsWith("✅") ? "#15803d" : "#b91c1c",
-                }}
-              >
-                {pwMsg}
-              </div>
-            )}
-
-            <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
-              <button type="button" onClick={() => setPwOpen(false)} className="btnLight">
-                Cancelar
-              </button>
-
-              <button
-                type="button"
-                disabled={pwLoading}
-                onClick={handleChangePassword}
-                className="btn"
-                style={{
-                  opacity: pwLoading ? 0.7 : 1,
-                  cursor: pwLoading ? "not-allowed" : "pointer",
-                }}
-              >
-                {pwLoading ? "Guardando..." : "Guardar"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       <Footer rightText="Made for Iglesia La Promesa." />
     </div>
   );
