@@ -389,3 +389,32 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
     grade: data,
   });
 });
+
+// PATCH /api/teacher/evaluations/:id
+teacherRouter.patch("/evaluations/:id", requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const percent = Number(req.body?.percent);
+
+    if (!id) return res.status(400).json({ message: "ID inválido" });
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+      return res.status(400).json({ message: "Percent inválido (1..100)" });
+    }
+
+    // (Recomendado) Validar que esa evaluación pertenece a una materia del prof
+    // Si ya tienes esa validación en tus endpoints teacher, úsala aquí también.
+
+    const { data, error } = await supabaseAdmin
+      .from("evaluation")
+      .update({ percent })
+      .eq("id", id)
+      .select("id, percent")
+      .single();
+
+    if (error) throw error;
+
+    return res.json({ item: data });
+  } catch (e) {
+    return res.status(500).json({ message: e?.message || "Error actualizando porcentaje" });
+  }
+});

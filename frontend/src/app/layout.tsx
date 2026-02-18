@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "JILIU | La Promesa - Notas",
+  title: "Portal JILIU | La Promesa",
   description: "Plataforma de notas y asignaciones",
 };
 

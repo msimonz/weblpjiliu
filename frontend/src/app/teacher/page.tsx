@@ -48,7 +48,7 @@ export default function TeacherPage() {
   // ✅ sidebar + hamburguesa (igual que student)
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // ✅ selector de panel (ahora va arriba del contenido, no en sidebar)
+  // ✅ selector de panel
   const [view, setView] = useState<TeacherView>("EVALS");
 
   const [items, setItems] = useState<EvalItem[]>([]);
@@ -88,6 +88,10 @@ export default function TeacherPage() {
   const [gradeDraft, setGradeDraft] = useState<Record<string, string>>({});
   const [savingOne, setSavingOne] = useState<Record<string, boolean>>({});
   const [savingAll, setSavingAll] = useState(false);
+
+  // ✅ NUEVO: edición de porcentajes en "Mis evaluaciones"
+  const [percentDraft, setPercentDraft] = useState<Record<number, string>>({});
+  const [savingPercents, setSavingPercents] = useState(false);
 
   // ✅ toast confirmación
   const [toast, setToast] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
@@ -243,6 +247,82 @@ export default function TeacherPage() {
     }
     return out;
   }, [items, classFilter]);
+
+  // ✅ NUEVO: evaluaciones dentro de la materia elegida (para editar porcentajes)
+  const evalsInSelectedClass = useMemo(() => {
+    if (classFilter === "all") return [];
+    return items.filter((e) => e.id_class === Number(classFilter));
+  }, [items, classFilter]);
+
+  // ✅ inicializar percentDraft cuando cambia materia/lista
+  useEffect(() => {
+    if (classFilter === "all") {
+      setPercentDraft({});
+      return;
+    }
+    const next: Record<number, string> = {};
+    for (const e of evalsInSelectedClass) next[e.id] = String(Number(e.percent ?? 0));
+    setPercentDraft(next);
+  }, [classFilter, evalsInSelectedClass]);
+
+  // ✅ detectar si hay cambios
+  const percentDirty = useMemo(() => {
+    if (classFilter === "all") return false;
+    for (const e of evalsInSelectedClass) {
+      const draft = (percentDraft[e.id] ?? "").trim();
+      const n = Number(draft);
+      if (!Number.isFinite(n)) continue;
+      if (Number(n) !== Number(e.percent)) return true;
+    }
+    return false;
+  }, [classFilter, evalsInSelectedClass, percentDraft]);
+
+  async function updatePercents() {
+    if (classFilter === "all") {
+      setMsg("Selecciona una materia primero.");
+      return;
+    }
+    setMsg(null);
+    setSavingPercents(true);
+
+    try {
+      const changes: Array<{ id: number; percent: number }> = [];
+
+      for (const e of evalsInSelectedClass) {
+        const raw = (percentDraft[e.id] ?? "").trim();
+        const n = Number(raw);
+        if (!Number.isFinite(n)) continue;
+        if (n === Number(e.percent)) continue;
+
+        if (n <= 0 || n > 100) {
+          throw new Error(`Porcentaje inválido en "${e.title}" (1..100)`);
+        }
+        changes.push({ id: e.id, percent: n });
+      }
+
+      if (changes.length === 0) {
+        flash("No hay cambios para guardar", "ok");
+        return;
+      }
+
+      await Promise.all(
+        changes.map((c) =>
+          apiFetch(`/api/teacher/evaluations/${c.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ percent: c.percent }),
+          })
+        )
+      );
+
+      flash("✅ Porcentajes actualizados", "ok");
+      await loadEvaluations();
+    } catch (e: any) {
+      setMsg(e?.message || "Error actualizando porcentajes");
+      flash("❌ No se pudo actualizar", "err");
+    } finally {
+      setSavingPercents(false);
+    }
+  }
 
   // ===== Cargar alumnos del curso + notas de esa evaluación =====
   async function loadRosterAndGrades() {
@@ -472,7 +552,7 @@ export default function TeacherPage() {
 
   if (loadingMe) return <div className="container">Cargando...</div>;
 
-  // ✅ medidas UI (igual que student)
+  // ✅ medidas UI
   const SIDEBAR_W = 320;
   const HAM_PAD = 14;
   const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
@@ -502,7 +582,7 @@ export default function TeacherPage() {
         </div>
       )}
 
-      {/* ✅ HAMBURGUESA (igual que student: franja + botón que se pega) */}
+      {/* ✅ HAMBURGUESA */}
       <div
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -563,7 +643,7 @@ export default function TeacherPage() {
         </div>
       </div>
 
-      {/* ✅ SIDEBAR (ajustado a tus tokens, como student) */}
+      {/* ✅ SIDEBAR */}
       <aside
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -613,7 +693,11 @@ export default function TeacherPage() {
           <div style={{ fontWeight: 900 }}>{roleLabel}</div>
         </div>
 
-        <button className="btn" onClick={handleChangePassword} style={{ width: "100%", marginTop: 20 }}>
+        <button
+          className="btn"
+          onClick={handleChangePassword}
+          style={{ width: "100%", marginTop: 20 }}
+        >
           Cambiar contraseña
         </button>
 
@@ -625,12 +709,7 @@ export default function TeacherPage() {
       </aside>
 
       {/* ✅ MAIN */}
-      <main
-        style={{
-          marginLeft: sidebarOpen ? SIDEBAR_W : 0,
-          transition: "margin-left 180ms ease",
-        }}
-      >
+      <main style={{ marginLeft: sidebarOpen ? SIDEBAR_W : 0, transition: "margin-left 180ms ease" }}>
         <div className="container">
           <div className="topbar" style={{ alignItems: "center" }}>
             <div className="brand">
@@ -659,13 +738,15 @@ export default function TeacherPage() {
           >
             <div>
               <div style={{ fontWeight: 900, fontSize: 16 }}>Sección</div>
-              <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                Elige qué panel quieres ver.
-              </div>
+              <div style={{ color: "var(--muted)", fontSize: 13 }}>Elige qué panel quieres ver.</div>
             </div>
 
             <div style={{ minWidth: 260 }}>
-              <select className="select" value={view} onChange={(e) => setView(e.target.value as TeacherView)}>
+              <select
+                className="select"
+                value={view}
+                onChange={(e) => setView(e.target.value as TeacherView)}
+              >
                 <option value="EVALS">Mis evaluaciones</option>
                 <option value="CREATE">Crear evaluación</option>
                 <option value="UPSERT">Subir nota manual</option>
@@ -684,14 +765,7 @@ export default function TeacherPage() {
               ======================= */}
           {view === "EVALS" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                }}
-              >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                 <h2 style={{ margin: 0 }}>Mis evaluaciones</h2>
                 <button onClick={loadEvaluations} className="btnLight" style={{ fontWeight: 900 }}>
                   {loadingList ? "Cargando..." : "Refrescar"}
@@ -720,6 +794,12 @@ export default function TeacherPage() {
                     Cargando materias...
                   </div>
                 )}
+
+                {classFilter !== "all" && (
+                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                    Tip: puedes editar el <b>%</b> en esta materia y luego guardar al final.
+                  </div>
+                )}
               </div>
 
               <div
@@ -734,7 +814,7 @@ export default function TeacherPage() {
                   <thead>
                     <tr style={{ background: "rgba(14,165,233,.08)" }}>
                       <th style={{ textAlign: "left", padding: 12 }}>Título</th>
-                      <th style={{ textAlign: "left", padding: 12, width: 70 }}>%</th>
+                      <th style={{ textAlign: "left", padding: 12, width: 120 }}>%</th>
                       <th style={{ textAlign: "left", padding: 12 }}>Materia</th>
                       <th style={{ textAlign: "left", padding: 12 }}>Curso</th>
                     </tr>
@@ -747,18 +827,54 @@ export default function TeacherPage() {
                         </td>
                       </tr>
                     ) : (
-                      items.map((e) => (
-                        <tr key={e.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                          <td style={{ padding: 12, fontWeight: 900 }}>{e.title}</td>
-                          <td style={{ padding: 12 }}>{Number(e.percent).toFixed(0)}%</td>
-                          <td style={{ padding: 12 }}>{e.class?.name ?? `ID ${e.id_class}`}</td>
-                          <td style={{ padding: 12 }}>{e.course?.name ?? `ID ${e.id_course}`}</td>
-                        </tr>
-                      ))
+                      items.map((e) => {
+                        const editable = classFilter !== "all" && e.id_class === Number(classFilter);
+                        return (
+                          <tr key={e.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
+                            <td style={{ padding: 12, fontWeight: 900 }}>{e.title}</td>
+
+                            <td style={{ padding: 12 }}>
+                              {editable ? (
+                                <input
+                                  className="input"
+                                  inputMode="numeric"
+                                  value={percentDraft[e.id] ?? String(e.percent)}
+                                  onChange={(ev) => {
+                                    const v = ev.target.value;
+                                    if (v === "") return setPercentDraft((p) => ({ ...p, [e.id]: "" }));
+                                    if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
+                                    setPercentDraft((p) => ({ ...p, [e.id]: v }));
+                                  }}
+                                  style={{ width: 90 }}
+                                  placeholder="0"
+                                />
+                              ) : (
+                                `${Number(e.percent).toFixed(0)}%`
+                              )}
+                            </td>
+
+                            <td style={{ padding: 12 }}>{e.class?.name ?? `ID ${e.id_class}`}</td>
+                            <td style={{ padding: 12 }}>{e.course?.name ?? `ID ${e.id_course}`}</td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
               </div>
+
+              {classFilter !== "all" && (
+                <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                  <button
+                    className="btn"
+                    onClick={updatePercents}
+                    disabled={savingPercents || !percentDirty}
+                    style={{ width: 260 }}
+                  >
+                    {savingPercents ? "Actualizando..." : "Actualizar porcentajes"}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -806,14 +922,7 @@ export default function TeacherPage() {
                 </select>
               </div>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 12,
-                  marginTop: 12,
-                }}
-              >
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
                 {/* CURSO */}
                 <div style={{ gridColumn: "1 / span 2" }}>
                   <div className="label">Curso</div>
@@ -909,13 +1018,7 @@ export default function TeacherPage() {
 
                 {/* % */}
                 <div style={{ gridColumn: "1 / span 2", marginTop: 6 }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                    }}
-                  >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div className="label">Porcentaje</div>
                     <div style={{ fontWeight: 900, fontSize: 16 }}>{cPercent}%</div>
                   </div>
@@ -942,18 +1045,11 @@ export default function TeacherPage() {
           )}
 
           {/* ==================
-              PANEL: UPSERT
+              PANEL: UPSERT (COMPLETO)
               ================== */}
           {view === "UPSERT" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                }}
-              >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                 <h2 style={{ margin: 0 }}>Subir nota manual (upsert)</h2>
 
                 <button
@@ -1007,14 +1103,7 @@ export default function TeacherPage() {
                 </div>
               ) : (
                 <div style={{ marginTop: 12 }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "baseline",
-                      gap: 12,
-                    }}
-                  >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
                     <div style={{ fontWeight: 900 }}>
                       Curso: {selectedEval.course?.name ?? `ID ${selectedEval.id_course}`} · Materia:{" "}
                       {selectedEval.class?.name ?? `ID ${selectedEval.id_class}`}
@@ -1037,9 +1126,7 @@ export default function TeacherPage() {
                         <tr style={{ background: "rgba(14,165,233,.08)" }}>
                           <th style={{ textAlign: "left", padding: 12, width: 130 }}>Cédula</th>
                           <th style={{ textAlign: "left", padding: 12 }}>Alumno</th>
-                          <th style={{ textAlign: "left", padding: 12, width: 160 }}>
-                            Nota (0..100)
-                          </th>
+                          <th style={{ textAlign: "left", padding: 12, width: 160 }}>Nota (0..100)</th>
                           <th style={{ textAlign: "left", padding: 12, width: 180 }}></th>
                         </tr>
                       </thead>
@@ -1054,8 +1141,7 @@ export default function TeacherPage() {
                         ) : gRoster.length === 0 ? (
                           <tr>
                             <td colSpan={4} style={{ padding: 12, color: "var(--muted)" }}>
-                              No se encontraron alumnos para este curso (o tu endpoint no devolvió
-                              items).
+                              No se encontraron alumnos para este curso.
                             </td>
                           </tr>
                         ) : (
@@ -1095,8 +1181,8 @@ export default function TeacherPage() {
                   </div>
 
                   <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 13 }}>
-                    Tip: si un alumno ya tenía nota, el textbox aparece precargado. Puedes editar y
-                    guardar uno por uno o “Actualizar todos”.
+                    Tip: si un alumno ya tenía nota, el textbox aparece precargado. Puedes editar y guardar
+                    uno por uno o “Actualizar todos”.
                   </div>
                 </div>
               )}
@@ -1104,6 +1190,7 @@ export default function TeacherPage() {
           )}
         </div>
       </main>
+
       <Footer rightText="Made for Iglesia La Promesa." />
     </div>
   );
