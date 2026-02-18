@@ -349,3 +349,96 @@ button{
   font-size: 12px;
 }
 
+/* =========================
+   HEADER (dark-ready)
+   ========================= */
+
+.topbar-sticky{
+  position: sticky;
+  top: 0;
+  z-index: 80;
+  background: var(--card);
+  border-bottom: 1px solid var(--stroke);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--text);
+}
+
+/* En tu CSS .container tiene padding grande (32px 20px 60px).
+   Para header conviene compactarlo sin afectar el resto. */
+.topbar-inner{
+  height: 72px;
+  padding: 14px 20px;   /* reemplaza el padding alto del .container */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.brand-row{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-logos{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-title{
+  display: flex;
+  flex-direction: column;
+  line-height: 1.05;
+}
+
+.brand-title b{
+  color: var(--text);
+  font-weight: 900;
+}
+
+.brand-title span{
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.topbar-actions{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Badge que sí cambia en dark */
+.badge-soft{
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke);
+  background: var(--btn-light-bg);
+  color: var(--btn-light-text);
+  box-shadow: var(--btn-light-shadow);
+  font-weight: 900;
+  font-size: 13px;
+}
+
+/* Botón compact (para que no quede gigante en header) */
+.btn-compact{
+  padding: 10px 12px;
+  border-radius: 14px;
+}
+
+/* En global.css */
+.pageShell{
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.pageContent{
+  flex: 1;
+}
+

@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
 import { getRoles, roleLabelFromRole, type RoleCode } from "@/lib/roles";
+import Header from "@/components/Header";
+import Footer from "@/components/Footer";
 
 export default function LoginPage() {
   const router = useRouter();
 
-  // ✅ logo
+  // logo desde Supabase Storage (para <Header mode="simple" />)
   const [logoUrl, setLogoUrl] = useState<string>("");
 
   useEffect(() => {
@@ -19,6 +21,9 @@ export default function LoginPage() {
 
   const [cedula, setCedula] = useState("");
   const [password, setPassword] = useState("");
+
+  // ✅ mostrar/ocultar contraseña
+  const [showPw, setShowPw] = useState(false);
 
   // ✅ rol elegido
   const [rolePick, setRolePick] = useState<RoleCode>("S");
@@ -60,7 +65,7 @@ export default function LoginPage() {
 
       // 3) validar roles reales contra el rol seleccionado
       const info = await apiFetch("/api/auth/me");
-      const roles = getRoles(info); // RoleCode[]
+      const roles = getRoles(info);
 
       if (!roles.includes(rolePick)) {
         await supabase.auth.signOut();
@@ -77,68 +82,23 @@ export default function LoginPage() {
     }
   }
 
-  const HEADER_H = 82; // ✅ nuevo alto (más grande)
+  const HEADER_H = 82;
 
   return (
     <div
       style={{
         minHeight: "100vh",
-        background:
-          "radial-gradient(1200px 600px at 50% 0%, rgba(14,165,233,.18), transparent 70%)",
         display: "grid",
         placeItems: "center",
         padding: 20,
       }}
     >
-      {/* ✅ HEADER (Logo grande + " | JILIU") */}
-      <header
-        style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          height: HEADER_H,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 14,
-          background: "rgba(255,255,255,.55)",
-          borderBottom: "1px solid rgba(2,132,199,.15)",
-          backdropFilter: "blur(10px)",
-          WebkitBackdropFilter: "blur(10px)",
-          zIndex: 50,
-        }}
-      >
-        {logoUrl ? (
-          <img
-            src={logoUrl}
-            alt="JILIU"
-            style={{ height: 56, width: "auto", objectFit: "contain" }}
-          />
-        ) : null}
+      {/* ✅ Header global (dark-ready) */}
+      <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 80 }}>
+        <Header mode="simple" logoUrl={logoUrl} />
+      </div>
 
-        <div
-          style={{
-            width: 1,
-            height: 44,
-            background: "rgba(15,23,42,.18)",
-            borderRadius: 999,
-          }}
-        />
-
-        <div
-          style={{
-            fontWeight: 950,
-            fontSize: 18,
-            color: "rgba(15,23,42,.9)",
-            letterSpacing: "-0.01em",
-          }}
-        >
-          JILIU
-        </div>
-      </header>
-
-      {/* ✅ LOGIN CARD (se baja para no chocar con el header) */}
+      {/* ✅ LOGIN CARD (bajado para no chocar con el header fixed) */}
       <div
         className="container"
         style={{
@@ -152,7 +112,8 @@ export default function LoginPage() {
           <h1 style={{ margin: "6px 0 6px", fontSize: 28, letterSpacing: "-0.02em" }}>
             Iniciar sesión
           </h1>
-          <p className="muted" style={{ marginTop: 0 }}>
+
+          <p style={{ marginTop: 0, color: "var(--muted)" }}>
             Ingresa con tu cédula, contraseña y el rol con el que deseas entrar.
           </p>
 
@@ -184,16 +145,47 @@ export default function LoginPage() {
               />
             </div>
 
+            {/* ✅ Contraseña con ojito */}
             <div>
               <div className="label">Contraseña</div>
-              <input
-                className="input"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Tu contraseña"
-                autoComplete="current-password"
-              />
+
+              <div style={{ position: "relative" }}>
+                <input
+                  className="input"
+                  type={showPw ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Tu contraseña"
+                  autoComplete="current-password"
+                  style={{ paddingRight: 52 }}
+                />
+
+                <button
+                  type="button"
+                  onClick={() => setShowPw((v) => !v)}
+                  aria-label={showPw ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  title={showPw ? "Ocultar" : "Mostrar"}
+                  style={{
+                    position: "absolute",
+                    right: 10,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    width: 38,
+                    height: 38,
+                    borderRadius: 12,
+                    border: "1px solid var(--btn-light-border)",
+                    background: "var(--btn-light-bg)",
+                    color: "var(--btn-light-text)",
+                    boxShadow: "var(--btn-light-shadow)",
+                    cursor: "pointer",
+                    display: "grid",
+                    placeItems: "center",
+                    padding: 0,
+                  }}
+                >
+                  <span style={{ fontSize: 16, lineHeight: 1 }}>{showPw ? "🙈" : "👁️"}</span>
+                </button>
+              </div>
             </div>
 
             <button className="btn" type="submit" disabled={loading} style={{ width: "100%" }}>
@@ -206,6 +198,8 @@ export default function LoginPage() {
           </div>
         </div>
       </div>
+
+      <Footer rightText="Made for Iglesia La Promesa." />
     </div>
   );
 }

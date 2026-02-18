@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
 import { primaryRole, roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
+import Footer from "@/components/Footer";
 
 type Course = { id: number; name: string; level: number; year: string | null };
 type ClassItem = { id: number; name: string; level: number };
@@ -1077,6 +1078,7 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+      <Footer rightText="Made for Iglesia La Promesa." />
     </div>
   );
 }
