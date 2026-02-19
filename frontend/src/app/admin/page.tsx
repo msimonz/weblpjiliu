@@ -18,7 +18,6 @@ type UserMini = {
   name: string;
   email: string;
   cedula: string | null;
-  type?: "S" | "T" | "A";
   id_course?: number | null;
 };
 
@@ -34,8 +33,8 @@ type AdminView =
   | "CLASSES"
   | "TYPES"
   | "ASSIGN_TEACHER"
-  | "ASSIGN_STUDENTS"
-  | "UPLOAD_EXCEL"; // crear users (manual + excel)
+  | "USERS" // Crear (manual + excel) + descargar plantilla
+  | "UPDATE_USER"; // Actualizar por cédula
 
 const ROLE_OPTIONS = [
   { value: "S", label: "Student (S)" },
@@ -43,19 +42,30 @@ const ROLE_OPTIONS = [
   { value: "A", label: "Admin (A)" },
 ] as const;
 
+// ==============================
+// ✅ Plantilla Excel en Storage
+// ==============================
+// Recomendación: bucket público y guardas la URL pública aquí (o en ENV):
+// NEXT_PUBLIC_USERS_TEMPLATE_URL=https://xxxx.supabase.co/storage/v1/object/public/<bucket>/<path>
+const TEMPLATE_PUBLIC_URL =
+  process.env.NEXT_PUBLIC_USERS_TEMPLATE_URL ||
+  "https://xujejxbzeexqagotdvdi.supabase.co/storage/v1/object/public/assets/utilities/CargaEstudiantesJILIU.xlsx";
+
+// Si bucket es privado, configuras esto para signed URL:
+const TEMPLATE_BUCKET = process.env.NEXT_PUBLIC_TEMPLATES_BUCKET || "";
+const TEMPLATE_PATH = process.env.NEXT_PUBLIC_USERS_TEMPLATE_PATH || "";
+
 export default function AdminPage() {
   const router = useRouter();
 
   const [me, setMe] = useState<any>(null);
   const [loadingMe, setLoadingMe] = useState(true);
 
-  const [msg, setMsg] = useState<string | null>(null);
-  const [okMsg, setOkMsg] = useState<string | null>(null);
+  // mensajes
+  const [msg, setMsg] = useState<string | null>(null); // rojo
+  const [okMsg, setOkMsg] = useState<string | null>(null); // verde
 
-  // ✅ sidebar + hamburguesa
   const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  // ✅ selector de panel
   const [view, setView] = useState<AdminView>("COURSES");
 
   // ===== data lists =====
@@ -64,8 +74,6 @@ export default function AdminPage() {
   const [types, setTypes] = useState<EvalType[]>([]);
   const [teachers, setTeachers] = useState<UserMini[]>([]);
   const [students, setStudents] = useState<UserMini[]>([]);
-  const [courseStudents, setCourseStudents] = useState<UserMini[]>([]);
-
   const [loadingData, setLoadingData] = useState(false);
 
   // ===== create course =====
@@ -84,33 +92,56 @@ export default function AdminPage() {
   const [selTeacher, setSelTeacher] = useState<string>("");
   const [selClass, setSelClass] = useState<string>("");
 
-  // ===== assign students -> course =====
-  const [selCourse, setSelCourse] = useState<string>("");
-  const [studentQuery, setStudentQuery] = useState("");
-  const [selectedStudents, setSelectedStudents] = useState<Record<string, boolean>>({});
-  const selectedCount = useMemo(
-    () => Object.values(selectedStudents).filter(Boolean).length,
-    [selectedStudents]
-  );
-
-  // ===== upload excel (crear usuarios) =====
+  // ===== USERS: upload excel =====
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadReport, setUploadReport] = useState<any>(null);
 
-  // ===== crear usuario manual =====
+  // ===== USERS: crear manual =====
   const [uEmail, setUEmail] = useState("");
   const [uName, setUName] = useState("");
   const [uCedula, setUCedula] = useState("");
   const [uCodeJiliu, setUCodeJiliu] = useState("");
-  const [uCourseId, setUCourseId] = useState<string>(""); // string -> number
+  const [uCourseId, setUCourseId] = useState<string>("");
   const [uRoles, setURoles] = useState<Record<"S" | "T" | "A", boolean>>({
     S: true,
     T: false,
     A: false,
   });
   const [creatingUser, setCreatingUser] = useState(false);
-  const [createUserReport, setCreateUserReport] = useState<any>(null);
+
+  // ===== UPDATE USER (por cédula) =====
+  const [upCedula, setUpCedula] = useState("");
+  const [upEmail, setUpEmail] = useState("");
+  const [upName, setUpName] = useState("");
+  const [upCodeJiliu, setUpCodeJiliu] = useState("");
+  const [upCourseId, setUpCourseId] = useState<string>("");
+  const [upRoles, setUpRoles] = useState<Record<"S" | "T" | "A", boolean>>({
+    S: true,
+    T: false,
+    A: false,
+  });
+
+  // ✅ upLoading = submit update
+  const [upLoading, setUpLoading] = useState(false);
+  // ✅ upSearching = buscando por cédula
+  const [upSearching, setUpSearching] = useState(false);
+  const lastCedulaFetchedRef = useRef<string>("");
+  const searchSeqRef = useRef<number>(0);
+
+  // plantilla download
+  const [templateLoading, setTemplateLoading] = useState(false);
+
+  // ===== helpers mensajes =====
+  function showOk(text: string) {
+    setMsg(null);
+    setOkMsg(text);
+    setTimeout(() => setOkMsg(null), 4500);
+  }
+  function showErr(text: string) {
+    setOkMsg(null);
+    setMsg(text);
+  }
 
   // ===== auth guard =====
   useEffect(() => {
@@ -135,6 +166,7 @@ export default function AdminPage() {
 
   async function loadAll() {
     setMsg(null);
+    setOkMsg(null);
     setLoadingData(true);
     try {
       const [c1, c2, c3, t1, s1] = await Promise.all([
@@ -151,7 +183,7 @@ export default function AdminPage() {
       setTeachers(t1?.items || []);
       setStudents(s1?.items || []);
     } catch (e: any) {
-      setMsg(e?.message || "Error cargando datos del admin");
+      showErr(e?.message || "Error cargando datos del admin");
     } finally {
       setLoadingData(false);
     }
@@ -162,11 +194,95 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingMe]);
 
-  // ===== create handlers =====
+  // =========================
+  // ✅ AUTOCARGAR USER AL ESCRIBIR CÉDULA (UPDATE_USER)
+  // =========================
+  useEffect(() => {
+    if (view !== "UPDATE_USER") return;
+
+    const ced = upCedula.trim();
+
+    // si está vacío, limpiar todo
+    if (!ced) {
+      lastCedulaFetchedRef.current = "";
+      setUpSearching(false);
+      setUpEmail("");
+      setUpName("");
+      setUpCodeJiliu("");
+      setUpCourseId("");
+      setUpRoles({ S: true, T: false, A: false });
+      return;
+    }
+
+    // evita consultar por muy pocos dígitos
+    if (ced.length < 5) return;
+
+    const seq = ++searchSeqRef.current;
+
+    const t = setTimeout(async () => {
+      // evita repetir exacto lo mismo
+      if (lastCedulaFetchedRef.current === ced) return;
+
+      setUpSearching(true);
+      try {
+        // ✅ backend: GET /api/admin/user-by-cedula?cedula=...
+        const res = await apiFetch(
+          `/api/admin/user-by-cedula?cedula=${encodeURIComponent(ced)}`
+        );
+
+        // si llegó otra consulta después, ignora esta respuesta
+        if (seq !== searchSeqRef.current) return;
+
+        const item = res?.item;
+        if (!item?.id) throw new Error("Usuario no encontrado");
+
+        lastCedulaFetchedRef.current = ced;
+
+        setUpEmail(item.email || "");
+        setUpName(item.name || "");
+        setUpCodeJiliu(item.code_jiliu || "");
+        setUpCourseId(item.id_course ? String(item.id_course) : "");
+
+        const roleSet = new Set(
+          (item.roles || []).map((x: string) => String(x).toUpperCase())
+        );
+        setUpRoles({
+          S: roleSet.has("S"),
+          T: roleSet.has("T"),
+          A: roleSet.has("A"),
+        });
+
+        // opcional: mensaje suave (sin “ensuciar” si prefieres)
+        setMsg(null);
+        setOkMsg("✅ Usuario cargado. Ya puedes editar.");
+        setTimeout(() => setOkMsg(null), 2500);
+      } catch (e: any) {
+        if (seq !== searchSeqRef.current) return;
+
+        lastCedulaFetchedRef.current = "";
+        setUpEmail("");
+        setUpName("");
+        setUpCodeJiliu("");
+        setUpCourseId("");
+        setUpRoles({ S: true, T: false, A: false });
+
+        // si no existe, muéstralo pero sin bloquear
+        setOkMsg(null);
+        setMsg(e?.message || "No se pudo cargar el usuario");
+      } finally {
+        if (seq === searchSeqRef.current) setUpSearching(false);
+      }
+    }, 450);
+
+    return () => clearTimeout(t);
+  }, [upCedula, view]);
+
+  // =========================
+  // COURSES
+  // =========================
   async function createCourse() {
-    setMsg(null);
     const name = newCourseName.trim();
-    if (!name) return setMsg("Nombre del course requerido.");
+    if (!name) return showErr("Nombre del course requerido.");
 
     try {
       await apiFetch("/api/admin/courses", {
@@ -179,17 +295,19 @@ export default function AdminPage() {
       });
       setNewCourseName("");
       setNewCourseYear("");
-      setMsg("✅ Course creado");
+      showOk("✅ Course creado");
       await loadAll();
     } catch (e: any) {
-      setMsg(e?.message || "Error creando course");
+      showErr(e?.message || "Error creando course");
     }
   }
 
+  // =========================
+  // CLASSES
+  // =========================
   async function createClass() {
-    setMsg(null);
     const name = newClassName.trim();
-    if (!name) return setMsg("Nombre de la materia requerido.");
+    if (!name) return showErr("Nombre de la materia requerido.");
 
     try {
       await apiFetch("/api/admin/classes", {
@@ -197,17 +315,19 @@ export default function AdminPage() {
         body: JSON.stringify({ name, level: newClassLevel }),
       });
       setNewClassName("");
-      setMsg("✅ Materia creada");
+      showOk("✅ Materia creada");
       await loadAll();
     } catch (e: any) {
-      setMsg(e?.message || "Error creando materia");
+      showErr(e?.message || "Error creando materia");
     }
   }
 
+  // =========================
+  // EVAL TYPES
+  // =========================
   async function createEvalType() {
-    setMsg(null);
     const t = newType.trim();
-    if (!t) return setMsg("Tipo requerido.");
+    if (!t) return showErr("Tipo requerido.");
 
     try {
       await apiFetch("/api/admin/evaluation-types", {
@@ -215,84 +335,115 @@ export default function AdminPage() {
         body: JSON.stringify({ type: t }),
       });
       setNewType("");
-      setMsg("✅ Tipo creado");
+      showOk("✅ Tipo creado");
       await loadAll();
     } catch (e: any) {
-      setMsg(e?.message || "Error creando tipo");
+      showErr(e?.message || "Error creando tipo");
     }
   }
 
+  // =========================
+  // ASSIGN TEACHER
+  // =========================
   async function assignTeacher() {
-    setMsg(null);
     const id_teacher = selTeacher;
     const id_class = Number(selClass);
 
-    if (!id_teacher) return setMsg("Selecciona un teacher.");
-    if (!id_class) return setMsg("Selecciona una materia.");
+    if (!id_teacher) return showErr("Selecciona un teacher.");
+    if (!id_class) return showErr("Selecciona una materia.");
 
     try {
       await apiFetch("/api/admin/assign-teacher", {
         method: "POST",
         body: JSON.stringify({ id_teacher, id_class }),
       });
-      setMsg("✅ Teacher asignado a la materia");
+      showOk("✅ Teacher asignado a la materia");
     } catch (e: any) {
-      setMsg(e?.message || "Error asignando teacher");
+      showErr(e?.message || "Error asignando teacher");
     }
   }
 
-  async function loadCourseStudents(courseId: number) {
-    try {
-      const res = await apiFetch(`/api/admin/course-students?course_id=${courseId}`);
-      setCourseStudents(res?.items || []);
-    } catch {
-      setCourseStudents([]);
-    }
-  }
-
-  useEffect(() => {
-    const id = Number(selCourse);
-    if (!id) {
-      setCourseStudents([]);
-      return;
-    }
-    loadCourseStudents(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selCourse]);
-
-  async function assignStudents() {
-    setMsg(null);
-    const id_course = Number(selCourse);
-    if (!id_course) return setMsg("Selecciona un course.");
-
-    const ids = Object.entries(selectedStudents)
+  // =========================
+  // USERS: helpers
+  // =========================
+  function rolesFromState(state: Record<"S" | "T" | "A", boolean>) {
+    return (Object.entries(state) as Array<[string, boolean]>)
       .filter(([, v]) => v)
-      .map(([k]) => k);
+      .map(([k]) => k) as Array<"S" | "T" | "A">;
+  }
 
-    if (ids.length === 0) return setMsg("Selecciona al menos 1 estudiante.");
+  function resetManualUserForm() {
+    setUEmail("");
+    setUName("");
+    setUCedula("");
+    setUCodeJiliu("");
+    setUCourseId("");
+    setURoles({ S: true, T: false, A: false });
+  }
 
+  function resetUpdateUserForm() {
+    lastCedulaFetchedRef.current = "";
+    searchSeqRef.current++; // cancela posibles respuestas viejas
+    setUpCedula("");
+    setUpEmail("");
+    setUpName("");
+    setUpCodeJiliu("");
+    setUpCourseId("");
+    setUpRoles({ S: true, T: false, A: false });
+    setUpSearching(false);
+  }
+
+  // =========================
+  // USERS: crear manual (NO opcionales)
+  // =========================
+  async function createUserManual() {
+    setUploadReport(null);
+    const email = uEmail.trim().toLowerCase();
+    const name = uName.trim();
+    const cedula = uCedula.trim();
+    const code_jiliu = uCodeJiliu.trim();
+    const id_course = Number(uCourseId || "0");
+    const roles = rolesFromState(uRoles);
+
+    if (!email || !email.includes("@")) return showErr("Email inválido.");
+    if (!name) return showErr("Nombre requerido.");
+    if (!cedula) return showErr("Cédula requerida.");
+    if (!code_jiliu) return showErr("code_jiliu requerido.");
+    if (!id_course) return showErr("Debes seleccionar un course.");
+    if (roles.length === 0) return showErr("Selecciona al menos 1 rol (S/T/A).");
+
+    setCreatingUser(true);
     try {
-      await apiFetch("/api/admin/assign-students", {
+      await apiFetch("/api/admin/create-user", {
         method: "POST",
-        body: JSON.stringify({ id_course, student_ids: ids }),
+        body: JSON.stringify({
+          email,
+          name,
+          roles,
+          cedula,
+          code_jiliu,
+          id_course,
+        }),
       });
 
-      setMsg(`✅ Asignados ${ids.length} estudiantes al course`);
-      setSelectedStudents({});
+      showOk("✅ Usuario creado/actualizado");
+      resetManualUserForm();
       await loadAll();
-      await loadCourseStudents(id_course);
     } catch (e: any) {
-      setMsg(e?.message || "Error asignando estudiantes");
+      showErr(e?.message || "Error creando usuario");
+    } finally {
+      setCreatingUser(false);
     }
   }
 
-  // ===== Upload excel: crear usuarios =====
+  // =========================
+  // USERS: upload excel (NO opcionales)
+  // =========================
   async function uploadExcelUsers() {
-    setMsg(null);
     setUploadReport(null);
 
     const input = fileRef.current;
-    if (!input?.files?.[0]) return setMsg("Selecciona un archivo .xlsx");
+    if (!input?.files?.[0]) return showErr("Selecciona un archivo .xlsx");
 
     const file = input.files[0];
     setUploading(true);
@@ -317,71 +468,99 @@ export default function AdminPage() {
       if (!resp.ok) throw new Error(json?.error || "Error subiendo excel");
 
       setUploadReport(json?.results || null);
-      setMsg("✅ Excel procesado");
+      showOk("✅ Excel procesado");
       if (fileRef.current) fileRef.current.value = "";
       await loadAll();
     } catch (e: any) {
-      setMsg(e?.message || "Error procesando excel");
+      showErr(e?.message || "Error procesando excel");
     } finally {
       setUploading(false);
     }
   }
 
-  function resetManualUserForm() {
-    setUEmail("");
-    setUName("");
-    setUCedula("");
-    setUCodeJiliu("");
-    setUCourseId("");
-    setURoles({ S: true, T: false, A: false });
-    setCreateUserReport(null);
-  }
+  // =========================
+  // UPDATE USER BY CEDULA
+  // =========================
+  async function updateUserByCedula() {
+    const cedula = upCedula.trim();
+    const email = upEmail.trim().toLowerCase();
+    const name = upName.trim();
+    const code_jiliu = upCodeJiliu.trim();
+    const id_course = Number(upCourseId || "0");
+    const roles = rolesFromState(upRoles);
 
-  // ===== Crear 1 usuario manual =====
-  async function createUserManual() {
-    setMsg(null);
-    setOkMsg(null);
+    if (!cedula) return showErr("Cédula requerida para buscar el usuario.");
+    if (!email || !email.includes("@")) return showErr("Email inválido.");
+    if (!name) return showErr("Nombre requerido.");
+    if (!code_jiliu) return showErr("code_jiliu requerido.");
+    if (!id_course) return showErr("Debes seleccionar un course.");
+    if (roles.length === 0) return showErr("Selecciona al menos 1 rol (S/T/A).");
 
-    setCreateUserReport(null);
-
-    const email = uEmail.trim().toLowerCase();
-    const name = uName.trim();
-    const cedula = uCedula.trim();
-    const code_jiliu = uCodeJiliu.trim();
-    const id_course = uCourseId ? Number(uCourseId) : null;
-
-    const roles = (Object.entries(uRoles) as Array<[string, boolean]>)
-      .filter(([, v]) => v)
-      .map(([k]) => k) as Array<"S" | "T" | "A">;
-
-    if (!email || !email.includes("@")) return setMsg("Email inválido.");
-    if (!name) return setMsg("Nombre requerido.");
-    if (roles.length === 0) return setMsg("Selecciona al menos 1 rol (S/T/A).");
-
-    setCreatingUser(true);
+    setUpLoading(true);
     try {
-      // ✅ Este endpoint lo debes tener en backend:
-      // POST /api/admin/create-user
-      const res = await apiFetch("/api/admin/create-user", {
+      const res = await apiFetch("/api/admin/update-user-by-cedula", {
         method: "POST",
         body: JSON.stringify({
+          cedula,
           email,
           name,
+          code_jiliu,
+          id_course,
           roles,
-          cedula: cedula || null,
-          code_jiliu: code_jiliu || null,
-          id_course: id_course || null,
         }),
       });
 
-      setCreateUserReport(res);
-      setOkMsg("✅ Usuario creado/actualizado");
-      resetManualUserForm();
+      // ✅ si el backend manda warn, lo mostramos
+      if (res?.warn) {
+        showOk(`✅ Usuario actualizado (con advertencia)`);
+        setMsg(`⚠️ ${res.warn}`);
+      } else {
+        showOk("✅ Usuario actualizado por cédula");
+      }
+
+      resetUpdateUserForm();
       await loadAll();
     } catch (e: any) {
-      setMsg(e?.message || "Error creando usuario");
+      // por ejemplo 409: conflictos
+      showErr(e?.message || "Error actualizando usuario");
     } finally {
-      setCreatingUser(false);
+      setUpLoading(false);
+    }
+  }
+
+  // =========================
+  // Descargar plantilla
+  // =========================
+  async function downloadTemplate() {
+    setMsg(null);
+    setOkMsg(null);
+
+    const hasPublic = TEMPLATE_PUBLIC_URL && !TEMPLATE_PUBLIC_URL.includes("REEMPLAZA_AQUI");
+    if (hasPublic) {
+      window.open(TEMPLATE_PUBLIC_URL, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    // si no hay URL pública, intentamos signed URL (requiere bucket/path)
+    if (!TEMPLATE_BUCKET || !TEMPLATE_PATH) {
+      return showErr(
+        "Falta configurar NEXT_PUBLIC_USERS_TEMPLATE_URL (pública) o bucket/path para signed URL."
+      );
+    }
+
+    setTemplateLoading(true);
+    try {
+      const { data, error } = await supabase.storage
+        .from(TEMPLATE_BUCKET)
+        .createSignedUrl(TEMPLATE_PATH, 120);
+
+      if (error || !data?.signedUrl) throw new Error(error?.message || "No se pudo generar signed URL");
+
+      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+    } catch (e: any) {
+      showErr(e?.message || "Error descargando plantilla");
+    } finally {
+      setTemplateLoading(false);
     }
   }
 
@@ -392,27 +571,16 @@ export default function AdminPage() {
 
   const roleLabel = useMemo(() => roleLabelFromRole(primaryRole(me)), [me]);
 
-  const filteredStudents = useMemo(() => {
-    const q = studentQuery.trim().toLowerCase();
-    if (!q) return students;
-    return students.filter((s) => {
-      const a = (s.name || "").toLowerCase();
-      const b = (s.email || "").toLowerCase();
-      const c = (s.cedula || "").toLowerCase();
-      return a.includes(q) || b.includes(q) || c.includes(q);
-    });
-  }, [students, studentQuery]);
-
   if (loadingMe) return <div className="container">Cargando...</div>;
 
-  // ✅ medidas UI
+  // UI medidas
   const SIDEBAR_W = 320;
   const HAM_PAD = 14;
   const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
 
   return (
     <div>
-      {/* ✅ HAMBURGUESA */}
+      {/* HAMBURGUESA */}
       <div
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -473,7 +641,7 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* ✅ SIDEBAR */}
+      {/* SIDEBAR */}
       <aside
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -532,7 +700,7 @@ export default function AdminPage() {
         </div>
       </aside>
 
-      {/* ✅ MAIN */}
+      {/* MAIN */}
       <main
         style={{
           marginLeft: sidebarOpen ? SIDEBAR_W : 0,
@@ -554,7 +722,7 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* ✅ SELECTOR DE SECCIÓN */}
+          {/* SELECTOR */}
           <div
             className="card"
             style={{
@@ -583,8 +751,8 @@ export default function AdminPage() {
                 <option value="CLASSES">Crear materia</option>
                 <option value="TYPES">Crear tipo de evaluación</option>
                 <option value="ASSIGN_TEACHER">Asignar teacher a materia</option>
-                <option value="ASSIGN_STUDENTS">Asignar alumnos a course</option>
-                <option value="UPLOAD_EXCEL">Subir Excel (crear usuarios)</option>
+                <option value="USERS">Usuarios (crear + excel)</option>
+                <option value="UPDATE_USER">Actualizar usuario (por cédula)</option>
               </select>
             </div>
           </div>
@@ -600,7 +768,6 @@ export default function AdminPage() {
               {okMsg}
             </div>
           )}
-
 
           {/* =========================
               PANEL: CREAR COURSE
@@ -843,11 +1010,7 @@ export default function AdminPage() {
 
                 <div>
                   <div className="label">Materia</div>
-                  <select
-                    className="select"
-                    value={selClass}
-                    onChange={(e) => setSelClass(e.target.value)}
-                  >
+                  <select className="select" value={selClass} onChange={(e) => setSelClass(e.target.value)}>
                     <option value="">Selecciona...</option>
                     {classes.map((c) => (
                       <option key={c.id} value={String(c.id)}>
@@ -865,140 +1028,42 @@ export default function AdminPage() {
           )}
 
           {/* =========================
-              PANEL: ASIGNAR ALUMNOS
+              PANEL: USERS (crear manual + excel + template)
               ========================= */}
-          {view === "ASSIGN_STUDENTS" && (
-            <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Asignar alumnos a course</h2>
-
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "320px 1fr 220px",
-                  gap: 12,
-                  alignItems: "end",
-                }}
-              >
-                <div>
-                  <div className="label">Course</div>
-                  <select className="select" value={selCourse} onChange={(e) => setSelCourse(e.target.value)}>
-                    <option value="">Selecciona...</option>
-                    {courses.map((c) => (
-                      <option key={c.id} value={String(c.id)}>
-                        {c.name} (Nivel {c.level})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <div className="label">Buscar estudiante</div>
-                  <input
-                    className="input"
-                    value={studentQuery}
-                    onChange={(e) => setStudentQuery(e.target.value)}
-                    placeholder="Nombre, email o cédula..."
-                  />
-                </div>
-
-                <button
-                  className="btn"
-                  onClick={assignStudents}
-                  disabled={!selCourse || selectedCount === 0}
-                  style={{ width: "100%" }}
-                >
-                  Asignar ({selectedCount})
-                </button>
-              </div>
-
-              <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
-                {/* selector */}
-                <div style={{ overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
-                  <div style={{ padding: 12, fontWeight: 900, background: "rgba(14,165,233,.08)" }}>
-                    Estudiantes (selecciona)
-                  </div>
-                  <div style={{ maxHeight: 320, overflow: "auto" }}>
-                    {filteredStudents.length === 0 ? (
-                      <div style={{ padding: 12, color: "var(--muted)" }}>Sin resultados</div>
-                    ) : (
-                      filteredStudents.map((s) => (
-                        <label
-                          key={s.id}
-                          style={{
-                            display: "flex",
-                            gap: 10,
-                            alignItems: "center",
-                            padding: 12,
-                            borderTop: "1px solid rgba(2,132,199,.10)",
-                            cursor: "pointer",
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={!!selectedStudents[s.id]}
-                            onChange={(e) =>
-                              setSelectedStudents((p) => ({ ...p, [s.id]: e.target.checked }))
-                            }
-                          />
-                          <div style={{ display: "flex", flexDirection: "column" }}>
-                            <div style={{ fontWeight: 900 }}>{s.name}</div>
-                            <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                              {s.email} {s.cedula ? `· ${s.cedula}` : ""}
-                            </div>
-                          </div>
-                        </label>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                {/* alumnos actuales */}
-                <div style={{ overflow: "hidden", borderRadius: 18, border: "1px solid var(--stroke)" }}>
-                  <div style={{ padding: 12, fontWeight: 900, background: "rgba(14,165,233,.08)" }}>
-                    Alumnos actuales del course
-                  </div>
-
-                  {!selCourse ? (
-                    <div style={{ padding: 12, color: "var(--muted)" }}>
-                      Selecciona un course para ver alumnos.
-                    </div>
-                  ) : (
-                    <div style={{ maxHeight: 320, overflow: "auto" }}>
-                      {courseStudents.length === 0 ? (
-                        <div style={{ padding: 12, color: "var(--muted)" }}>
-                          Este course no tiene alumnos aún.
-                        </div>
-                      ) : (
-                        courseStudents.map((s) => (
-                          <div
-                            key={s.id}
-                            style={{ padding: 12, borderTop: "1px solid rgba(2,132,199,.10)" }}
-                          >
-                            <div style={{ fontWeight: 900 }}>{s.name}</div>
-                            <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                              {s.email} {s.cedula ? `· ${s.cedula}` : ""}
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* =========================
-              PANEL: USERS (manual + excel)
-              ========================= */}
-          {view === "UPLOAD_EXCEL" && (
+          {view === "USERS" && (
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Usuarios</h2>
 
-              {/* ====== MANUAL (1) ====== */}
+              {/* ✅ Descargar plantilla siempre */}
               <div
                 style={{
-                  marginTop: 12,
+                  marginTop: 10,
+                  padding: 14,
+                  borderRadius: 18,
+                  border: "1px solid var(--stroke)",
+                  background: "rgba(34,197,94,.08)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 900 }}>Plantilla Excel</div>
+                  <div style={{ color: "var(--muted)", fontSize: 13 }}>
+                    Descárgala para cargar usuarios correctamente.
+                  </div>
+                </div>
+                <button className="btn" onClick={downloadTemplate} disabled={templateLoading}>
+                  {templateLoading ? "Generando..." : "⬇️ Descargar plantilla"}
+                </button>
+              </div>
+
+              {/* ===== MANUAL (obligatorio todo) ===== */}
+              <div
+                style={{
+                  marginTop: 14,
                   padding: 14,
                   borderRadius: 18,
                   border: "1px solid var(--stroke)",
@@ -1007,66 +1072,38 @@ export default function AdminPage() {
               >
                 <div style={{ fontWeight: 900, fontSize: 16 }}>Crear usuario manual (1)</div>
                 <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>
-                  Crea o actualiza 1 usuario sin Excel. Roles: S/T/A. (Password por defecto lo maneja el backend)
+                  Todos los campos son obligatorios (incluye course).
                 </div>
 
-                <div
-                  style={{
-                    marginTop: 12,
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 12,
-                  }}
-                >
+                <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                   <div>
                     <div className="label">Email</div>
-                    <input
-                      className="input"
-                      value={uEmail}
-                      onChange={(e) => setUEmail(e.target.value)}
-                      placeholder="correo@dominio.com"
-                      autoComplete="off"
-                    />
+                    <input className="input" value={uEmail} onChange={(e) => setUEmail(e.target.value)} />
                   </div>
 
                   <div>
                     <div className="label">Nombre</div>
-                    <input
-                      className="input"
-                      value={uName}
-                      onChange={(e) => setUName(e.target.value)}
-                      placeholder="Nombre completo"
-                    />
+                    <input className="input" value={uName} onChange={(e) => setUName(e.target.value)} />
                   </div>
 
                   <div>
-                    <div className="label">Cédula (opcional)</div>
-                    <input
-                      className="input"
-                      value={uCedula}
-                      onChange={(e) => setUCedula(e.target.value)}
-                      placeholder="123..."
-                    />
+                    <div className="label">Cédula</div>
+                    <input className="input" value={uCedula} onChange={(e) => setUCedula(e.target.value)} />
                   </div>
 
                   <div>
-                    <div className="label">code_jiliu (opcional)</div>
+                    <div className="label">code_jiliu</div>
                     <input
                       className="input"
                       value={uCodeJiliu}
                       onChange={(e) => setUCodeJiliu(e.target.value)}
-                      placeholder="Código interno"
                     />
                   </div>
 
                   <div style={{ gridColumn: "1 / span 2" }}>
-                    <div className="label">Course (opcional)</div>
-                    <select
-                      className="select"
-                      value={uCourseId}
-                      onChange={(e) => setUCourseId(e.target.value)}
-                    >
-                      <option value="">Sin course</option>
+                    <div className="label">Course</div>
+                    <select className="select" value={uCourseId} onChange={(e) => setUCourseId(e.target.value)}>
+                      <option value="">Selecciona...</option>
                       {courses.map((c) => (
                         <option key={c.id} value={String(c.id)}>
                           {c.name} (Nivel {c.level})
@@ -1095,9 +1132,7 @@ export default function AdminPage() {
                           <input
                             type="checkbox"
                             checked={!!uRoles[r.value]}
-                            onChange={(e) =>
-                              setURoles((p) => ({ ...p, [r.value]: e.target.checked }))
-                            }
+                            onChange={(e) => setURoles((p) => ({ ...p, [r.value]: e.target.checked }))}
                           />
                           <span style={{ fontWeight: 900 }}>{r.label}</span>
                         </label>
@@ -1107,54 +1142,26 @@ export default function AdminPage() {
                 </div>
 
                 <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
-                  <button
-                    className="btn"
-                    onClick={createUserManual}
-                    disabled={creatingUser}
-                    style={{ width: 240 }}
-                  >
-                    {creatingUser ? "Creando..." : "Crear / Actualizar"}
+                  <button className="btn" onClick={createUserManual} disabled={creatingUser} style={{ width: 240 }}>
+                    {creatingUser ? "Creando..." : "Crear"}
                   </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMsg(null);
-                      resetManualUserForm();
-                    }}
-                    className="btnLight"
-                  >
+                  <button type="button" className="btnLight" onClick={() => resetManualUserForm()}>
                     Limpiar
                   </button>
                 </div>
-
-                {createUserReport && (
-                  <div style={{ marginTop: 12, color: "var(--muted)", fontSize: 13 }}>
-                    {typeof createUserReport === "string"
-                      ? createUserReport
-                      : "Listo. (Mira el log/response si deseas más detalle)"}
-                  </div>
-                )}
               </div>
 
-              {/* ====== EXCEL ====== */}
+              {/* ===== EXCEL ===== */}
               <div style={{ marginTop: 16 }}>
                 <div style={{ fontWeight: 900, fontSize: 16 }}>Subir Excel: crear usuarios</div>
                 <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
-                  Columnas esperadas: <b>email</b>, <b>name</b>, <b>type</b> (S/T/A o lista S,T),{" "}
-                  <b>cedula</b> (opcional), <b>id_course</b> (opcional), <b>code_jiliu</b> (opcional).
-                  <br />
-                  Password por defecto: <b>password</b> (o <b>DEFAULT_PASSWORD</b> en el backend).
+                  Columnas obligatorias: <b>email</b>, <b>name</b>, <b>cedula</b>, <b>code_jiliu</b>,{" "}
+                  <b>id_course</b>, <b>type</b> (S/T/A o lista S,T).
                 </div>
 
                 <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12 }}>
                   <input ref={fileRef} type="file" accept=".xlsx" />
-                  <button
-                    className="btn"
-                    onClick={uploadExcelUsers}
-                    disabled={uploading}
-                    style={{ width: 220 }}
-                  >
+                  <button className="btn" onClick={uploadExcelUsers} disabled={uploading} style={{ width: 220 }}>
                     {uploading ? "Subiendo..." : "Procesar Excel"}
                   </button>
                   <button
@@ -1162,6 +1169,7 @@ export default function AdminPage() {
                     onClick={() => {
                       setUploadReport(null);
                       setMsg(null);
+                      setOkMsg(null);
                       if (fileRef.current) fileRef.current.value = "";
                     }}
                     className="btnLight"
@@ -1202,6 +1210,100 @@ export default function AdminPage() {
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* =========================
+              PANEL: UPDATE USER
+              ========================= */}
+          {view === "UPDATE_USER" && (
+            <div className="card" style={{ marginTop: 18 }}>
+              <h2 style={{ marginTop: 0 }}>Actualizar usuario por cédula</h2>
+
+              <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
+                Digita la cédula y el sistema te carga los datos para modificarlos.
+              </div>
+
+              <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div style={{ gridColumn: "1 / span 2" }}>
+                  <div className="label">Cédula a actualizar</div>
+                  <input className="input" value={upCedula} onChange={(e) => setUpCedula(e.target.value)} />
+                  {upSearching && (
+                    <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                      Buscando usuario...
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="label">Email</div>
+                  <input className="input" value={upEmail} onChange={(e) => setUpEmail(e.target.value)} />
+                </div>
+
+                <div>
+                  <div className="label">Nombre</div>
+                  <input className="input" value={upName} onChange={(e) => setUpName(e.target.value)} />
+                </div>
+
+                <div>
+                  <div className="label">code_jiliu</div>
+                  <input className="input" value={upCodeJiliu} onChange={(e) => setUpCodeJiliu(e.target.value)} />
+                </div>
+
+                <div>
+                  <div className="label">Course</div>
+                  <select className="select" value={upCourseId} onChange={(e) => setUpCourseId(e.target.value)}>
+                    <option value="">Selecciona...</option>
+                    {courses.map((c) => (
+                      <option key={c.id} value={String(c.id)}>
+                        {c.name} (Nivel {c.level})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ gridColumn: "1 / span 2" }}>
+                  <div className="label">Roles</div>
+                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                    {ROLE_OPTIONS.map((r) => (
+                      <label
+                        key={r.value}
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "center",
+                          padding: "10px 12px",
+                          borderRadius: 14,
+                          border: "1px solid var(--stroke)",
+                          background: "var(--card)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!upRoles[r.value]}
+                          onChange={(e) => setUpRoles((p) => ({ ...p, [r.value]: e.target.checked }))}
+                        />
+                        <span style={{ fontWeight: 900 }}>{r.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+                <button
+                  className="btn"
+                  onClick={updateUserByCedula}
+                  disabled={upLoading || upSearching}
+                  style={{ width: 260 }}
+                >
+                  {upLoading ? "Actualizando..." : "Actualizar"}
+                </button>
+                <button type="button" className="btnLight" onClick={() => resetUpdateUserForm()}>
+                  Limpiar
+                </button>
               </div>
             </div>
           )}
