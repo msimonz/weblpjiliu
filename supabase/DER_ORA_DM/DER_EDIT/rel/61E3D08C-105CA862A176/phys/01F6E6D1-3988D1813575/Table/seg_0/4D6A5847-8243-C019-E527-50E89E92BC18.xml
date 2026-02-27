@@ -1,0 +1,84 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<TableProxyOraclev20c class="oracle.dbtools.crest.model.design.storage.oracle.v20c.TableProxyOraclev20c" name="users" directorySegmentName="seg_0" id="4D6A5847-8243-C019-E527-50E89E92BC18">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<logging>YES</logging>
+<partitionedRowMovement>DISABLE</partitionedRowMovement>
+<temporaryChanged>false</temporaryChanged>
+<accessDriverType>oracle_loader</accessDriverType>
+<rejectLimit></rejectLimit>
+<columnProxies itemClass="oracle.dbtools.crest.model.design.storage.oracle.v12c.ColumnProxyOraclev12c">
+<ColumnProxy name="created_at" id="1244762F-EBAB-9C7D-5DDC-DAC290CD5691">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<defaultValue>SYSTIMESTAMP</defaultValue>
+</ColumnProxy>
+<ColumnProxy name="code_jiliu" id="34900AEC-403C-C9E2-7D65-515721DD6867">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
+<ColumnProxy name="id_course" id="70D3D03B-1561-A16C-6AA1-77802D462032">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
+<ColumnProxy name="email" id="B529C832-6BF4-8104-B8C8-1013AC95E9EE">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
+<ColumnProxy name="name" id="C4BE0ADA-8F63-6C49-0D97-61B2D406A23E">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
+<ColumnProxy name="id" id="F0D2332A-49B0-90A2-EE0C-6676714FD62D">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
+<ColumnProxy name="cedula" id="F93C0993-2B7B-C1E3-4E60-73CF49A06983">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
+</columnProxies>
+<foreignKeys>
+<ForeignKey class="oracle.dbtools.crest.model.design.storage.oracle.v10g.FKProxyOraclev10g" name="fk_users_course" id="E2D30A06-AB6B-10E2-A217-8E5E9AD5AFF5">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ForeignKey>
+</foreignKeys>
+<primaryKeys>
+<PrimaryKey class="oracle.dbtools.crest.model.design.storage.oracle.v10g.PKProxyOraclev10g" name="users_PK" id="CEB5527E-AC00-3880-53D7-CA03AF18FAB1">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexSort>SORTED</indexSort>
+</PrimaryKey>
+</primaryKeys>
+<uniqueKeys>
+<UniqueKey class="oracle.dbtools.crest.model.design.storage.oracle.v10g.UniqueOraclev10g" name="uq_users_email" id="1FA5C10F-6149-AFC4-F630-8D030AC51161">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexSort>SORTED</indexSort>
+</UniqueKey>
+<UniqueKey class="oracle.dbtools.crest.model.design.storage.oracle.v10g.UniqueOraclev10g" name="uq_users_cedula" id="700E084C-04EF-2EE6-29D2-8F270693E627">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexSort>SORTED</indexSort>
+</UniqueKey>
+<UniqueKey class="oracle.dbtools.crest.model.design.storage.oracle.v10g.UniqueOraclev10g" name="uq_users_code_jiliu" id="94531A3F-D74B-69DD-76DB-BADD9EA06622">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexSort>SORTED</indexSort>
+</UniqueKey>
+</uniqueKeys>
+</TableProxyOraclev20c>

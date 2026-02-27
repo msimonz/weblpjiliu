@@ -1,0 +1,89 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<Table class="oracle.dbtools.crest.model.design.relational.Table" directorySegmentName="seg_0" id="56A76EE8-C5C8-1F27-4F48-22432D52843C" name="class">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>FB073FAF-00F8-AD05-CA47-ED88326BE528</importedID>
+<allowColumnReorder>false</allowColumnReorder>
+<existDependencyGenerateInDDl>true</existDependencyGenerateInDDl>
+<parsed>true</parsed>
+<columns itemClass="oracle.dbtools.crest.model.design.relational.Column">
+<Column name="id" id="120DDD22-601E-B927-929E-558C6D61D597">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>4C73E88F-3FD2-1956-CA99-EDD4DED201CE</importedID>
+<use>0</use>
+<logicalDatatype>LOGDT019</logicalDatatype>
+<domain>7C52A876-8519-19A7-F4C0-A4E24FB7A973</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementColumn>true</autoIncrementColumn>
+<identityColumn>true</identityColumn>
+<autoIncrementCycle>false</autoIncrementCycle>
+<autoIncrementOrder>false</autoIncrementOrder>
+</Column>
+<Column name="name" id="B916BFC0-9199-9E79-4606-E285814237D8">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>C8D5AEA0-0E63-90DC-3D1C-48605D1CFC29</importedID>
+<use>0</use>
+<logicalDatatype>LOGDT028</logicalDatatype>
+<domain>6D59CDC5-0670-09EA-F44A-52B707D37A5A</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+<Column name="level" id="479A4BD8-8CCE-1E79-6888-53CF1BD185AB">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>86C1DAE2-179C-83D4-F87C-5B63DDE90BEA</importedID>
+<constraintName>ck_class_level</constraintName>
+<useDomainConstraints>false</useDomainConstraints>
+<use>0</use>
+<logicalDatatype>LOGDT019</logicalDatatype>
+<domain>DA2BDB8A-A0A8-E0E8-93E5-54FB851A8329</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<listOfRanges>
+<rangeDef class="oracle.dbtools.crest.model.design.constraint.AVT">
+<beginValue>1</beginValue>
+<endValue>4</endValue>
+</rangeDef>
+</listOfRanges>
+</Column>
+<Column name="created_at" id="4DE9A64B-C1A5-F8E0-08F0-89F6B905E2C1">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>046117B0-5CE3-A89F-10FF-BAEB3AD34441</importedID>
+<nullsAllowed>true</nullsAllowed>
+<use>0</use>
+<logicalDatatype>LOGDT046</logicalDatatype>
+<domain>B964268F-B54B-B43A-BB4D-3C6A01DEF381</domain>
+<defaultValue>SYSTIMESTAMP</defaultValue>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+</columns>
+<indexes itemClass="oracle.dbtools.crest.model.design.relational.Index">
+<ind_PK_UK id="8581227F-E21A-9F6A-5F7B-6D7CCB47D59B" name="class_PK">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>93375313-5748-65B0-ECA3-E62801FAD510</importedID>
+<pk>true</pk>
+<indexState>Primary Constraint</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="120DDD22-601E-B927-929E-558C6D61D597"/>
+</indexColumnUsage>
+</ind_PK_UK>
+</indexes>
+</Table>

@@ -1,0 +1,102 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<Table class="oracle.dbtools.crest.model.design.relational.Table" directorySegmentName="seg_0" id="D4145F31-3CCB-4252-5444-67D483FED6A4" name="course">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>7B07EEAD-3B01-AEDC-76F5-DF99EF6E335D</importedID>
+<allowColumnReorder>false</allowColumnReorder>
+<existDependencyGenerateInDDl>true</existDependencyGenerateInDDl>
+<parsed>true</parsed>
+<columns itemClass="oracle.dbtools.crest.model.design.relational.Column">
+<Column name="id" id="9A5B1C74-F1FB-7F27-192A-8AE0132C0B73">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>46FD1581-CA17-C7A3-9E58-E4550B45916E</importedID>
+<use>0</use>
+<logicalDatatype>LOGDT019</logicalDatatype>
+<domain>7C52A876-8519-19A7-F4C0-A4E24FB7A973</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementColumn>true</autoIncrementColumn>
+<identityColumn>true</identityColumn>
+<autoIncrementCycle>false</autoIncrementCycle>
+<autoIncrementOrder>false</autoIncrementOrder>
+</Column>
+<Column name="name" id="1B94E3CF-55AE-127C-D62F-D4B99498DD10">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>8F004590-DDFD-8044-8EAE-716F0B436F43</importedID>
+<use>0</use>
+<logicalDatatype>LOGDT028</logicalDatatype>
+<domain>6D59CDC5-0670-09EA-F44A-52B707D37A5A</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+<Column name="year" id="71C87F1A-3CEF-4971-7602-42D6277403B4">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>DBBDF456-A946-C80A-B0E3-8F3602744448</importedID>
+<nullsAllowed>true</nullsAllowed>
+<use>0</use>
+<logicalDatatype>LOGDT007</logicalDatatype>
+<domain>DB30A981-1DA0-FBE1-0763-13053D607E58</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+<Column name="level" id="01493D82-D313-9AC9-6258-7CBB93A73D14">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>2F99A80A-EB96-4987-802F-E5B2235A47F5</importedID>
+<constraintName>ck_course_level</constraintName>
+<useDomainConstraints>false</useDomainConstraints>
+<use>0</use>
+<logicalDatatype>LOGDT019</logicalDatatype>
+<domain>DA2BDB8A-A0A8-E0E8-93E5-54FB851A8329</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<listOfRanges>
+<rangeDef class="oracle.dbtools.crest.model.design.constraint.AVT">
+<beginValue>1</beginValue>
+<endValue>4</endValue>
+</rangeDef>
+</listOfRanges>
+</Column>
+<Column name="created_at" id="3A9D7118-6743-2AC3-A01B-0F65A58322AA">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>4C7BFF06-EFBD-EEFA-305D-157785B75671</importedID>
+<nullsAllowed>true</nullsAllowed>
+<use>0</use>
+<logicalDatatype>LOGDT046</logicalDatatype>
+<domain>B964268F-B54B-B43A-BB4D-3C6A01DEF381</domain>
+<defaultValue>SYSTIMESTAMP</defaultValue>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+</columns>
+<indexes itemClass="oracle.dbtools.crest.model.design.relational.Index">
+<ind_PK_UK id="6A26CBB0-F7CC-0552-2A31-6BC799C83474" name="course_PK">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>813121B1-3B8C-8F4A-F6C3-B73268DC182E</importedID>
+<pk>true</pk>
+<indexState>Primary Constraint</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="9A5B1C74-F1FB-7F27-192A-8AE0132C0B73"/>
+</indexColumnUsage>
+</ind_PK_UK>
+</indexes>
+</Table>

@@ -1,0 +1,13 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<OSDM_Design class="oracle.dbtools.crest.model.design.Design" name="DER_EDIT" id="A33E7B32-D454-0CB9-49D6-A24102348213" version="3.5">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:39 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<capitalNames>false</capitalNames>
+<designId>A33E7B32-D454-0CB9-49D6-A24102348213</designId>
+<usedDesignStorageDescriptors>
+<designDescr class="oracle.dbtools.crest.model.design.Design$DesignStorageDesc" id="59077153-B066-7E8A-AA80-00EE9A89BD68">
+<designStoragePath>/jiliu</designStoragePath>
+</designDescr>
+</usedDesignStorageDescriptors>
+</OSDM_Design>

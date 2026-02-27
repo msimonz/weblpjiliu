@@ -1,0 +1,18 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<FKIndexAssociation class="oracle.dbtools.crest.model.design.relational.FKIndexAssociation" directorySegmentName="seg_0" id="5448B3CE-C77F-B935-6FDB-8ABED308BF6C" containerWithKeyObject="9B232198-D100-C7E0-856E-0E78EAC19725" localFKIndex="AF5310CF-7102-2E4F-852B-D7653F839132" name="fk_eval_course">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>5E0A442C-C930-2C54-31EE-B26EB6D02C96</importedID>
+<referredTableLongName>course</referredTableLongName>
+<deleteRule>CASCADE</deleteRule>
+<referredTableID>D4145F31-3CCB-4252-5444-67D483FED6A4</referredTableID>
+<keyObject>6A26CBB0-F7CC-0552-2A31-6BC799C83474</keyObject>
+<referredKeyID>6A26CBB0-F7CC-0552-2A31-6BC799C83474</referredKeyID>
+<mandatory>true</mandatory>
+<refColNames>id</refColNames>
+<transferable>true</transferable>
+<rely>false</rely>
+<columnDependencyConstraintGenerateInDDL>true</columnDependencyConstraintGenerateInDDL>
+</FKIndexAssociation>

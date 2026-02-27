@@ -1,0 +1,93 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<Table class="oracle.dbtools.crest.model.design.relational.Table" directorySegmentName="seg_0" id="CAE07F75-0BB0-8FF1-393E-72252311A029" name="user_history">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>E94C2695-20F8-FDEA-35C0-E5E467FC4BE3</importedID>
+<allowColumnReorder>false</allowColumnReorder>
+<existDependencyGenerateInDDl>true</existDependencyGenerateInDDl>
+<parsed>true</parsed>
+<columns itemClass="oracle.dbtools.crest.model.design.relational.Column">
+<Column name="id_student" id="664DA9C9-256D-84A9-0C0D-340959485E70">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>4F4F4E1E-7C3B-4518-05A4-02F562ECAAEA</importedID>
+<use>0</use>
+<logicalDatatype>LogDes-4BABEC65-108B-2A3C-F7C4-84AC47D292B0@LOGDT10040</logicalDatatype>
+<domain>9C4F880E-5EFB-C67B-3912-BDB2F49E0182</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<associations>
+<colAssociation fkAssociation="931A0E3B-DD06-58F4-AA99-5588940B73A6" referredColumn="F0D2332A-49B0-90A2-EE0C-6676714FD62D"/>
+</associations>
+</Column>
+<Column name="id_course" id="7F2907EB-B912-9FC3-1163-A18DC8127B16">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>5F7C5A10-7B29-A40A-F352-C0A00F51BA4D</importedID>
+<use>0</use>
+<logicalDatatype>LOGDT019</logicalDatatype>
+<domain>7C52A876-8519-19A7-F4C0-A4E24FB7A973</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<associations>
+<colAssociation fkAssociation="97408596-275E-AEE5-87B9-AFCA88A0E4BC" referredColumn="9A5B1C74-F1FB-7F27-192A-8AE0132C0B73"/>
+</associations>
+</Column>
+<Column name="created_at" id="03821EFB-8DCF-0E99-89AC-947D2A59C4CB">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>5E1A12C3-3C71-3842-6733-1F735AAEFDC6</importedID>
+<nullsAllowed>true</nullsAllowed>
+<use>0</use>
+<logicalDatatype>LOGDT046</logicalDatatype>
+<domain>B964268F-B54B-B43A-BB4D-3C6A01DEF381</domain>
+<defaultValue>SYSTIMESTAMP</defaultValue>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+</columns>
+<indexes itemClass="oracle.dbtools.crest.model.design.relational.Index">
+<ind_PK_UK id="3D904337-D310-7CF6-72ED-E36BE0DA785F" name="pk_user_history">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>42C1A2E4-4120-772F-B0E2-0E85C4364896</importedID>
+<pk>true</pk>
+<indexState>Primary Constraint</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="664DA9C9-256D-84A9-0C0D-340959485E70"/>
+<colUsage columnID="7F2907EB-B912-9FC3-1163-A18DC8127B16"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="2E2BF78D-12CC-1EB0-517F-3ADB134DC002" name="fk_uh_course">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Foreign Key</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="7F2907EB-B912-9FC3-1163-A18DC8127B16"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="A2FE9F13-A1D5-6FF6-6E3C-A3C4D95B527F" name="fk_uh_student">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Foreign Key</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="664DA9C9-256D-84A9-0C0D-340959485E70"/>
+</indexColumnUsage>
+</ind_PK_UK>
+</indexes>
+</Table>

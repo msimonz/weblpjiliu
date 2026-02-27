@@ -1,0 +1,6 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<StructuredTypeProxyOraclev10g class="oracle.dbtools.crest.model.design.storage.oracle.v10g.StructuredTypeProxyOraclev10g" name="XMLTYPE" directorySegmentName="seg_0" id="F72C39E0-D1CA-8821-2AD7-A1E95A37D3D1">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:51 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</StructuredTypeProxyOraclev10g>

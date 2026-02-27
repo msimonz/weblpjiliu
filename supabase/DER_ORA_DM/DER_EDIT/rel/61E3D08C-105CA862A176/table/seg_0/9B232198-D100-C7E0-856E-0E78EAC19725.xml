@@ -1,0 +1,192 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<Table class="oracle.dbtools.crest.model.design.relational.Table" directorySegmentName="seg_0" id="9B232198-D100-C7E0-856E-0E78EAC19725" name="evaluation">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>6B886ADD-C8DF-00FE-C644-2FADBBDF4C6B</importedID>
+<allowColumnReorder>false</allowColumnReorder>
+<existDependencyGenerateInDDl>true</existDependencyGenerateInDDl>
+<parsed>true</parsed>
+<columns itemClass="oracle.dbtools.crest.model.design.relational.Column">
+<Column name="id" id="6C4050D5-A971-EEB0-0188-1969BABA9040">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>098FC851-F6E7-D905-A67B-033FCEBC4AB5</importedID>
+<use>0</use>
+<logicalDatatype>LOGDT019</logicalDatatype>
+<domain>7C52A876-8519-19A7-F4C0-A4E24FB7A973</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementColumn>true</autoIncrementColumn>
+<identityColumn>true</identityColumn>
+<autoIncrementCycle>false</autoIncrementCycle>
+<autoIncrementOrder>false</autoIncrementOrder>
+</Column>
+<Column name="id_course" id="B1E71965-2C87-2E71-A6E7-FEA46B50D56C">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>301DAAE2-394E-87C6-101C-D5D6743DA29F</importedID>
+<use>0</use>
+<logicalDatatype>LOGDT019</logicalDatatype>
+<domain>7C52A876-8519-19A7-F4C0-A4E24FB7A973</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<associations>
+<colAssociation fkAssociation="5448B3CE-C77F-B935-6FDB-8ABED308BF6C" referredColumn="9A5B1C74-F1FB-7F27-192A-8AE0132C0B73"/>
+</associations>
+</Column>
+<Column name="id_class" id="8486064F-82E4-383D-A874-9BA1607D32E4">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>127C62B8-1D6C-D0AA-586C-A41E65A200E6</importedID>
+<use>0</use>
+<logicalDatatype>LOGDT019</logicalDatatype>
+<domain>7C52A876-8519-19A7-F4C0-A4E24FB7A973</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<associations>
+<colAssociation fkAssociation="F6EB6F71-8D82-D783-BE07-D643C5663E6A" referredColumn="120DDD22-601E-B927-929E-558C6D61D597"/>
+</associations>
+</Column>
+<Column name="id_teacher" id="BFFCD0BF-13B3-F540-B7E8-7859329D19AD">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>441ABA64-4B76-2B1B-AD02-BF6A30233315</importedID>
+<use>0</use>
+<logicalDatatype>LogDes-4BABEC65-108B-2A3C-F7C4-84AC47D292B0@LOGDT10040</logicalDatatype>
+<domain>9C4F880E-5EFB-C67B-3912-BDB2F49E0182</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<associations>
+<colAssociation fkAssociation="399B67A7-394B-2987-108A-39BCBE5E8EA3" referredColumn="F0D2332A-49B0-90A2-EE0C-6676714FD62D"/>
+</associations>
+</Column>
+<Column name="id_type" id="E73D1647-270E-D3B4-D78D-C78CD4EDCEBB">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>FEE513B8-EA82-9F7C-6626-630E6F161F59</importedID>
+<use>0</use>
+<logicalDatatype>LOGDT019</logicalDatatype>
+<domain>7C52A876-8519-19A7-F4C0-A4E24FB7A973</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<associations>
+<colAssociation fkAssociation="6B483564-5E2A-770A-EBDC-50E1F4338369" referredColumn="0DB275EC-734C-03B9-DA40-1D899FAA9A19"/>
+</associations>
+</Column>
+<Column name="percent" id="CE71C11E-A4AE-801B-91FB-B07F74CF9A2B">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>3388A7B4-D27B-80D9-26C1-0030DC552FB1</importedID>
+<use>0</use>
+<logicalDatatype>LOGDT019</logicalDatatype>
+<domain>B96554A1-EB27-89A6-AD9F-974F2AB7DA35</domain>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+<Column name="title" id="9D23809B-9001-8CB7-16B0-96F821E44ACC">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>6662108C-D2FD-ABDC-9209-5C44C51D6CC8</importedID>
+<use>0</use>
+<logicalDatatype>LOGDT028</logicalDatatype>
+<domain>6D59CDC5-0670-09EA-F44A-52B707D37A5A</domain>
+<defaultValue>&apos;Evaluación&apos;</defaultValue>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+<Column name="created_at" id="FAC005F2-3A79-9C08-B956-79361191ECA9">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>76B34D7F-457F-F049-52EA-67B4493D5AE6</importedID>
+<nullsAllowed>true</nullsAllowed>
+<use>0</use>
+<logicalDatatype>LOGDT046</logicalDatatype>
+<domain>B964268F-B54B-B43A-BB4D-3C6A01DEF381</domain>
+<defaultValue>SYSTIMESTAMP</defaultValue>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+</columns>
+<indexes itemClass="oracle.dbtools.crest.model.design.relational.Index">
+<ind_PK_UK id="6FF7E052-E412-6C23-3EBC-5CD46943C92D" name="evaluation_PK">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>D4AF0FF6-2844-2CF2-4727-C4B938A7D981</importedID>
+<pk>true</pk>
+<indexState>Primary Constraint</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="6C4050D5-A971-EEB0-0188-1969BABA9040"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="EB9C133B-0BD7-9575-9867-276AEF271D2F" name="fk_eval_class">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Foreign Key</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="8486064F-82E4-383D-A874-9BA1607D32E4"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="AF5310CF-7102-2E4F-852B-D7653F839132" name="fk_eval_course">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Foreign Key</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="B1E71965-2C87-2E71-A6E7-FEA46B50D56C"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="8867C190-B653-4D5B-9745-BF7A2A413AB3" name="fk_eval_teacher">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Foreign Key</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="BFFCD0BF-13B3-F540-B7E8-7859329D19AD"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="7E286546-D3CB-3171-1209-F4C811F66E62" name="fk_eval_type">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Foreign Key</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="E73D1647-270E-D3B4-D78D-C78CD4EDCEBB"/>
+</indexColumnUsage>
+</ind_PK_UK>
+</indexes>
+<tableCheckConstraints itemClass="oracle.dbtools.crest.model.design.constraint.TableLevelConstraint">
+<tableCheckConstraint name="ck_eval_percent" directorySegmentName="seg_0" id="B5BAEAC7-2ED8-2B09-14DB-9CBAF1BEF2E9">
+<sourceDDLFile>jiliu.sql</sourceDDLFile>
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 19:45:52 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<importedID>A1BB9780-AE88-A2DA-6B44-6B5CC5A5477C</importedID>
+<rule><![CDATA[percent >= 0 AND percent <= 100]]></rule>
+</tableCheckConstraint>
+</tableCheckConstraints>
+</Table>
