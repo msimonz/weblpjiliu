@@ -371,14 +371,13 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
     id_exam: examId,
     id_student: st.id,
     grade: g,
-    source: "MANUAL",
     finished_at: new Date().toISOString(),
   };
 
   const { data, error } = await supabaseAdmin
     .from("grades")
     .upsert(payload, { onConflict: "id_exam,id_student" })
-    .select("id_exam,id_student,grade,finished_at,source")
+    .select("id_exam,id_student,grade,finished_at")
     .maybeSingle();
 
   if (error) return res.status(500).json({ error: error.message });

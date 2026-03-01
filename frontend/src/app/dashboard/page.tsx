@@ -433,7 +433,7 @@ export default function DashboardPage() {
                 Consultar notas
               </h1>
 
-              <div style={{ display: "grid", gridTemplateColumns: "220px 1fr 160px", gap: 12 }}>
+              <div style={{ gridTemplateColumns: "220px 1fr 160px", gap: 12 }}>
                 <div>
                   <div className="label">Año</div>
                   <select
@@ -456,24 +456,6 @@ export default function DashboardPage() {
                 </div>
 
                 <div style={{ position: "relative" }}>
-                  <div className="label">Materia</div>
-                  <input
-                    className="input"
-                    value={q}
-                    disabled={blockedByYear}
-                    onChange={(e) => {
-                      setQ(e.target.value);
-                      setSelectedClass(null);
-                      setItems([]);
-                      setWeighted(null);
-                    }}
-                    placeholder={
-                      blockedByYear
-                        ? "Aún no ha cursado este año"
-                        : "Escribe: Matemáticas, Inglés, Historia..."
-                    }
-                    onFocus={() => !blockedByYear && q.trim() && setOpenSug(true)}
-                  />
 
                   {openSug && (suggestions.length > 0 || loadingSug) && (
                     <div
@@ -493,47 +475,8 @@ export default function DashboardPage() {
                         WebkitBackdropFilter: "blur(12px)",
                       }}
                     >
-                      {loadingSug && (
-                        <div style={{ padding: 12, color: "var(--muted)" }}>Buscando...</div>
-                      )}
-                      {!loadingSug &&
-                        suggestions.map((s) => (
-                          <button
-                            key={s.id}
-                            type="button"
-                            onClick={() => pickClass(s)}
-                            className="btnLight"
-                            style={{
-                              width: "100%",
-                              textAlign: "left",
-                              padding: 12,
-                              borderRadius: 0,
-                              border: 0,
-                              background: "transparent",
-                              boxShadow: "none",
-                              cursor: "pointer",
-                              fontWeight: 800,
-                            }}
-                          >
-                            {s.name}
-                          </button>
-                        ))}
-                      {!loadingSug && suggestions.length === 0 && (
-                        <div style={{ padding: 12, color: "var(--muted)" }}>No hay coincidencias</div>
-                      )}
                     </div>
                   )}
-                </div>
-
-                <div style={{ display: "flex", alignItems: "end" }}>
-                  <button
-                    className="btn"
-                    disabled={!canConsult || loadingGrades}
-                    onClick={() => handleConsult()}
-                    style={{ width: "100%" }}
-                  >
-                    {loadingGrades ? "Consultando..." : "Consultar"}
-                  </button>
                 </div>
               </div>
 

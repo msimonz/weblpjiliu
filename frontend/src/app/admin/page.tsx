@@ -408,10 +408,13 @@ export default function AdminPage() {
     if (!email || !email.includes("@")) return showErr("Email inválido.");
     if (!name) return showErr("Nombre requerido.");
     if (!cedula) return showErr("Cédula requerida.");
-    if (!code_jiliu) return showErr("code_jiliu requerido.");
-    if (!id_course) return showErr("Debes seleccionar un course.");
     if (roles.length === 0) return showErr("Selecciona al menos 1 rol (S/T/A).");
-
+    if(roles.includes("S") && !code_jiliu){
+      return showErr("Debes seleccionar un course.");
+    }
+    else if(roles.includes("S") && !id_course){
+      return showErr("code_jiliu requerido.");
+    }
     setCreatingUser(true);
     try {
       await apiFetch("/api/admin/create-user", {
@@ -492,10 +495,13 @@ export default function AdminPage() {
     if (!cedula) return showErr("Cédula requerida para buscar el usuario.");
     if (!email || !email.includes("@")) return showErr("Email inválido.");
     if (!name) return showErr("Nombre requerido.");
-    if (!code_jiliu) return showErr("code_jiliu requerido.");
-    if (!id_course) return showErr("Debes seleccionar un course.");
     if (roles.length === 0) return showErr("Selecciona al menos 1 rol (S/T/A).");
-
+    if(roles.includes("S") && !code_jiliu){
+      return showErr("Debes seleccionar un course.");
+    }
+    else if(roles.includes("S") && !id_course){
+      return showErr("code_jiliu requerido.");
+    }
     setUpLoading(true);
     try {
       const res = await apiFetch("/api/admin/update-user-by-cedula", {

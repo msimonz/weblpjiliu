@@ -331,8 +331,8 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
       const typeList = typeRaw.split(",").map((x) => x.trim()).filter(Boolean);
 
       const cedula = cleanStr(r.cedula || r.Cedula || r.CEDULA);
-      const code_jiliu = cleanStr(r.code_jiliu || r.Code || r.CODIGO || r.CODE_JILIU);
-      const id_course = toInt(r.id_course || r.ID_COURSE || r.course_id || r.COURSE_ID);
+      let code_jiliu = cleanStr(r.code_jiliu || r.Code || r.CODIGO || r.CODE_JILIU);
+      let id_course = toInt(r.id_course || r.ID_COURSE || r.course_id || r.COURSE_ID);
 
       if (!email || !email.includes("@")) {
         results.errors.push({ row: rowNum, error: "email inválido" });
@@ -354,15 +354,19 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         results.skipped++;
         continue;
       }
-      if (!code_jiliu) {
+      if(typeList.includes("S") && !code_jiliu){
         results.errors.push({ row: rowNum, error: "code_jiliu requerido" });
         results.skipped++;
         continue;
       }
-      if (!id_course) {
+      else if (typeList.includes("S") && !id_course){
         results.errors.push({ row: rowNum, error: "id_course requerido" });
         results.skipped++;
         continue;
+      }
+      else if(!typeList.includes("S")){
+        code_jiliu = null;
+        id_course = null;
       }
 
       let authUserId = null;
@@ -438,15 +442,15 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
           results.errors.push({ row: rowNum, error: `auth metadata: ${updAuth.error.message}` });
         }
       }
-
-      const { error: histErr } = await supabaseAdmin
+      if(!(payload.id_course == null)){
+        const { error: histErr } = await supabaseAdmin
         .from("user_history")
         .upsert({ id_student: authUserId, id_course }, { onConflict: "id_student,id_course" });
-
-      if (histErr) {
-        results.errors.push({ row: rowNum, error: `history: ${histErr.message}` });
+        if (histErr) {
+          results.errors.push({ row: rowNum, error: `history: ${histErr.message}` });
+        }
       }
-
+      
       if (createRes?.error) results.updated++;
       else results.created++;
 
@@ -468,8 +472,8 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
     const name = cleanStr(req.body?.name);
     const roles = Array.isArray(req.body?.roles) ? req.body.roles : [];
     const cedula = cleanStr(req.body?.cedula);
-    const code_jiliu = cleanStr(req.body?.code_jiliu);
-    const id_course = toInt(req.body?.id_course);
+    let code_jiliu = cleanStr(req.body?.code_jiliu);
+    let id_course = toInt(req.body?.id_course);
 
     if (!email || !email.includes("@")) return res.status(400).json({ error: "email inválido" });
     if (!name) return res.status(400).json({ error: "name requerido" });
@@ -479,10 +483,17 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
     }
     const roleList = roles.map((r) => String(r).toUpperCase());
 
+    if(roleList.includes("S") && !code_jiliu){
+      return res.status(400).json({ error: "code_jiliu requerido" });
+    }
+    else if(roleList.includes("S") && !id_course){
+      return res.status(400).json({ error: "id_course requerido" });
+    }
+    else if(!roleList.includes("S")){
+      id_course = null;
+      code_jiliu = null;
+    }
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
-    if (!code_jiliu) return res.status(400).json({ error: "code_jiliu requerido" });
-    if (!id_course) return res.status(400).json({ error: "id_course requerido" });
-
     const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || "password";
 
     let authUserId = null;
@@ -538,15 +549,14 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
     if (upDbErr) return res.status(500).json({ error: upDbErr.message });
 
     await replaceUserRoles(authUserId, roleList);
-
-    const { error: histErr } = await supabaseAdmin
+    if(!(payload.id_course == null)){
+      const { error: histErr } = await supabaseAdmin
       .from("user_history")
       .upsert({ id_student: authUserId, id_course }, { onConflict: "id_student,id_course" });
-
-    if (histErr) {
-      return res.json({ ok: true, item: up, warn: `history: ${histErr.message}`, created: !createRes?.error });
+      if (histErr) {
+        return res.json({ ok: true, item: up, warn: `history: ${histErr.message}`, created: !createRes?.error });
+      }
     }
-
     return res.json({ ok: true, item: up, created: !createRes?.error });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando usuario" });
@@ -564,21 +574,28 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
     const cedula = cleanStr(req.body?.cedula);
     const email = cleanStr(req.body?.email).toLowerCase();
     const name = cleanStr(req.body?.name);
-    const code_jiliu = cleanStr(req.body?.code_jiliu);
-    const id_course = toInt(req.body?.id_course);
+    let code_jiliu = cleanStr(req.body?.code_jiliu);
+    let id_course = toInt(req.body?.id_course);
     const roles = Array.isArray(req.body?.roles) ? req.body.roles : [];
 
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
     if (!email || !email.includes("@")) return res.status(400).json({ error: "email inválido" });
     if (!name) return res.status(400).json({ error: "name requerido" });
-    if (!code_jiliu) return res.status(400).json({ error: "code_jiliu requerido" });
-    if (!id_course) return res.status(400).json({ error: "id_course requerido" });
 
     if (roles.length === 0 || roles.some((r) => !["S", "T", "A"].includes(String(r).toUpperCase()))) {
       return res.status(400).json({ error: "roles inválidos (S/T/A)" });
     }
     const roleList = roles.map((r) => String(r).toUpperCase());
-
+    if(roleList.includes("S") && !code_jiliu){
+      return res.status(400).json({ error: "code_jiliu requerido" });
+    }
+    else if(roleList.includes("S") && !id_course){
+      return res.status(400).json({ error: "id_course requerido" });
+    }
+    else if(!roleList.includes("S")){
+      id_course = null;
+      code_jiliu = null;
+    }
     // 1) buscar usuario por cedula
     const { data: u, error: uErr } = await supabaseAdmin
       .from("users")

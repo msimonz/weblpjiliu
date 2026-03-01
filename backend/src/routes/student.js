@@ -244,7 +244,7 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
   // notas del estudiante para esos exámenes
   const { data: gradeRows, error: gradesErr } = await supabaseAdmin
     .from("grades")
-    .select("id_exam,grade,finished_at,attempts,source,created_at,updated_at")
+    .select("id_exam,grade,finished_at,attempts,created_at,updated_at")
     .eq("id_student", userId)
     .in("id_exam", evalIds);
 
