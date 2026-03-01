@@ -26,12 +26,24 @@
 <ownerDesignName>DER_EDIT</ownerDesignName>
 <defaultValue>SYSTIMESTAMP</defaultValue>
 </ColumnProxy>
+<ColumnProxy name="id_module" id="6FF13733-CF2F-0538-ABAD-0F383A9C9E8E">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:49:51 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
 <ColumnProxy name="name" id="B916BFC0-9199-9E79-4606-E285814237D8">
 <createdBy>msimonz</createdBy>
 <createdTime>2026-02-27 19:45:52 UTC</createdTime>
 <ownerDesignName>DER_EDIT</ownerDesignName>
 </ColumnProxy>
 </columnProxies>
+<foreignKeys>
+<ForeignKey class="oracle.dbtools.crest.model.design.storage.oracle.v10g.FKProxyOraclev10g" name="class_module_FK" id="7C20926C-01D0-8E31-B3D4-2C77156816E0">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:49:51 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ForeignKey>
+</foreignKeys>
 <primaryKeys>
 <PrimaryKey class="oracle.dbtools.crest.model.design.storage.oracle.v10g.PKProxyOraclev10g" name="class_PK" id="8581227F-E21A-9F6A-5F7B-6D7CCB47D59B">
 <createdBy>msimonz</createdBy>

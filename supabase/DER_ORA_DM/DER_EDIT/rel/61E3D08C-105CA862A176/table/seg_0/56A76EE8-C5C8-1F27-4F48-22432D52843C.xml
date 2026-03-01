@@ -15,9 +15,9 @@
 <createdTime>2026-02-27 19:45:52 UTC</createdTime>
 <ownerDesignName>DER_EDIT</ownerDesignName>
 <importedID>4C73E88F-3FD2-1956-CA99-EDD4DED201CE</importedID>
-<use>0</use>
-<logicalDatatype>LOGDT019</logicalDatatype>
-<domain>7C52A876-8519-19A7-F4C0-A4E24FB7A973</domain>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
 <ownDataTypeParameters>,,</ownDataTypeParameters>
 <autoIncrementColumn>true</autoIncrementColumn>
 <identityColumn>true</identityColumn>
@@ -70,6 +70,19 @@
 <ownDataTypeParameters>,,</ownDataTypeParameters>
 <autoIncrementCycle>false</autoIncrementCycle>
 </Column>
+<Column name="id_module" id="6FF13733-CF2F-0538-ABAD-0F383A9C9E8E">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:49:51 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<associations>
+<colAssociation fkAssociation="B294A91C-3672-69AD-1146-43A8C681478C" referredColumn="6E73FF6A-A642-67A1-063B-7F36574AE56E"/>
+</associations>
+</Column>
 </columns>
 <indexes itemClass="oracle.dbtools.crest.model.design.relational.Index">
 <ind_PK_UK id="8581227F-E21A-9F6A-5F7B-6D7CCB47D59B" name="class_PK">
@@ -83,6 +96,16 @@
 <isSurrogateKey>false</isSurrogateKey>
 <indexColumnUsage>
 <colUsage columnID="120DDD22-601E-B927-929E-558C6D61D597"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="7C20926C-01D0-8E31-B3D4-2C77156816E0" name="class_module_FK">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:49:51 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Foreign Key</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="6FF13733-CF2F-0538-ABAD-0F383A9C9E8E"/>
 </indexColumnUsage>
 </ind_PK_UK>
 </indexes>

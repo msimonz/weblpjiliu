@@ -19,3 +19,7 @@
 .env.*
 .vscode
 *.txt
+**/*.localz
+**/*.local
+**/*.git
+**/*.DS_Store

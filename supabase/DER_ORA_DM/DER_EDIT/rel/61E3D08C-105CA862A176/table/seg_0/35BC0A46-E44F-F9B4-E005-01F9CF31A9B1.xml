@@ -1,0 +1,82 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<Table class="oracle.dbtools.crest.model.design.relational.Table" directorySegmentName="seg_0" id="35BC0A46-E44F-F9B4-E005-01F9CF31A9B1" name="class_group">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:50:15 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<ordsAlias>table_13</ordsAlias>
+<allowColumnReorder>false</allowColumnReorder>
+<existDependencyGenerateInDDl>true</existDependencyGenerateInDDl>
+<parsed>true</parsed>
+<columns itemClass="oracle.dbtools.crest.model.design.relational.Column">
+<Column name="id_group" id="18D11595-3629-1EDE-A687-82DB814EF523">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:51:56 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<associations>
+<colAssociation fkAssociation="2A445659-9610-2AAC-8C9B-02E397935358" referredColumn="8DE5F7CD-8F13-51C6-3F3F-8E638062B1EF"/>
+</associations>
+</Column>
+<Column name="id_class" id="833041B0-70A1-4238-35D3-794AC51CC696">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:51:56 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<associations>
+<colAssociation fkAssociation="A018E8FF-6CF0-3362-3DFB-789E525FD14B" referredColumn="120DDD22-601E-B927-929E-558C6D61D597"/>
+</associations>
+</Column>
+</columns>
+<indexes itemClass="oracle.dbtools.crest.model.design.relational.Index">
+<ind_PK_UK id="67FDBE7F-34D5-7750-D368-590B6BB8A5B2" name="class_group_PK">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:51:56 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<pk>true</pk>
+<indexState>Primary Constraint</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="18D11595-3629-1EDE-A687-82DB814EF523"/>
+<colUsage columnID="833041B0-70A1-4238-35D3-794AC51CC696"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="CB125662-7E98-5FF6-99A5-0B0996101E74" name="class_group__UN">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:51:56 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Unique Constraint</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="18D11595-3629-1EDE-A687-82DB814EF523"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="98212FE8-DE3E-7A80-7490-7D9466B9C69B" name="class_group_class_FK">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:52:19 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Foreign Key</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="833041B0-70A1-4238-35D3-794AC51CC696"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="6F9E6C01-BEAA-2D28-5875-5D59AB54529A" name="class_group_group_FK">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-03-01 03:51:31 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Foreign Key</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="18D11595-3629-1EDE-A687-82DB814EF523"/>
+</indexColumnUsage>
+</ind_PK_UK>
+</indexes>
+</Table>

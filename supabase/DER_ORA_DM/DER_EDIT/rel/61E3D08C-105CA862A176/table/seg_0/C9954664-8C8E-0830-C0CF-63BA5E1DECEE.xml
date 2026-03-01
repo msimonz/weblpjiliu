@@ -1,0 +1,57 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<Table class="oracle.dbtools.crest.model.design.relational.Table" directorySegmentName="seg_0" id="C9954664-8C8E-0830-C0CF-63BA5E1DECEE" name="module">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:46:42 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<ordsAlias>table_11</ordsAlias>
+<allowColumnReorder>false</allowColumnReorder>
+<existDependencyGenerateInDDl>true</existDependencyGenerateInDDl>
+<parsed>true</parsed>
+<columns itemClass="oracle.dbtools.crest.model.design.relational.Column">
+<Column name="id" id="6E73FF6A-A642-67A1-063B-7F36574AE56E">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:48:05 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+<Column name="name" id="93E44BDA-FB49-E477-9048-A1DA2BBB3261">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:48:05 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<nullsAllowed>true</nullsAllowed>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT024</logicalDatatype>
+<dataTypeSize>50</dataTypeSize>
+<ownDataTypeParameters>50,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+</columns>
+<indexes itemClass="oracle.dbtools.crest.model.design.relational.Index">
+<ind_PK_UK id="A3826C8B-6DBD-8875-1226-FB61EBFD13CC" name="module_PK">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:48:14 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<pk>true</pk>
+<indexState>Primary Constraint</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="6E73FF6A-A642-67A1-063B-7F36574AE56E"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="17EF9842-9944-227F-0C66-0BC471D0CE54" name="module__UN">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:48:14 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Unique Constraint</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="6E73FF6A-A642-67A1-063B-7F36574AE56E"/>
+</indexColumnUsage>
+</ind_PK_UK>
+</indexes>
+</Table>

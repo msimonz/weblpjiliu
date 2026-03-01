@@ -1,0 +1,39 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<TableProxyOraclev20c class="oracle.dbtools.crest.model.design.storage.oracle.v20c.TableProxyOraclev20c" name="module" directorySegmentName="seg_0" id="C9954664-8C8E-0830-C0CF-63BA5E1DECEE">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:46:42 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<logging>YES</logging>
+<partitionedRowMovement>DISABLE</partitionedRowMovement>
+<temporaryChanged>false</temporaryChanged>
+<accessDriverType>oracle_loader</accessDriverType>
+<rejectLimit></rejectLimit>
+<columnProxies itemClass="oracle.dbtools.crest.model.design.storage.oracle.v12c.ColumnProxyOraclev12c">
+<ColumnProxy name="id" id="6E73FF6A-A642-67A1-063B-7F36574AE56E">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:48:05 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
+<ColumnProxy name="name" id="93E44BDA-FB49-E477-9048-A1DA2BBB3261">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:48:05 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
+</columnProxies>
+<primaryKeys>
+<PrimaryKey class="oracle.dbtools.crest.model.design.storage.oracle.v10g.PKProxyOraclev10g" name="module_PK" id="A3826C8B-6DBD-8875-1226-FB61EBFD13CC">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:48:14 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexSort>SORTED</indexSort>
+</PrimaryKey>
+</primaryKeys>
+<uniqueKeys>
+<UniqueKey class="oracle.dbtools.crest.model.design.storage.oracle.v10g.UniqueOraclev10g" name="module__UN" id="17EF9842-9944-227F-0C66-0BC471D0CE54">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-02-27 20:48:14 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexSort>SORTED</indexSort>
+</UniqueKey>
+</uniqueKeys>
+</TableProxyOraclev20c>
