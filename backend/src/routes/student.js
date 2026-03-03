@@ -15,7 +15,7 @@ const {
   ETM_LOGIN_URL,
   ETM_USERNAME,
   ETM_PASSWORD,
-  ETM_GET_RESULTS_PATH,
+  USER_ETM_GET_RESULTS_PATH,
 } = process.env;
 
 function mustEnv(name) {
@@ -31,7 +31,7 @@ function assertEtmLayerEnv() {
   mustEnv("ETM_LOGIN_URL");
   mustEnv("ETM_USERNAME");
   mustEnv("ETM_PASSWORD");
-  mustEnv("ETM_GET_RESULTS_PATH");
+  mustEnv("USER_ETM_GET_RESULTS_PATH");
 }
 
 async function fetchClassroomTests() {
@@ -132,9 +132,10 @@ async function loginGetCookiesAdmin() {
 }
 
 async function fetchEtmResultsPage(cookieHeader, pageNum, pageSize) {
-  const url = new URL(ETM_GET_RESULTS_PATH, ETM_BASE_URL);
+  const url = new URL(USER_ETM_GET_RESULTS_PATH, ETM_BASE_URL);
   url.searchParams.set("page", String(pageNum));
   url.searchParams.set("pageSize", String(pageSize));
+  console.log("URL QUE QUIERES: ", url);
 
   const res = await fetch(url.toString(), {
     method: "GET",
