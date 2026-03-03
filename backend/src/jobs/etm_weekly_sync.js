@@ -6,11 +6,13 @@ const {
   ETM_BASE_URL,
   ETM_LOGIN_URL,
   ETM_USERNAME,
+  SUPABASE_URL,
   ETM_PASSWORD,
   ETM_GET_RESULTS_PATH,
   ETM_PAGE_SIZE = '100',
   JOB_TZ = 'America/Bogota',
-  ETM_SYSTEM_EMAIL = 'cuentas.simarq@gmail.com',
+  // opcional: forzar un curso específico
+  ETM_COURSE_ID,
 } = process.env;
 
 if (!ETM_BASE_URL || !ETM_LOGIN_URL || !ETM_USERNAME || !ETM_PASSWORD || !ETM_GET_RESULTS_PATH) {
@@ -22,7 +24,6 @@ function cookiesToHeader(cookies) {
 }
 
 /** Ventana semana anterior: [lunes 00:00, lunes 00:00) en TZ. */
-
 function previousWeekWindow(tz) {
   const now = new Date();
 
@@ -50,15 +51,6 @@ function previousWeekWindow(tz) {
   return { start: prevMonday, end: thisMonday };
 }
 
-//PARA LA SEMANA ACTUAL
-/*
-function previousWeekWindow(tz) {
-  const end = new Date();
-  const start = new Date(end);
-  start.setDate(start.getDate() - 14);
-  return { start, end };
-}
-*/
 async function loginGetCookies() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
@@ -128,39 +120,33 @@ function parseCedula(studentDescription) {
   return m ? m[0] : null;
 }
 
-/**
- * ETM testName:
- * "101 - Nacidos a la familia de Dios"
- * Devuelve:
- *  - level = 1 (por 101 -> 1)
- *  - className = "Nacidos a la familia de Dios"
- */
-function parseClassFromTestName(testName) {
-  const raw = String(testName ?? '').trim();
-  if (!raw) return { level: null, className: null, raw };
-
-  // quita cosas tipo "(v3)" al final
-  const withoutVersion = raw.replace(/\s*\(v\d+\)\s*$/i, '').trim();
-
-  // separa "101 - " (o "201 - ") del resto
-  const m = withoutVersion.match(/^(\d{3})\s*-\s*(.+)$/);
-  if (!m) {
-    // si no coincide, igual intentamos usar todo como "materia"
-    return { level: null, className: withoutVersion, raw: withoutVersion };
-  }
-
-  const code = Number(m[1]); // 101, 201...
-  const level = Number.isFinite(code) ? Math.floor(code / 100) : null; // 101->1, 201->2
-  const className = String(m[2]).trim();
-
-  return { level, className, raw: withoutVersion };
-}
-
 function parsePercent(pctText) {
   const s = String(pctText ?? '').trim();
   const m = s.match(/(\d+(\.\d+)?)/);
   if (!m) return null;
   return Number(m[1]);
+}
+
+/**
+ * testName: "<ID_MATERIA> - <NOMBRE_TEST>"
+ * retorna { classId, testTitle, raw }
+ */
+function parseClassIdAndTitleFromTestName(testName) {
+  const raw = String(testName ?? '').trim();
+  if (!raw) return { classId: null, testTitle: null, raw };
+
+  // captura: numero + guion + resto
+  const m = raw.match(/^(\d+)\s*-\s*(.+)$/);
+  if (!m) return { classId: null, testTitle: raw, raw };
+
+  const classId = Number(m[1]);
+  const testTitle = String(m[2] ?? '').trim();
+
+  return {
+    classId: Number.isFinite(classId) ? classId : null,
+    testTitle: testTitle || null,
+    raw,
+  };
 }
 
 /** Anti-trampa: agrupa por (cedula + testName) y conserva el peor intento */
@@ -169,7 +155,7 @@ function applyAntiCheatWorstAttemptOnly(rows) {
 
   for (const r of rows) {
     const cedula = parseCedula(r.studentDescription) ?? String(r.studentDescription ?? '').trim();
-    const testKey = String(r.testName ?? '').trim();
+    const testKey = String(r.testName ?? '').trim(); // incluye "ID - Nombre"
     const key = `${cedula}||${testKey}`;
 
     const pct = parsePercent(r.pointsPercentageDisplay);
@@ -198,20 +184,56 @@ function applyAntiCheatWorstAttemptOnly(rows) {
     if (rIsWorse) curObj.row = r;
   }
 
-  return Array.from(kept.values());
+  return Array.from(kept.values()); // { row, attempts }
 }
 
-async function ensureEtmEvaluation({ courseId, classId, typeId, teacherId, title }) {
+function chunkArray(arr, size = 20) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+async function getTeacherForClass(classId) {
+  // Si hay más de uno, toma el primero
+  const { data, error } = await supabaseAdmin
+    .from('class_teacher')
+    .select('id_teacher')
+    .eq('id_class', classId)
+    .limit(1);
+
+  if (error) throw new Error(`Error leyendo class_teacher classId=${classId}: ${error.message}`);
+  const tid = data?.[0]?.id_teacher;
+  if (!tid) throw new Error(`No hay teacher asignado en class_teacher para id_class=${classId}`);
+  return tid;
+}
+
+async function getStudentsByCourse(courseId) {
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .select('id,cedula')
+    .eq('id_course', courseId);
+
+  if (error) throw new Error(`Error leyendo students courseId=${courseId}: ${error.message}`);
+  return data ?? [];
+}
+
+/**
+ * Asegura evaluation usando SOLO:
+ * - courseId, classId, typeId(Parcial), title = testTitle
+ */
+async function ensureEvaluationByTitle({ courseId, classId, typeId, teacherId, title }) {
+  const cleanTitle = String(title ?? '').trim();
+
   const { data: found, error: findErr } = await supabaseAdmin
     .from('evaluation')
     .select('id')
     .eq('id_course', courseId)
     .eq('id_class', classId)
     .eq('id_type', typeId)
-    .eq('title', title)
+    .eq('title', cleanTitle)
     .maybeSingle();
 
-  if (findErr) throw new Error(`ensureEtmEvaluation find: ${findErr.message}`);
+  if (findErr) throw new Error(`ensureEvaluation find: ${findErr.message}`);
   if (found?.id) return found.id;
 
   const { data, error } = await supabaseAdmin
@@ -222,13 +244,37 @@ async function ensureEtmEvaluation({ courseId, classId, typeId, teacherId, title
       id_type: typeId,
       id_teacher: teacherId,
       percent: 0,
-      title,
+      title: cleanTitle,
     })
     .select('id')
     .single();
 
-  if (error) throw new Error(`ensureEtmEvaluation insert: ${error.message}`);
+  if (error) throw new Error(`ensureEvaluation insert: ${error.message}`);
   return data.id;
+}
+
+/** Trae ids de estudiantes que ya tienen grade para esa evaluación */
+async function getExistingGradeStudentIdsForEval(evalId) {
+  const existing = new Set();
+  let from = 0;
+  const pageSize = 1000;
+
+  while (true) {
+    const { data, error } = await supabaseAdmin
+      .from('grades')
+      .select('id_student')
+      .eq('id_exam', evalId)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw new Error(`Error leyendo grades existentes evalId=${evalId}: ${error.message}`);
+    if (!data || data.length === 0) break;
+
+    for (const r of data) existing.add(r.id_student);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return existing;
 }
 
 export async function runWeeklySync() {
@@ -252,6 +298,7 @@ export async function runWeeklySync() {
     totalFetched += rows.length;
 
     for (const r of rows) {
+      // Solo terminados y calificados
       if (!r.isFinished || !r.isGradingComplete) continue;
       if (r.gradingStatus !== 'Graded') continue;
       if (!r.finishTime) continue;
@@ -273,58 +320,56 @@ export async function runWeeklySync() {
   console.log(`Total registros leídos: ${totalFetched}`);
   console.log(`Weekly graded rows: ${weekly.length}`);
 
+  // anti-cheat (peor intento por cedula+testName)
   const collapsed = applyAntiCheatWorstAttemptOnly(weekly);
   console.log(`Collapsed rows (unique cedula+test, keep WORST): ${collapsed.length}`);
 
-  // Pre-reqs
-  const { data: etmType, error: etmTypeErr } = await supabaseAdmin
+  // evaluation_type = Parcial
+  const { data: parcialType, error: parcialErr } = await supabaseAdmin
     .from('evaluation_type')
     .select('id')
-    .eq('type', 'ETM')
+    .eq('type', 'Parcial')
     .maybeSingle();
 
-  if (etmTypeErr) throw new Error(`Error leyendo evaluation_type ETM: ${etmTypeErr.message}`);
-  if (!etmType?.id) throw new Error("Falta evaluation_type 'ETM' (créalo como admin).");
+  if (parcialErr) throw new Error(`Error leyendo evaluation_type Parcial: ${parcialErr.message}`);
+  if (!parcialType?.id) throw new Error("Falta evaluation_type 'Parcial' (créalo como admin).");
 
-  const { data: sysTeacher, error: sysTeacherErr } = await supabaseAdmin
-    .from('users')
-    .select('id')
-    .eq('email', ETM_SYSTEM_EMAIL)
-    .maybeSingle();
+  const forcedCourseId = ETM_COURSE_ID ? Number(ETM_COURSE_ID) : null;
 
-  if (sysTeacherErr) throw new Error(`Error leyendo ETM System user: ${sysTeacherErr.message}`);
-  if (!sysTeacher?.id) throw new Error(`Falta usuario teacher del sistema (email: ${ETM_SYSTEM_EMAIL}).`);
-
-  // Cargar catálogo de materias (class) una sola vez
-  const { data: classes, error: classErr } = await supabaseAdmin
-    .from('class')
-    .select('id,name,level');
-
-  if (classErr) throw new Error(`Error leyendo class: ${classErr.message}`);
-
-  // map por name normalizado (y level opcional)
-  const classByName = new Map(); // "name||level" o "name||" -> id
-  for (const c of classes ?? []) {
-    const nameKey = String(c.name ?? '').trim().toLowerCase();
-    const lvlKey = (c.level ?? '') === null ? '' : String(c.level ?? '');
-    classByName.set(`${nameKey}||${lvlKey}`, c.id);
-    // fallback sin nivel
-    classByName.set(`${nameKey}||`, c.id);
+  // Cache de estudiantes por curso
+  const studentsByCourse = new Map(); // courseId -> { list, byCedula }
+  async function ensureStudentsCache(courseId) {
+    if (studentsByCourse.has(courseId)) return studentsByCourse.get(courseId);
+    const list = await getStudentsByCourse(courseId);
+    const byCedula = new Map();
+    for (const s of list) {
+      if (s.cedula) byCedula.set(String(s.cedula), s.id);
+    }
+    const obj = { list, byCedula };
+    studentsByCourse.set(courseId, obj);
+    return obj;
   }
 
-  const missingSubjects = new Map(); // key -> count
-  let matchedStudents = 0;
-  let insertedGrades = 0;
-  let skippedNoStudent = 0;
+  /**
+   * presentados:
+   * keyEval = `${courseId}||${classId}||${testTitle}`
+   * value: Map(studentId -> {grade, finished_at, attempts})
+   */
+  const presented = new Map();
+  const evalMeta = new Map(); // keyEval -> { courseId, classId, testTitle }
 
+  let matchedStudents = 0;
+  let skippedNoStudent = 0;
+  let skippedBadTestName = 0;
+
+  // Armamos los “presentados” (NOTA: aún no creamos evaluation aquí)
   for (const { row, attempts } of collapsed) {
     const cedula = parseCedula(row.studentDescription);
     if (!cedula) continue;
 
-    // 1) buscar estudiante por cédula
     const { data: student, error: studentErr } = await supabaseAdmin
       .from('users')
-      .select('id,id_course')
+      .select('id,id_course,cedula')
       .eq('cedula', cedula)
       .maybeSingle();
 
@@ -336,75 +381,144 @@ export async function runWeeklySync() {
       skippedNoStudent += 1;
       continue;
     }
+
+    // curso real del estudiante (o forzado)
+    const courseId = forcedCourseId ?? student.id_course;
+    if (forcedCourseId && student.id_course !== forcedCourseId) {
+      skippedNoStudent += 1;
+      continue;
+    }
+
+    const parsed = parseClassIdAndTitleFromTestName(row.testName);
+    const classId = parsed.classId;
+    const testTitle = parsed.testTitle;
+
+    if (!classId || !testTitle) {
+      skippedBadTestName += 1;
+      console.error(`No pude parsear testName="${row.testName}" (cedula=${cedula})`);
+      continue;
+    }
+
     matchedStudents += 1;
 
-    // 2) sacar materia real desde testName
-    const parsed = parseClassFromTestName(row.testName);
-    const subjectName = parsed.className;
-    const subjectLevel = parsed.level; // puede ser null si no pudo parsear
-    if (!subjectName) continue;
+    const keyEval = `${courseId}||${classId}||${testTitle}`;
+    if (!presented.has(keyEval)) presented.set(keyEval, new Map());
 
-    const subjectKey = subjectName.trim().toLowerCase();
-    const classId =
-      (subjectLevel ? classByName.get(`${subjectKey}||${String(subjectLevel)}`) : null) ??
-      classByName.get(`${subjectKey}||`);
+    const pct = parsePercent(row.pointsPercentageDisplay); // number o null
+    const finishedAt = row.finishTime ? new Date(row.finishTime).toISOString() : null;
 
-    if (!classId) {
-      const k = subjectLevel ? `${subjectName} (nivel ${subjectLevel})` : subjectName;
-      missingSubjects.set(k, (missingSubjects.get(k) ?? 0) + 1);
-      continue; // NO inserta si la materia no existe
-    }
-
-    // 3) crear/asegurar evaluation
-    const evalId = await ensureEtmEvaluation({
-      courseId: student.id_course,
-      classId,
-      typeId: etmType.id,
-      teacherId: sysTeacher.id,
-      title: String(row.testName ?? 'ETM Test').trim(), // título completo como aparece en ETM
+    presented.get(keyEval).set(student.id, {
+      grade: pct ?? null,
+      finished_at: finishedAt,
+      attempts,
     });
 
-    const pct = parsePercent(row.pointsPercentageDisplay) ?? 0;
-
-    // 4) upsert grade
-    const up = await supabaseAdmin
-      .from('grades')
-      .upsert(
-        {
-          id_student: student.id,
-          id_exam: evalId,
-          grade: pct,
-          finished_at: new Date(row.finishTime).toISOString(),
-          attempts,
-        },
-        { onConflict: 'id_student,id_exam' }
-      );
-
-    if (up.error) {
-      console.error('Upsert grade error:', up.error.message);
-    } else {
-      insertedGrades += 1;
+    if (!evalMeta.has(keyEval)) {
+      evalMeta.set(keyEval, { courseId, classId, testTitle });
     }
   }
 
-  console.log(`\nResumen:`);
-  console.log(`- Filas colapsadas: ${collapsed.length}`);
-  console.log(`- Matches de estudiante por cédula: ${matchedStudents}`);
-  console.log(`- Saltadas por no encontrar estudiante: ${skippedNoStudent}`);
-  console.log(`- Upserts de grades OK: ${insertedGrades}`);
+  console.log(`\nPre-resumen:`);
+  console.log(`- Evaluaciones únicas detectadas: ${evalMeta.size}`);
+  console.log(`- Matches estudiante por cédula: ${matchedStudents}`);
+  console.log(`- Saltadas por no encontrar estudiante/curso: ${skippedNoStudent}`);
+  console.log(`- Saltadas por testName inválido: ${skippedBadTestName}`);
 
-  if (missingSubjects.size > 0) {
-    console.log(`\n⚠️ Materias faltantes en public.class (no se insertó nada de esas):`);
-    // imprime top 30
-    const list = Array.from(missingSubjects.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 30);
-    for (const [name, count] of list) console.log(`- ${name}  (aparece ${count} veces)`);
-  } else {
-    console.log('\n✅ No faltaron materias: todas existían en public.class');
+  let ensuredEvals = 0;
+  let insertedEmpty = 0;
+  let insertedPresented = 0;
+  let skippedEmptyExisting = 0;
+  let skippedPresentedExisting = 0;
+
+  // Por cada evaluación (course + class + title)
+  for (const [keyEval, meta] of evalMeta.entries()) {
+    const { courseId, classId, testTitle } = meta;
+
+    // teacher desde class_teacher
+    const teacherId = await getTeacherForClass(classId);
+
+    // asegura evaluation (buscando por title = testTitle)
+    const evalId = await ensureEvaluationByTitle({
+      courseId,
+      classId,
+      typeId: parcialType.id,
+      teacherId,
+      title: testTitle,
+    });
+    ensuredEvals += 1;
+
+    // estudiantes del curso
+    const cache = await ensureStudentsCache(courseId);
+    const studentList = cache.list;
+
+    // existentes en grades para este evalId (para NO volver a insertar nada)
+    const existingStudentIds = await getExistingGradeStudentIdsForEval(evalId);
+
+    // 1) Insertar vacíos SOLO para quienes NO tengan fila aún
+    const emptyCandidates = studentList
+      .filter(s => !existingStudentIds.has(s.id))
+      .map(s => ({
+        id_student: s.id,
+        id_exam: evalId,
+        grade: null,
+        finished_at: null,
+        attempts: null,
+        source: 'ETM',
+      }));
+
+    skippedEmptyExisting += (studentList.length - emptyCandidates.length);
+
+    for (const ch of chunkArray(emptyCandidates, 20)) {
+      if (ch.length === 0) continue;
+      const ins = await supabaseAdmin.from('grades').insert(ch);
+      if (ins.error) {
+        console.error(`Insert empty chunk error evalId=${evalId}:`, ins.error.message);
+      } else {
+        insertedEmpty += ch.length;
+        for (const r of ch) existingStudentIds.add(r.id_student);
+      }
+    }
+
+    // 2) Insertar presentados SOLO si NO existe ya fila
+    const presMap = presented.get(keyEval) ?? new Map();
+    const presentedCandidates = Array.from(presMap.entries())
+      .filter(([studentId]) => !existingStudentIds.has(studentId))
+      .map(([studentId, v]) => ({
+        id_student: studentId,
+        id_exam: evalId,
+        grade: v.grade, // número o null
+        finished_at: v.finished_at,
+        attempts: v.attempts,
+        source: 'ETM',
+      }));
+
+    skippedPresentedExisting += (presMap.size - presentedCandidates.length);
+
+    for (const ch of chunkArray(presentedCandidates, 20)) {
+      if (ch.length === 0) continue;
+      const ins = await supabaseAdmin.from('grades').insert(ch);
+      if (ins.error) {
+        console.error(`Insert presented chunk error evalId=${evalId}:`, ins.error.message);
+      } else {
+        insertedPresented += ch.length;
+        for (const r of ch) existingStudentIds.add(r.id_student);
+      }
+    }
+
+    console.log(
+      `Eval OK: course=${courseId}, class=${classId}, title="${testTitle}" | ` +
+      `empty_inserted=${emptyCandidates.length}, presented_inserted=${presentedCandidates.length}, ` +
+      `skipped_existing(empty=${studentList.length - emptyCandidates.length}, presented=${presMap.size - presentedCandidates.length})`
+    );
   }
 
-  console.log('\nETM sync finished.');
+  console.log(`\nResumen final:`);
+  console.log(`- Evaluaciones aseguradas (Parcial): ${ensuredEvals}`);
+  console.log(`- Grades vacíos insertados: ${insertedEmpty}`);
+  console.log(`- Grades de presentados insertados: ${insertedPresented}`);
+  console.log(`- Grades vacíos saltados por ya existir: ${skippedEmptyExisting}`);
+  console.log(`- Presentados saltados por ya existir: ${skippedPresentedExisting}`);
+  console.log(`\nETM sync finished.`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

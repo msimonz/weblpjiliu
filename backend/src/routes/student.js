@@ -429,12 +429,6 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   });
 });
 
-/**
- * Notas por materia + ponderado
- * GET /api/student/grades?level=1&class_id=123
- *
- * ✅ Ahora: usa course real del estudiante + bloquea si level no corresponde
- */
 studentRouter.get("/grades", requireAuth, async (req, res) => {
   const userId = req.auth.user.id;
   const level = Number(req.query.level || 1);
