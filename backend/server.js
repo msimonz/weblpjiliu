@@ -32,5 +32,4 @@ app.use('/api/health', healthRouter);
 const port = Number(process.env.PORT || 3001);
 app.listen(port, () => {
   console.log(`Backend on :${port}`);
-  startSchedulers(); // cron lunes
 });
