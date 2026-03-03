@@ -92,6 +92,39 @@ export default function DashboardPage() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // =====================
+  // ✅ ETM PRE-LAYER UI
+  // =====================
+  type EtmTestItem = {
+    testId: string;
+    classId: number;
+    testTitle: string;
+    label: string;
+    takeUrl: string;
+  };
+
+  const [etmLoading, setEtmLoading] = useState(false);
+  const [etmError, setEtmError] = useState<string | null>(null);
+  const [etmTests, setEtmTests] = useState<EtmTestItem[]>([]);
+  const [etmSelected, setEtmSelected] = useState<EtmTestItem | null>(null);
+
+  async function loadEtmTests() {
+    setEtmError(null);
+    setEtmLoading(true);
+    try {
+      const res = await apiFetch("/api/student/etm/tests");
+      const list: EtmTestItem[] = res?.items || [];
+      setEtmTests(list);
+      setEtmSelected(list?.[0] || null);
+    } catch (e: any) {
+      setEtmTests([]);
+      setEtmSelected(null);
+      setEtmError(e?.message || "Error cargando exámenes disponibles");
+    } finally {
+      setEtmLoading(false);
+    }
+  }
+
   // auth guard
   useEffect(() => {
     (async () => {
@@ -111,6 +144,12 @@ export default function DashboardPage() {
       }
     })();
   }, [router]);
+
+  // ✅ carga exámenes ETM cuando ya tengo el usuario
+  useEffect(() => {
+    if (!meLoading && me) loadEtmTests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meLoading, me]);
 
   // set year to real student level
   useEffect(() => {
@@ -386,6 +425,7 @@ export default function DashboardPage() {
           <div className="label">Curso</div>
           <div style={{ fontWeight: 900 }}>{fixedCourseName}</div>
         </div>
+
         <ChangePasswordButton email={me?.user?.email} className="btn" />
         <div style={{ marginTop: 12 }}>
           <button className="btn" onClick={handleLogout} style={{ width: "100%" }}>
@@ -456,7 +496,6 @@ export default function DashboardPage() {
                 </div>
 
                 <div style={{ position: "relative" }}>
-
                   {openSug && (suggestions.length > 0 || loadingSug) && (
                     <div
                       style={{
@@ -474,8 +513,7 @@ export default function DashboardPage() {
                         backdropFilter: "blur(12px)",
                         WebkitBackdropFilter: "blur(12px)",
                       }}
-                    >
-                    </div>
+                    ></div>
                   )}
                 </div>
               </div>
@@ -496,8 +534,7 @@ export default function DashboardPage() {
                           gap: 12,
                         }}
                       >
-                        <div>
-                        </div>
+                        <div></div>
                         <button type="button" onClick={loadSummary} className="btnLight">
                           {summaryLoading ? "Cargando..." : "Refrescar"}
                         </button>
@@ -672,10 +709,83 @@ export default function DashboardPage() {
 
             {/* DERECHA */}
             <div className="card">
+              {/* ===================== */}
+              {/* ✅ PRESENTAR EXAMEN */}
+              {/* ===================== */}
+              <div
+                className="btnLight"
+                style={{
+                  padding: 14,
+                  borderRadius: 18,
+                  border: "1px solid var(--stroke)",
+                  marginTop: 6,
+                  marginBottom: 14,
+                }}
+              >
+                <div style={{ fontWeight: 900, marginBottom: 8 }}>Presentar examen</div>
+
+                {etmError && <div className="msgError">{etmError}</div>}
+
+                <div style={{ display: "grid", gap: 10 }}>
+                  <div>
+                    <div className="label">Exámenes disponibles</div>
+                    <select
+                      className="select"
+                      value={etmSelected?.testId || ""}
+                      onChange={(e) => {
+                        const t = etmTests.find((x) => x.testId === e.target.value) || null;
+                        setEtmSelected(t);
+                      }}
+                      disabled={etmLoading || etmTests.length === 0}
+                    >
+                      {etmLoading ? (
+                        <option value="">Cargando...</option>
+                      ) : etmTests.length === 0 ? (
+                        <option value="">No hay exámenes disponibles</option>
+                      ) : (
+                        etmTests.map((t) => (
+                          <option key={t.testId} value={t.testId}>
+                            {t.label}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      type="button"
+                      className="btnLight"
+                      onClick={loadEtmTests}
+                      disabled={etmLoading}
+                      style={{ flex: 1 }}
+                    >
+                      {etmLoading ? "Cargando..." : "Refrescar"}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={!etmSelected}
+                      style={{ flex: 1 }}
+                      onClick={() => {
+                        if (!etmSelected) return;
+                        const qp = new URLSearchParams({
+                          testId: etmSelected.testId,
+                          classId: String(etmSelected.classId),
+                          testTitle: etmSelected.testTitle,
+                          label: etmSelected.label,
+                        });
+                        router.push(`/dashboard/exam?${qp.toString()}`);
+                      }}
+                    >
+                      Presentar
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <h2 style={{ marginTop: 6 }}>Resumen del año</h2>
-              <p style={{ marginTop: 0, color: "var(--muted)" }}>
-                Totales calculados con ponderado por materia.
-              </p>
 
               {blockedByYear ? (
                 <div style={{ marginTop: 12, color: "var(--muted)", fontWeight: 800 }}>
@@ -715,7 +825,14 @@ export default function DashboardPage() {
                         <div style={{ fontSize: 26, fontWeight: 900 }}>
                           {summaryStats ? passed : "—"}
                         </div>
-                        <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12, fontWeight: 800 }}>
+                        <div
+                          style={{
+                            marginTop: 4,
+                            color: "var(--muted)",
+                            fontSize: 12,
+                            fontWeight: 800,
+                          }}
+                        >
                           {summaryStats ? `${passPct}% del total` : "—"}
                         </div>
                       </div>
@@ -745,7 +862,14 @@ export default function DashboardPage() {
                         <div style={{ fontSize: 26, fontWeight: 900 }}>
                           {summaryStats ? failed : "—"}
                         </div>
-                        <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12, fontWeight: 800 }}>
+                        <div
+                          style={{
+                            marginTop: 4,
+                            color: "var(--muted)",
+                            fontSize: 12,
+                            fontWeight: 800,
+                          }}
+                        >
                           {summaryStats ? `${failPct}% del total` : "—"}
                         </div>
                       </div>
@@ -772,15 +896,8 @@ export default function DashboardPage() {
                           ? "—"
                           : summaryStats.avg_weighted.toFixed(2)}
                       </div>
-                      <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                        Umbral para “pasada”:{" "}
-                        {summaryStats ? summaryStats.pass_grade.toFixed(2) : "—"}
-                        {summaryStats?.pending ? ` · Pendientes: ${summaryStats.pending}` : ""}
-                      </div>
                     </div>
                   </div>
-
-                  {/* ✅ QUITADO: gráfica de barras de abajo */}
                 </>
               )}
             </div>

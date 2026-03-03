@@ -1,12 +1,260 @@
 import { Router } from "express";
 import { requireAuth } from "../middlewares/auth.js";
 import { supabaseAdmin } from "../supabase.js";
-
+import { chromium } from "playwright";
 export const studentRouter = Router();
-
 const PASS_GRADE = 70;
 
-// ✅ helper: curso real del estudiante (fijo)
+const {
+  ETM_CLASSROOM_ID,
+  ETM_CLASSROOM_BASE = "https://www.classroomclipboard.com",
+  ETM_PUBLIC_PIN,
+  ETM_REAL_ACCESS_CODE,
+  ETM_CLASSROOM_BASE_PATH_TES, 
+  ETM_BASE_URL,
+  ETM_LOGIN_URL,
+  ETM_USERNAME,
+  ETM_PASSWORD,
+  ETM_GET_RESULTS_PATH,
+} = process.env;
+
+function mustEnv(name) {
+  if (!process.env[name]) throw new Error(`Falta variable de entorno ${name} en backend/.env`);
+  return process.env[name];
+}
+
+function assertEtmLayerEnv() {
+  mustEnv("ETM_CLASSROOM_ID");
+  mustEnv("ETM_PUBLIC_PIN");
+  mustEnv("ETM_REAL_ACCESS_CODE");
+  mustEnv("ETM_BASE_URL");
+  mustEnv("ETM_LOGIN_URL");
+  mustEnv("ETM_USERNAME");
+  mustEnv("ETM_PASSWORD");
+  mustEnv("ETM_GET_RESULTS_PATH");
+}
+
+async function fetchClassroomTests() {
+  const baseDns = ETM_CLASSROOM_BASE.replace(/\/$/, "");
+  const classroomTes = String(ETM_CLASSROOM_BASE_PATH_TES).trim(); // "api/tests"
+  const classroomId = String(ETM_CLASSROOM_ID).trim();             // "826518"
+
+  const url = `${baseDns}/${classroomTes}/${classroomId}`;
+
+  const res = await fetch(url, { method: "GET" });
+
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(
+      `No pude leer ClassroomClipboard tests: HTTP ${res.status} body(200)=${txt.slice(0, 200)}`
+    );
+  }
+
+  const data = await res.json(); // ✅ ahora sí
+  // data es array
+
+  const out = [];
+  for (const t of data) {
+    const testId = t.masterTestId;
+    const rawText = String(t.name || "").trim();
+    if (!testId || !rawText) continue;
+
+    const mm = rawText.match(/^(\d+)\s*-\s*(.+)$/);
+    const classId = mm ? Number(mm[1]) : null;
+    const testTitle = mm ? String(mm[2]).trim() : rawText;
+
+    if (!classId || !Number.isFinite(classId)) continue;
+
+    out.push({
+      testId,
+      label: rawText,
+      classId,
+      testTitle,
+      // 🔴 IMPORTANTE: esta URL la debes confirmar (mayúsculas/minúsculas)
+      takeUrl: `${baseDns}/${classroomId}/Test/${testId}`,
+    });
+  }
+
+  // dedupe
+  const uniq = new Map();
+  for (const t of out) uniq.set(t.testId, t);
+  return Array.from(uniq.values());
+}
+
+async function filterTestsByStudentCourseLevel(tests, courseLevel) {
+  const ids = Array.from(new Set(tests.map((t) => t.classId))).filter(Boolean);
+  if (ids.length === 0) return [];
+
+  const { data: classes, error } = await supabaseAdmin
+    .from("class")
+    .select("id,level,name")
+    .in("id", ids);
+
+  if (error) throw new Error(`Error leyendo class para filtrar tests: ${error.message}`);
+
+  const levelByClassId = new Map();
+  for (const c of classes || []) levelByClassId.set(Number(c.id), Number(c.level));
+
+  return tests.filter((t) => Number(levelByClassId.get(Number(t.classId))) === Number(courseLevel));
+}
+
+function cookiesToHeader(cookies) {
+  return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+}
+
+async function loginGetCookiesAdmin() {
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(20000);
+
+  await page.goto(ETM_LOGIN_URL, { waitUntil: "domcontentloaded" });
+
+  await page.waitForSelector("#tbUsername");
+  await page.waitForSelector("#tbPassword");
+
+  await page.fill("#tbUsername", ETM_USERNAME);
+  await page.fill("#tbPassword", ETM_PASSWORD);
+  await page.click('button[type="submit"]');
+
+  const probeUrl = new URL("/User", ETM_BASE_URL).toString();
+  await page.goto(probeUrl, { waitUntil: "domcontentloaded" });
+
+  if (page.url().toLowerCase().includes("/login")) {
+    await browser.close();
+    throw new Error(`Login ETM admin falló: redirigió a ${page.url()}`);
+  }
+
+  const cookies = await context.cookies();
+  await browser.close();
+  return cookies;
+}
+
+async function fetchEtmResultsPage(cookieHeader, pageNum, pageSize) {
+  const url = new URL(ETM_GET_RESULTS_PATH, ETM_BASE_URL);
+  url.searchParams.set("page", String(pageNum));
+  url.searchParams.set("pageSize", String(pageSize));
+
+  const res = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      Cookie: cookieHeader,
+      Accept: "application/json, text/plain, */*",
+      "X-Requested-With": "XMLHttpRequest",
+    },
+  });
+
+  const ct = res.headers.get("content-type") || "";
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`ETM results HTTP ${res.status} ct=${ct} body(200)=${body.slice(0, 200)}`);
+  }
+  if (!ct.includes("application/json")) {
+    const text = await res.text();
+    throw new Error(`ETM results no JSON. ct=${ct} sample=${text.slice(0, 200)}`);
+  }
+  return await res.json();
+}
+
+function extractRows(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload.testResults)) return payload.testResults;
+  if (Array.isArray(payload.results)) return payload.results;
+  if (Array.isArray(payload.items)) return payload.items;
+  return [];
+}
+
+function parseCedula(studentDescription) {
+  const s = String(studentDescription ?? "");
+  const m = s.match(/\b\d{6,12}\b/);
+  return m ? m[0] : null;
+}
+
+// testName en ETM: "101 - Introduccion..."
+function parseClassIdAndTitleFromTestName(testName) {
+  const raw = String(testName ?? "").trim();
+  if (!raw) return { classId: null, testTitle: null };
+  const m = raw.match(/^(\d+)\s*-\s*(.+)$/);
+  if (!m) return { classId: null, testTitle: raw };
+  return { classId: Number(m[1]), testTitle: String(m[2] || "").trim() };
+}
+
+async function hasInProgressAttempt({ cedula, classId, testTitle }) {
+  // Strategy: escanear páginas recientes hasta encontrar coincidencia o agotar.
+  const cookies = await loginGetCookiesAdmin();
+  const cookieHeader = cookiesToHeader(cookies);
+
+  const pageSize = 100;
+  let page = 1;
+  let scanned = 0;
+
+  // límite duro para no colgar el backend
+  const MAX_SCAN_ROWS = 3000;
+
+  while (true) {
+    const payload = await fetchEtmResultsPage(cookieHeader, page, pageSize);
+    const rows = extractRows(payload);
+    if (!rows || rows.length === 0) break;
+
+    scanned += rows.length;
+
+    for (const r of rows) {
+      const c = parseCedula(r.studentDescription);
+      if (c !== String(cedula)) continue;
+
+      const p = parseClassIdAndTitleFromTestName(r.testName);
+      if (Number(p.classId) !== Number(classId)) continue;
+
+      // Comparamos el "nombre del test" (sin el prefijo numérico)
+      const t = String(p.testTitle || "").trim().toLowerCase();
+      const wanted = String(testTitle || "").trim().toLowerCase();
+      if (t !== wanted) continue;
+
+      // Si NO está graded, lo consideramos “en progreso” (o incompleto)
+      const gs = String(r.gradingStatus || "").trim();
+      if (gs !== "Graded") return true;
+    }
+
+    if (rows.length < pageSize) break;
+    if (scanned >= MAX_SCAN_ROWS) break;
+
+    page += 1;
+  }
+
+  return false;
+}
+
+async function startClassroomTestAndGetLoadUrl({ testId, cedula }) {
+  const base = ETM_CLASSROOM_BASE.replace(/\/$/, "");
+  const classroomId = String(ETM_CLASSROOM_ID).trim();
+  const startUrl = `${base}/${classroomId}/test/${testId}`;
+  console.log("BASE", base);
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(25000);
+
+  await page.goto(startUrl, { waitUntil: "domcontentloaded" });
+
+  // Inputs según tu screenshot: placeholders "Full Name" y "Access code or return code"
+  await page.getByPlaceholder("Full Name").fill(String(cedula));
+  await page.getByPlaceholder("Access code or return code").fill(String(ETM_REAL_ACCESS_CODE));
+
+  // Botón "Start Test"
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "domcontentloaded" }),
+    page.getByRole("button", { name: /Start Test/i }).click(),
+  ]);
+
+  const urlAfter = page.url();
+  console.log("URLAFTER", urlAfter);
+  await browser.close();
+
+  
+  return urlAfter;
+}
+
 async function getStudentCourse(req, res) {
   const courseId = Number(req.auth.profile?.id_course || 0);
 
@@ -33,17 +281,10 @@ async function getStudentCourse(req, res) {
   return course;
 }
 
-// ✅ helper: valida level solicitado vs level real del estudiante
 function checkLevelAllowed(level, course) {
   return Number(level) === Number(course.level);
 }
 
-/**
- * Autocomplete de materias (tabla class)
- * GET /api/student/classes?level=1&q=mate
- *
- * ✅ Ahora: si el estudiante no ha cursado ese año => devuelve vacío.
- */
 studentRouter.get("/classes", requireAuth, async (req, res) => {
   const level = Number(req.query.level || 1);
   const q = String(req.query.q || "").trim();
@@ -77,13 +318,6 @@ studentRouter.get("/classes", requireAuth, async (req, res) => {
   return res.json({ blocked: false, items: data || [], course });
 });
 
-/**
- * Resumen por año: ponderado total por materia + stats
- * GET /api/student/subjects-summary?level=1
- *
- * ✅ Ahora: usa SIEMPRE el course real del estudiante (id_course) y
- * bloquea si level != course.level
- */
 studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   const userId = req.auth.user.id;
   const level = Number(req.query.level || 1);
@@ -277,4 +511,108 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
   const weighted = sumW > 0 ? Number((sum / sumW).toFixed(2)) : null;
 
   return res.json({ blocked: false, items, weighted, course });
+});
+
+studentRouter.get("/etm/tests", requireAuth, async (req, res) => {
+  try {
+    assertEtmLayerEnv();
+
+    const course = await getStudentCourse(req, res);
+    if (!course) return;
+
+    const tests = await fetchClassroomTests();
+    console.log(tests)
+    const filtered = await filterTestsByStudentCourseLevel(tests, course.level);
+
+    return res.json({
+      course,
+      items: filtered.map((t) => ({
+        testId: t.testId,
+        classId: t.classId,
+        testTitle: t.testTitle,
+        label: t.label,
+        takeUrl: t.takeUrl,
+      })),
+    });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error cargando tests ETM" });
+  }
+});
+
+studentRouter.post("/etm/start", requireAuth, async (req, res) => {
+  try {
+    assertEtmLayerEnv();
+
+    const { testId, classId, testTitle, cedula, pin } = req.body || {};
+    console.log("ReqBody", req.body);
+    console.log("TestId:", testId);
+    console.log("ClassId:", classId);
+    console.log("testiTitle:", testTitle);
+    console.log("Cédula:", cedula);
+    console.log("pin:", pin);
+    if (!testId || !classId || !testTitle || !cedula || !pin) {
+      return res.status(400).json({ error: "Faltan campos: testId, classId, testTitle, cedula, pin" });
+    }
+
+    // 1) PIN público (lo que el estudiante sabe)
+    if (String(pin).trim() !== String(ETM_PUBLIC_PIN).trim()) {
+      return res.status(403).json({ error: "Clave del examen incorrecta" });
+    }
+
+    // 2) Verifica que la cédula exista (y opcional: que corresponda al usuario autenticado)
+    const { data: dbUser, error: uErr } = await supabaseAdmin
+      .from("users")
+      .select("id,cedula,id_course")
+      .eq("cedula", String(cedula).trim())
+      .maybeSingle();
+
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    if (!dbUser?.id) return res.status(403).json({ error: "La cédula no existe en el sistema" });
+
+    // 🔒 Recomendado: que solo pueda usar SU cédula
+    // (si quieres permitir “cualquier cédula válida”, borra este bloque)
+    const authUserId = req.auth.user.id;
+    if (String(dbUser.id) !== String(authUserId)) {
+      return res.status(403).json({ error: "La cédula no corresponde al usuario autenticado" });
+    }
+
+    // 3) Valida que el test corresponda al año del estudiante (course.level)
+    const course = await getStudentCourse(req, res);
+    if (!course) return;
+
+    // class.level debe coincidir con course.level
+    const { data: cls, error: clsErr } = await supabaseAdmin
+      .from("class")
+      .select("id,level")
+      .eq("id", Number(classId))
+      .maybeSingle();
+
+    if (clsErr) return res.status(500).json({ error: clsErr.message });
+    if (!cls?.id) return res.status(404).json({ error: "La materia (classId) no existe" });
+    if (Number(cls.level) !== Number(course.level)) {
+      return res.status(403).json({ error: "Ese examen no corresponde a tu año/curso" });
+    }
+
+    // 4) Bloqueo por “in progress” (si existe un registro NO graded para ese test + cédula)
+    const inProg = await hasInProgressAttempt({
+      cedula: String(cedula).trim(),
+      classId: Number(classId),
+      testTitle: String(testTitle).trim(),
+    });
+
+    if (inProg) {
+      return res.status(409).json({
+        error: "Tienes un intento en progreso o pendiente de calificación para este examen. No puedes iniciar otro.",
+      });
+    }
+    // 5) Inicia el test REAL en ClassroomClipboard, pero usando la clave REAL (env)
+    const loadUrl = await startClassroomTestAndGetLoadUrl({
+      testId: String(testId),
+      cedula: String(cedula).trim(),
+    });
+
+    return res.json({ redirectUrl: loadUrl });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error iniciando examen" });
+  }
 });
