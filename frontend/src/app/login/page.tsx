@@ -95,7 +95,7 @@ export default function LoginPage() {
     >
       {/* ✅ Header global (dark-ready) */}
       <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 80 }}>
-        <Header mode="simple" logoUrl={logoUrl} />
+        <Header logoUrl={logoUrl} />
       </div>
 
       {/* ✅ LOGIN CARD (bajado para no chocar con el header fixed) */}

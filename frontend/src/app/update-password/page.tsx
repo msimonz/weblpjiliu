@@ -64,7 +64,7 @@ export default function UpdatePasswordPage() {
   return (
     <div style={{ minHeight: "100vh", padding: 20 }}>
       <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 80 }}>
-        <Header mode="simple" logoUrl={logoUrl} />
+        <Header logoUrl={logoUrl} />
       </div>
 
       <div className="container" style={{ minHeight: "100vh", display: "grid", placeItems: "center", paddingTop: 82 }}>

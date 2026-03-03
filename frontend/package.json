@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "export": "next export",
-    "build:static": "next build && next export"
+    "build:static": "next build"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.95.3",
