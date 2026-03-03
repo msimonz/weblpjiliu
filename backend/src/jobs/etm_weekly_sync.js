@@ -6,16 +6,15 @@ const {
   ETM_BASE_URL,
   ETM_LOGIN_URL,
   ETM_USERNAME,
-  SUPABASE_URL,
   ETM_PASSWORD,
-  ETM_GET_RESULTS_PATH,
+  USER_ETM_GET_RESULTS_PATH,
   ETM_PAGE_SIZE = '100',
   JOB_TZ = 'America/Bogota',
   // opcional: forzar un curso específico
   ETM_COURSE_ID,
 } = process.env;
 
-if (!ETM_BASE_URL || !ETM_LOGIN_URL || !ETM_USERNAME || !ETM_PASSWORD || !ETM_GET_RESULTS_PATH) {
+if (!ETM_BASE_URL || !ETM_LOGIN_URL || !ETM_USERNAME || !ETM_PASSWORD || !USER_ETM_GET_RESULTS_PATH) {
   throw new Error('Faltan variables de entorno ETM_* en .env');
 }
 
@@ -80,7 +79,7 @@ async function loginGetCookies() {
 }
 
 async function fetchPage(cookieHeader, page, pageSize) {
-  const url = new URL(ETM_GET_RESULTS_PATH, ETM_BASE_URL);
+  const url = new URL(USER_ETM_GET_RESULTS_PATH, ETM_BASE_URL);
   url.searchParams.set('page', String(page));
   url.searchParams.set('pageSize', String(pageSize));
 
