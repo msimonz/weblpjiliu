@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "dev": "node server.js",
-    "job:etm": "node src/jobs/etm_weekly_sync.js"
+    "job:etm": "node src/jobs/etm_weekly_sync.js",
+    "start": "node server.js"
   },
   "keywords": [],
   "author": "",

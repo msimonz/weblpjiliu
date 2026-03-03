@@ -30,6 +30,7 @@ app.use('/api/teacher', teacherRouter);
 app.use('/api/student', studentRouter);
 app.use('/api/health', healthRouter);
 const port = Number(process.env.PORT || 3001);
+
 app.listen(port, () => {
   console.log(`Backend on :${port}`);
 });
