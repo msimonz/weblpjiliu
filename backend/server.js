@@ -13,7 +13,10 @@ import { startSchedulers } from './src/schedulers.js';
 
 const app = express();
 app.use(cors({
-  origin: ['http://localhost:3000'],
+  origin: [
+    'http://localhost:3000',
+    'https://felapromesaxjiliu.onrender.com',
+  ],
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
