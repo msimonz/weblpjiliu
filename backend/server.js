@@ -7,7 +7,7 @@ import { adminRouter } from './src/routes/admin.js';
 import { teacherRouter } from './src/routes/teacher.js';
 import { studentRouter } from './src/routes/student.js';
 import { authRouter } from './src/routes/auth.js';
-
+import { healthRouter } from './src/routes/health.js';
 
 import { startSchedulers } from './src/schedulers.js';
 
@@ -28,7 +28,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/teacher', teacherRouter);
 app.use('/api/student', studentRouter);
-
+app.use('/api/health', healthRouter);
 const port = Number(process.env.PORT || 3001);
 app.listen(port, () => {
   console.log(`Backend on :${port}`);
