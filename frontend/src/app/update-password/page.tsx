@@ -131,7 +131,7 @@ export default function UpdatePasswordPage() {
         </div>
       </div>
 
-      <Footer rightText="Made for Iglesia La Promesa." />
+      <Footer rightText="Hecho para la Iglesia La Promesa." />
     </div>
   );
 }

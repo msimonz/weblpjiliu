@@ -803,7 +803,7 @@ export default function TeacherPage() {
                         const editable = classFilter !== "all" && e.id_class === Number(classFilter);
                         return (
                           <tr key={e.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                            <td style={{ padding: 12, fontWeight: 900 }}>{e.title}</td>
+                            <td style={{ padding: 12, fontWeight: 600 }}>{e.title}</td>
 
                             <td style={{ padding: 12 }}>
                               {editable ? (
@@ -1119,8 +1119,8 @@ export default function TeacherPage() {
                         ) : (
                           gRoster.map((st) => (
                             <tr key={st.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                              <td style={{ padding: 12, fontWeight: 800 }}>{st.cedula}</td>
-                              <td style={{ padding: 12, fontWeight: 900 }}>{st.name}</td>
+                              <td style={{ padding: 12, fontWeight: 500 }}>{st.cedula}</td>
+                              <td style={{ padding: 12, fontWeight: 600 }}>{st.name}</td>
                               <td style={{ padding: 12 }}>
                                 <input
                                   className="input"
@@ -1163,7 +1163,7 @@ export default function TeacherPage() {
         </div>
       </main>
 
-      <Footer rightText="Made for Iglesia La Promesa." />
+      <Footer rightText="Hecho para la Iglesia La Promesa." />
     </div>
   );
 }
