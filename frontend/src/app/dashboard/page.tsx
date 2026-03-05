@@ -450,7 +450,7 @@ export default function DashboardPage() {
 
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <div className="btnLight">
-                {me?.role === "A" ? "Admin" : me?.role === "T" ? "Teacher" : "Student"} ·{" "}
+                {me?.role === "A" ? "Admin" : me?.role === "T" ? "Profesor" : "Estudiante"} ·{" "}
                 {me?.user?.email}
               </div>
             </div>
@@ -575,11 +575,11 @@ export default function DashboardPage() {
                                   key={s.class_id}
                                   style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}
                                 >
-                                  <td style={{ padding: 12, fontWeight: 900 }}>{s.name}</td>
+                                  <td style={{ padding: 12, fontWeight: 600 }}>{s.name}</td>
                                   <td
                                     style={{
                                       padding: 12,
-                                      fontWeight: 900,
+                                      fontWeight: 700,
                                       color: gradeTextColor(s.weighted),
                                     }}
                                   >
@@ -904,7 +904,7 @@ export default function DashboardPage() {
           </div>
         </div>
       </main>
-      <Footer rightText="Made for Iglesia La Promesa." />
+      <Footer rightText="Hecha para la Iglesia La Promesa." />
     </div>
   );
 }

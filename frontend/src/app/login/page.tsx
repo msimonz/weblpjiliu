@@ -127,8 +127,8 @@ export default function LoginPage() {
                 value={rolePick}
                 onChange={(e) => setRolePick(e.target.value as RoleCode)}
               >
-                <option value="S">Student</option>
-                <option value="T">Teacher</option>
+                <option value="S">Estudiante</option>
+                <option value="T">Profesor</option>
                 <option value="A">Admin</option>
               </select>
             </div>
@@ -199,7 +199,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      <Footer rightText="Made for Iglesia La Promesa." />
+      <Footer rightText="Hecho para la Iglesia La Promesa." />
     </div>
   );
 }

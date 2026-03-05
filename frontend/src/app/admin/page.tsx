@@ -848,7 +848,7 @@ export default function AdminPage() {
                     ) : (
                       courses.map((c) => (
                         <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                          <td style={{ padding: 12, fontWeight: 900 }}>{c.name}</td>
+                          <td style={{ padding: 12, fontWeight: 500 }}>{c.name}</td>
                           <td style={{ padding: 12 }}>{c.level}</td>
                         </tr>
                       ))
@@ -922,7 +922,7 @@ export default function AdminPage() {
                     ) : (
                       classes.map((c) => (
                         <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                          <td style={{ padding: 12, fontWeight: 900 }}>{c.name}</td>
+                          <td style={{ padding: 12, fontWeight: 500 }}>{c.name}</td>
                           <td style={{ padding: 12 }}>{c.level}</td>
                         </tr>
                       ))
@@ -965,7 +965,6 @@ export default function AdminPage() {
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                      <th style={{ textAlign: "left", padding: 12 }}>ID</th>
                       <th style={{ textAlign: "left", padding: 12 }}>Tipo</th>
                     </tr>
                   </thead>
@@ -979,8 +978,7 @@ export default function AdminPage() {
                     ) : (
                       types.map((t) => (
                         <tr key={t.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                          <td style={{ padding: 12, fontWeight: 900 }}>{t.id}</td>
-                          <td style={{ padding: 12, fontWeight: 900 }}>{t.type}</td>
+                          <td style={{ padding: 12, fontWeight: 500 }}>{t.type}</td>
                         </tr>
                       ))
                     )}
@@ -1008,7 +1006,7 @@ export default function AdminPage() {
                     <option value="">Selecciona...</option>
                     {teachers.map((t) => (
                       <option key={t.id} value={t.id}>
-                        {t.name} · {t.email}
+                        {t.name}
                       </option>
                     ))}
                   </select>
@@ -1316,7 +1314,7 @@ export default function AdminPage() {
         </div>
       </main>
 
-      <Footer rightText="Made for Iglesia La Promesa." />
+      <Footer rightText="Hecho para la Iglesia La Promesa." />
     </div>
   );
 }
