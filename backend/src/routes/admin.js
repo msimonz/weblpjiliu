@@ -99,6 +99,29 @@ async function replaceUserRoles(id_user, roleCodes) {
 }
 
 // ============================================================================
+// 0) MODULES / GROUPS
+// ============================================================================
+adminRouter.get("/modules", requireAuth, requireAdmin, async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from("module")
+    .select("id,name")
+    .order("name", { ascending: true });
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ items: data || [] });
+});
+
+adminRouter.get("/groups", requireAuth, requireAdmin, async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from("group")
+    .select("id,name")
+    .order("name", { ascending: true });
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ items: data || [] });
+});
+
+// ============================================================================
 // 1) COURSES
 // ============================================================================
 adminRouter.get("/courses", requireAuth, requireAdmin, async (req, res) => {
@@ -106,7 +129,8 @@ adminRouter.get("/courses", requireAuth, requireAdmin, async (req, res) => {
     .from("course")
     .select("id,name,year,level,created_at")
     .order("level", { ascending: true })
-    .order("year", { ascending: false });
+    .order("year", { ascending: false })
+    .order("name", { ascending: true });
 
   if (error) return res.status(500).json({ error: error.message });
   return res.json({ items: data || [] });
@@ -141,31 +165,95 @@ adminRouter.post("/courses", requireAuth, requireAdmin, async (req, res) => {
 adminRouter.get("/classes", requireAuth, requireAdmin, async (req, res) => {
   const { data, error } = await supabaseAdmin
     .from("class")
-    .select("id,name,level,created_at")
+    .select(`
+      id,
+      name,
+      level,
+      id_module,
+      created_at,
+      module:module(id,name),
+      class_group(
+        id_group,
+        group:group(id,name)
+      )
+    `)
     .order("level", { ascending: true })
     .order("name", { ascending: true });
 
   if (error) return res.status(500).json({ error: error.message });
-  return res.json({ items: data || [] });
+
+  const items = (data || []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    level: c.level,
+    id_module: c.id_module,
+    module_name: c.module?.name || null,
+    created_at: c.created_at,
+    groups: (c.class_group || []).map((cg) => ({
+      id: cg.id_group,
+      name: cg.group?.name || "",
+    })),
+  }));
+
+  return res.json({ items });
 });
 
 adminRouter.post("/classes", requireAuth, requireAdmin, async (req, res) => {
   const name = cleanStr(req.body?.name);
   const level = toInt(req.body?.level);
+  const id_module = toInt(req.body?.id_module);
+  const id_group = toInt(req.body?.id_group);
 
   if (!name) return res.status(400).json({ error: "name requerido" });
   if (!level || level < 1 || level > 4) {
     return res.status(400).json({ error: "level inválido (1..4)" });
   }
+  if (!id_module) return res.status(400).json({ error: "id_module requerido" });
 
-  const { data, error } = await supabaseAdmin
-    .from("class")
-    .insert({ name, level })
-    .select("id,name,level,created_at")
+  const { data: mod, error: modErr } = await supabaseAdmin
+    .from("module")
+    .select("id,name")
+    .eq("id", id_module)
     .maybeSingle();
 
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ item: data });
+  if (modErr) return res.status(500).json({ error: modErr.message });
+  if (!mod?.id) return res.status(404).json({ error: "Módulo no existe" });
+
+  if (id_group) {
+    const { data: grp, error: grpErr } = await supabaseAdmin
+      .from("group")
+      .select("id,name")
+      .eq("id", id_group)
+      .maybeSingle();
+
+    if (grpErr) return res.status(500).json({ error: grpErr.message });
+    if (!grp?.id) return res.status(404).json({ error: "Grupo no existe" });
+  }
+
+  const { data: createdClass, error: classErr } = await supabaseAdmin
+    .from("class")
+    .insert({
+      name,
+      level,
+      id_module,
+    })
+    .select("id,name,level,id_module,created_at")
+    .maybeSingle();
+
+  if (classErr) return res.status(500).json({ error: classErr.message });
+
+  if (id_group) {
+    const { error: cgErr } = await supabaseAdmin
+      .from("class_group")
+      .insert({
+        id_class: createdClass.id,
+        id_group,
+      });
+
+    if (cgErr) return res.status(500).json({ error: cgErr.message });
+  }
+
+  return res.json({ item: createdClass });
 });
 
 // ============================================================================
