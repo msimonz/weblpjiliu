@@ -10,7 +10,26 @@ import Footer from "@/components/Footer";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 
 type Course = { id: number; name: string; level: number; year: string | null };
-type ClassItem = { id: number; name: string; level: number };
+
+type GroupMini = {
+  id: number;
+  name: string;
+};
+
+type ModuleItem = {
+  id: number;
+  name: string;
+};
+
+type ClassItem = {
+  id: number;
+  name: string;
+  level: number;
+  id_module: number | null;
+  module_name: string | null;
+  groups: GroupMini[];
+};
+
 type EvalType = { id: number; type: string };
 
 type UserMini = {
@@ -55,44 +74,40 @@ export default function AdminPage() {
   const [me, setMe] = useState<any>(null);
   const [loadingMe, setLoadingMe] = useState(true);
 
-  // mensajes
   const [msg, setMsg] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [view, setView] = useState<AdminView>("COURSES");
 
-  // ===== data lists =====
   const [courses, setCourses] = useState<Course[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [types, setTypes] = useState<EvalType[]>([]);
   const [teachers, setTeachers] = useState<UserMini[]>([]);
   const [students, setStudents] = useState<UserMini[]>([]);
+  const [modules, setModules] = useState<ModuleItem[]>([]);
+  const [groups, setGroups] = useState<GroupMini[]>([]);
   const [loadingData, setLoadingData] = useState(false);
 
-  // ===== create course =====
   const [newCourseName, setNewCourseName] = useState("");
   const [newCourseLevel, setNewCourseLevel] = useState<number>(1);
   const [newCourseYear, setNewCourseYear] = useState<string>("");
 
-  // ===== create class =====
   const [newClassName, setNewClassName] = useState("");
   const [newClassLevel, setNewClassLevel] = useState<number>(1);
+  const [newClassModuleId, setNewClassModuleId] = useState<string>("");
+  const [newClassGroupId, setNewClassGroupId] = useState<string>("");
 
-  // ===== create eval type =====
   const [newType, setNewType] = useState("");
 
-  // ===== assign teacher -> class =====
   const [selAssignLevel, setSelAssignLevel] = useState<string>("");
   const [selTeacher, setSelTeacher] = useState<string>("");
   const [selClass, setSelClass] = useState<string>("");
 
-  // ===== USERS: upload excel =====
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadReport, setUploadReport] = useState<any>(null);
 
-  // ===== USERS: crear manual =====
   const [uEmail, setUEmail] = useState("");
   const [uName, setUName] = useState("");
   const [uCedula, setUCedula] = useState("");
@@ -105,7 +120,6 @@ export default function AdminPage() {
   });
   const [creatingUser, setCreatingUser] = useState(false);
 
-  // ===== UPDATE USER =====
   const [upCedula, setUpCedula] = useState("");
   const [upEmail, setUpEmail] = useState("");
   const [upName, setUpName] = useState("");
@@ -160,12 +174,14 @@ export default function AdminPage() {
     setOkMsg(null);
     setLoadingData(true);
     try {
-      const [c1, c2, c3, t1, s1] = await Promise.all([
+      const [c1, c2, c3, t1, s1, m1, g1] = await Promise.all([
         apiFetch("/api/admin/courses"),
         apiFetch("/api/admin/classes"),
         apiFetch("/api/admin/evaluation-types"),
         apiFetch("/api/admin/teachers"),
         apiFetch("/api/admin/students"),
+        apiFetch("/api/admin/modules"),
+        apiFetch("/api/admin/groups"),
       ]);
 
       setCourses(c1?.items || []);
@@ -173,6 +189,8 @@ export default function AdminPage() {
       setTypes(c3?.items || []);
       setTeachers(t1?.items || []);
       setStudents(s1?.items || []);
+      setModules(m1?.items || []);
+      setGroups(g1?.items || []);
     } catch (e: any) {
       showErr(e?.message || "Error cargando datos del admin");
     } finally {
@@ -182,28 +200,73 @@ export default function AdminPage() {
 
   useEffect(() => {
     if (!loadingMe) loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingMe]);
 
-  // =========================
-  // FILTRO DE MATERIAS EN ASSIGN_TEACHER
-  // =========================
   const classesForAssign = useMemo(() => {
     if (!selAssignLevel) return [];
     return classes.filter((c) => Number(c.level) === Number(selAssignLevel));
   }, [classes, selAssignLevel]);
 
+  const availableModulesForCreate = useMemo(() => {
+    const ids = Array.from(
+      new Set(
+        classes
+          .filter((c) => Number(c.level) === Number(newClassLevel))
+          .map((c) => Number(c.id_module))
+          .filter((x) => Number.isFinite(x) && x > 0)
+      )
+    );
+
+    return modules.filter((m) => ids.includes(m.id));
+  }, [classes, modules, newClassLevel]);
+
+  const classesByLevelAndModule = useMemo(() => {
+    return classes.filter((c) => {
+      if (Number(c.level) !== Number(newClassLevel)) return false;
+      if (newClassModuleId && Number(c.id_module) !== Number(newClassModuleId)) return false;
+      return true;
+    });
+  }, [classes, newClassLevel, newClassModuleId]);
+
+  const availableGroupsForCreate = useMemo(() => {
+    const map = new Map<number, GroupMini>();
+
+    for (const cls of classesByLevelAndModule) {
+      for (const grp of cls.groups || []) {
+        if (!map.has(grp.id)) {
+          map.set(grp.id, grp);
+        }
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [classesByLevelAndModule]);
+
   const classesForCreate = useMemo(() => {
-    return classes.filter((c) => Number(c.level) === Number(newClassLevel));
-  }, [classes, newClassLevel]);
+    return classes.filter((c) => {
+      if (Number(c.level) !== Number(newClassLevel)) return false;
+      if (newClassModuleId && Number(c.id_module) !== Number(newClassModuleId)) return false;
+      if (newClassGroupId) {
+        const hasGroup = (c.groups || []).some((g) => Number(g.id) === Number(newClassGroupId));
+        if (!hasGroup) return false;
+      }
+      return true;
+    });
+  }, [classes, newClassLevel, newClassModuleId, newClassGroupId]);
 
   useEffect(() => {
     setSelClass("");
   }, [selAssignLevel]);
 
-  // =========================
-  // AUTOCARGAR USER AL ESCRIBIR CÉDULA
-  // =========================
+  useEffect(() => {
+    setNewClassModuleId("");
+    setNewClassGroupId("");
+  }, [newClassLevel]);
+
+  useEffect(() => {
+    setNewClassGroupId("");
+  }, [newClassModuleId]);
+
   useEffect(() => {
     if (view !== "UPDATE_USER") return;
 
@@ -277,9 +340,6 @@ export default function AdminPage() {
     return () => clearTimeout(t);
   }, [upCedula, view]);
 
-  // =========================
-  // COURSES
-  // =========================
   async function createCourse() {
     const name = newCourseName.trim();
     if (!name) return showErr("Nombre del course requerido.");
@@ -302,19 +362,27 @@ export default function AdminPage() {
     }
   }
 
-  // =========================
-  // CLASSES
-  // =========================
   async function createClass() {
     const name = newClassName.trim();
+    const id_module = Number(newClassModuleId || "0");
+    const id_group = Number(newClassGroupId || "0");
+
     if (!name) return showErr("Nombre de la materia requerido.");
+    if (!id_module) return showErr("Debes seleccionar un módulo.");
 
     try {
       await apiFetch("/api/admin/classes", {
         method: "POST",
-        body: JSON.stringify({ name, level: newClassLevel }),
+        body: JSON.stringify({
+          name,
+          level: newClassLevel,
+          id_module,
+          id_group: id_group || null,
+        }),
       });
       setNewClassName("");
+      setNewClassModuleId("");
+      setNewClassGroupId("");
       showOk("✅ Materia creada");
       await loadAll();
     } catch (e: any) {
@@ -322,9 +390,6 @@ export default function AdminPage() {
     }
   }
 
-  // =========================
-  // EVAL TYPES
-  // =========================
   async function createEvalType() {
     const t = newType.trim();
     if (!t) return showErr("Tipo requerido.");
@@ -342,9 +407,6 @@ export default function AdminPage() {
     }
   }
 
-  // =========================
-  // ASSIGN TEACHER
-  // =========================
   async function assignTeacher() {
     const id_teacher = selTeacher;
     const id_class = Number(selClass);
@@ -359,8 +421,6 @@ export default function AdminPage() {
         body: JSON.stringify({ id_teacher, id_class }),
       });
       showOk("✅ Teacher asignado a la materia");
-
-      // opcional: limpia selección de materia y teacher
       setSelTeacher("");
       setSelClass("");
     } catch (e: any) {
@@ -368,9 +428,6 @@ export default function AdminPage() {
     }
   }
 
-  // =========================
-  // USERS HELPERS
-  // =========================
   function rolesFromState(state: Record<"S" | "T" | "A", boolean>) {
     return (Object.entries(state) as Array<[string, boolean]>)
       .filter(([, v]) => v)
@@ -398,9 +455,6 @@ export default function AdminPage() {
     setUpSearching(false);
   }
 
-  // =========================
-  // CREATE USER MANUAL
-  // =========================
   async function createUserManual() {
     setUploadReport(null);
     const email = uEmail.trim().toLowerCase();
@@ -444,9 +498,6 @@ export default function AdminPage() {
     }
   }
 
-  // =========================
-  // EXCEL USERS
-  // =========================
   async function uploadExcelUsers() {
     setUploadReport(null);
 
@@ -486,9 +537,6 @@ export default function AdminPage() {
     }
   }
 
-  // =========================
-  // UPDATE USER
-  // =========================
   async function updateUserByCedula() {
     const cedula = upCedula.trim();
     const email = upEmail.trim().toLowerCase();
@@ -537,9 +585,6 @@ export default function AdminPage() {
     }
   }
 
-  // =========================
-  // DOWNLOAD TEMPLATE
-  // =========================
   async function downloadTemplate() {
     setMsg(null);
     setOkMsg(null);
@@ -589,7 +634,6 @@ export default function AdminPage() {
 
   return (
     <div>
-      {/* HAMBURGUESA */}
       <div
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -650,7 +694,6 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* SIDEBAR */}
       <aside
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -709,7 +752,6 @@ export default function AdminPage() {
         </div>
       </aside>
 
-      {/* MAIN */}
       <main
         style={{
           marginLeft: sidebarOpen ? SIDEBAR_W : 0,
@@ -717,7 +759,6 @@ export default function AdminPage() {
         }}
       >
         <div className="container">
-          {/* TOPBAR */}
           <div className="topbar" style={{ alignItems: "center" }}>
             <div className="brand">
               <div style={{ fontWeight: 900, fontSize: 18 }}>JILIU · La Promesa</div>
@@ -731,7 +772,6 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* SELECTOR */}
           <div
             className="card"
             style={{
@@ -768,21 +808,9 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {msg && (
-            <div className="msgError" style={{ marginTop: 12 }}>
-              {msg}
-            </div>
-          )}
+          {msg && <div className="msgError" style={{ marginTop: 12 }}>{msg}</div>}
+          {okMsg && <div className="msgOk" style={{ marginTop: 12 }}>{okMsg}</div>}
 
-          {okMsg && (
-            <div className="msgOk" style={{ marginTop: 12 }}>
-              {okMsg}
-            </div>
-          )}
-
-          {/* =========================
-              PANEL: CREAR COURSE
-              ========================= */}
           {view === "COURSES" && (
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Crear un Curso</h2>
@@ -864,14 +892,42 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* =========================
-              PANEL: CREAR MATERIA
-              ========================= */}
           {view === "CLASSES" && (
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Crear una Materia</h2>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 180px", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <div className="label">Nivel</div>
+                  <select
+                    className="select"
+                    value={newClassLevel}
+                    onChange={(e) => setNewClassLevel(Number(e.target.value))}
+                  >
+                    {LEVELS.map((x) => (
+                      <option key={x.value} value={x.value}>
+                        {x.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="label">Módulo</div>
+                  <select
+                    className="select"
+                    value={newClassModuleId}
+                    onChange={(e) => setNewClassModuleId(e.target.value)}
+                  >
+                    <option value="">Selecciona...</option>
+                    {availableModulesForCreate.map((m) => (
+                      <option key={m.id} value={String(m.id)}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div>
                   <div className="label">Nombre</div>
                   <input
@@ -883,15 +939,19 @@ export default function AdminPage() {
                 </div>
 
                 <div>
-                  <div className="label">Nivel</div>
+                  <div className="label">Grupo (opcional)</div>
                   <select
                     className="select"
-                    value={newClassLevel}
-                    onChange={(e) => setNewClassLevel(Number(e.target.value))}
+                    value={newClassGroupId}
+                    onChange={(e) => setNewClassGroupId(e.target.value)}
+                    disabled={!newClassModuleId}
                   >
-                    {LEVELS.map((x) => (
-                      <option key={x.value} value={x.value}>
-                        {x.label}
+                    <option value="">
+                      {!newClassModuleId ? "Selecciona un módulo primero" : "Sin grupo"}
+                    </option>
+                    {availableGroupsForCreate.map((g) => (
+                      <option key={g.id} value={String(g.id)}>
+                        {g.name}
                       </option>
                     ))}
                   </select>
@@ -914,13 +974,15 @@ export default function AdminPage() {
                   <thead>
                     <tr style={{ background: "rgba(14,165,233,.08)" }}>
                       <th style={{ textAlign: "left", padding: 12 }}>Materia</th>
-                      <th style={{ textAlign: "left", padding: 12, width: 110 }}>Nivel</th>
+                      <th style={{ textAlign: "left", padding: 12, width: 90 }}>Nivel</th>
+                      <th style={{ textAlign: "left", padding: 12 }}>Módulo</th>
+                      <th style={{ textAlign: "left", padding: 12 }}>Grupos</th>
                     </tr>
                   </thead>
                   <tbody>
                     {classesForCreate.length === 0 ? (
                       <tr>
-                        <td colSpan={2} style={{ padding: 12, color: "var(--muted)" }}>
+                        <td colSpan={4} style={{ padding: 12, color: "var(--muted)" }}>
                           {loadingData ? "Cargando..." : "Sin materias"}
                         </td>
                       </tr>
@@ -929,6 +991,12 @@ export default function AdminPage() {
                         <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
                           <td style={{ padding: 12, fontWeight: 500 }}>{c.name}</td>
                           <td style={{ padding: 12 }}>{c.level}</td>
+                          <td style={{ padding: 12 }}>{c.module_name || "—"}</td>
+                          <td style={{ padding: 12 }}>
+                            {c.groups?.length
+                              ? c.groups.map((g) => g.name).join(", ")
+                              : "—"}
+                          </td>
                         </tr>
                       ))
                     )}
@@ -938,9 +1006,6 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* =========================
-              PANEL: CREAR TIPOS
-              ========================= */}
           {view === "TYPES" && (
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Crear un tipo de evaluación</h2>
@@ -993,9 +1058,6 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* =========================
-              PANEL: ASIGNAR TEACHER
-              ========================= */}
           {view === "ASSIGN_TEACHER" && (
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Asignar Materias a un Profesor</h2>
@@ -1059,9 +1121,6 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* =========================
-              PANEL: USERS
-              ========================= */}
           {view === "USERS" && (
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Crear Usuarios</h2>
@@ -1184,8 +1243,7 @@ export default function AdminPage() {
               <div style={{ marginTop: 16 }}>
                 <div style={{ fontWeight: 900, fontSize: 16 }}>Subir Excel: crear usuarios</div>
                 <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
-                  Columnas obligatorias: <b>email</b>, <b>name</b>, <b>cedula</b>, <b>code_jiliu</b>,{" "}
-                  <b>id_course</b>, <b>type</b> (S/T/A o lista S,T).
+                  Columnas obligatorias: <b>email</b>, <b>name</b>, <b>cedula</b>, <b>code_jiliu</b>, <b>id_course</b>, <b>type</b> (S/T/A o lista S,T).
                 </div>
 
                 <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12 }}>
@@ -1243,9 +1301,6 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* =========================
-              PANEL: UPDATE USER
-              ========================= */}
           {view === "UPDATE_USER" && (
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Actualizar Usuarios</h2>
