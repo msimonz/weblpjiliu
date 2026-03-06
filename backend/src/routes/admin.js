@@ -16,7 +16,7 @@ function requireAdmin(req, res, next) {
 // ===== Multer (upload Excel) =====
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 6 * 1024 * 1024 }, // 6MB
+  limits: { fileSize: 6 * 1024 * 1024 },
 });
 
 // ===== Helpers =====
@@ -24,6 +24,7 @@ function toInt(v) {
   const n = Number(String(v ?? "").trim());
   return Number.isFinite(n) ? Math.trunc(n) : null;
 }
+
 function cleanStr(v) {
   return String(v ?? "").trim();
 }
@@ -64,11 +65,9 @@ async function replaceUserRoles(id_user, roleCodes) {
 
   if (codes.length === 0) throw new Error("roles vacíos");
 
-  // 1) desired type ids
   const desiredTypeIds = [];
   for (const c of codes) desiredTypeIds.push(await getTypeIdByCode(c));
 
-  // 2) current type ids
   const { data: current, error: curErr } = await supabaseAdmin
     .from("user_type")
     .select("id_type")
@@ -79,7 +78,6 @@ async function replaceUserRoles(id_user, roleCodes) {
   const curSet = new Set((current || []).map((r) => r.id_type));
   const desSet = new Set(desiredTypeIds);
 
-  // 3) delete extra roles
   const toDelete = [...curSet].filter((x) => !desSet.has(x));
   if (toDelete.length > 0) {
     const { error: delErr } = await supabaseAdmin
@@ -91,7 +89,6 @@ async function replaceUserRoles(id_user, roleCodes) {
     if (delErr) throw new Error(delErr.message);
   }
 
-  // 4) ensure desired roles
   for (const id_type of desiredTypeIds) {
     const { error: upErr } = await supabaseAdmin
       .from("user_type")
@@ -121,8 +118,9 @@ adminRouter.post("/courses", requireAuth, requireAdmin, async (req, res) => {
   const year = req.body?.year;
 
   if (!name) return res.status(400).json({ error: "name requerido" });
-  if (!level || level < 1 || level > 4)
+  if (!level || level < 1 || level > 4) {
     return res.status(400).json({ error: "level inválido (1..4)" });
+  }
 
   const payload = { name, level };
   if (year) payload.year = year;
@@ -156,8 +154,9 @@ adminRouter.post("/classes", requireAuth, requireAdmin, async (req, res) => {
   const level = toInt(req.body?.level);
 
   if (!name) return res.status(400).json({ error: "name requerido" });
-  if (!level || level < 1 || level > 4)
+  if (!level || level < 1 || level > 4) {
     return res.status(400).json({ error: "level inválido (1..4)" });
+  }
 
   const { data, error } = await supabaseAdmin
     .from("class")
@@ -296,8 +295,7 @@ adminRouter.post("/assign-teacher", requireAuth, requireAdmin, async (req, res) 
 });
 
 // ============================================================================
-// 7) SUBIR EXCEL: crear/actualizar users
-// (Lo dejo igual a como lo tienes; solo mantengo tu lógica)
+// 7) SUBIR EXCEL
 // ============================================================================
 adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file"), async (req, res) => {
   try {
@@ -354,17 +352,15 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         results.skipped++;
         continue;
       }
-      if(typeList.includes("S") && !code_jiliu){
+      if (typeList.includes("S") && !code_jiliu) {
         results.errors.push({ row: rowNum, error: "code_jiliu requerido" });
         results.skipped++;
         continue;
-      }
-      else if (typeList.includes("S") && !id_course){
+      } else if (typeList.includes("S") && !id_course) {
         results.errors.push({ row: rowNum, error: "id_course requerido" });
         results.skipped++;
         continue;
-      }
-      else if(!typeList.includes("S")){
+      } else if (!typeList.includes("S")) {
         code_jiliu = null;
         id_course = null;
       }
@@ -442,15 +438,16 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
           results.errors.push({ row: rowNum, error: `auth metadata: ${updAuth.error.message}` });
         }
       }
-      if(!(payload.id_course == null)){
+
+      if (!(payload.id_course == null)) {
         const { error: histErr } = await supabaseAdmin
-        .from("user_history")
-        .upsert({ id_student: authUserId, id_course }, { onConflict: "id_student,id_course" });
+          .from("user_history")
+          .upsert({ id_student: authUserId, id_course }, { onConflict: "id_student,id_course" });
         if (histErr) {
           results.errors.push({ row: rowNum, error: `history: ${histErr.message}` });
         }
       }
-      
+
       if (createRes?.error) results.updated++;
       else results.created++;
 
@@ -464,7 +461,7 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
 });
 
 // ============================================================================
-// 8) CREAR USUARIO MANUAL (igual al tuyo)
+// 8) CREAR USUARIO MANUAL
 // ============================================================================
 adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => {
   try {
@@ -483,16 +480,15 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
     }
     const roleList = roles.map((r) => String(r).toUpperCase());
 
-    if(roleList.includes("S") && !code_jiliu){
+    if (roleList.includes("S") && !code_jiliu) {
       return res.status(400).json({ error: "code_jiliu requerido" });
-    }
-    else if(roleList.includes("S") && !id_course){
+    } else if (roleList.includes("S") && !id_course) {
       return res.status(400).json({ error: "id_course requerido" });
-    }
-    else if(!roleList.includes("S")){
+    } else if (!roleList.includes("S")) {
       id_course = null;
       code_jiliu = null;
     }
+
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
     const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || "password";
 
@@ -513,10 +509,11 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
         .maybeSingle();
 
       if (exErr) return res.status(500).json({ error: exErr.message });
-      if (!existing?.id)
+      if (!existing?.id) {
         return res.status(400).json({
           error: (createRes.error.message || "No se pudo crear") + " (y no existe en public.users)",
         });
+      }
 
       authUserId = existing.id;
 
@@ -549,14 +546,17 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
     if (upDbErr) return res.status(500).json({ error: upDbErr.message });
 
     await replaceUserRoles(authUserId, roleList);
-    if(!(payload.id_course == null)){
+
+    if (!(payload.id_course == null)) {
       const { error: histErr } = await supabaseAdmin
-      .from("user_history")
-      .upsert({ id_student: authUserId, id_course }, { onConflict: "id_student,id_course" });
+        .from("user_history")
+        .upsert({ id_student: authUserId, id_course }, { onConflict: "id_student,id_course" });
+
       if (histErr) {
         return res.json({ ok: true, item: up, warn: `history: ${histErr.message}`, created: !createRes?.error });
       }
     }
+
     return res.json({ ok: true, item: up, created: !createRes?.error });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando usuario" });
@@ -564,10 +564,7 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
 });
 
 // ============================================================================
-// 9) ✅ ACTUALIZAR USUARIO POR CÉDULA (ARREGLADO)
-//  - PRIMERO actualiza email en Auth (si cambió)
-//  - LUEGO actualiza public.users
-//  - valida email y code_jiliu únicos para mensaje humano
+// 9) ACTUALIZAR USUARIO POR CÉDULA
 // ============================================================================
 adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req, res) => {
   try {
@@ -585,18 +582,18 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
     if (roles.length === 0 || roles.some((r) => !["S", "T", "A"].includes(String(r).toUpperCase()))) {
       return res.status(400).json({ error: "roles inválidos (S/T/A)" });
     }
+
     const roleList = roles.map((r) => String(r).toUpperCase());
-    if(roleList.includes("S") && !code_jiliu){
+
+    if (roleList.includes("S") && !code_jiliu) {
       return res.status(400).json({ error: "code_jiliu requerido" });
-    }
-    else if(roleList.includes("S") && !id_course){
+    } else if (roleList.includes("S") && !id_course) {
       return res.status(400).json({ error: "id_course requerido" });
-    }
-    else if(!roleList.includes("S")){
+    } else if (!roleList.includes("S")) {
       id_course = null;
       code_jiliu = null;
     }
-    // 1) buscar usuario por cedula
+
     const { data: u, error: uErr } = await supabaseAdmin
       .from("users")
       .select("id,cedula,email")
@@ -609,7 +606,6 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
     const userId = u.id;
     const oldEmail = (u.email || "").toLowerCase();
 
-    // 2) Validar code_jiliu único (mensaje humano)
     const { data: codeDup, error: codeDupErr } = await supabaseAdmin
       .from("users")
       .select("id")
@@ -622,7 +618,6 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
       return res.status(409).json({ error: "Ese code_jiliu ya está en uso por otro usuario." });
     }
 
-    // 3) Validar email único en tu tabla (opcional pero útil)
     const { data: emailDup, error: emailDupErr } = await supabaseAdmin
       .from("users")
       .select("id")
@@ -635,29 +630,24 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
       return res.status(409).json({ error: "Ese email ya está en uso por otro usuario." });
     }
 
-    // 4) ✅ Actualizar Auth (siempre actualiza metadata; email solo si cambió)
-    //    IMPORTANTE: si Auth falla, NO tocamos la DB (evita desincronización).
     let warn = null;
 
     const authPayload = {
       user_metadata: { name, roles: roleList },
     };
 
-    // si cambió el email, lo cambiamos en Auth
     if (email !== oldEmail) {
       authPayload.email = email;
-      authPayload.email_confirm = true; // evita quedar "unconfirmed"
+      authPayload.email_confirm = true;
     }
 
     const authUpd = await supabaseAdmin.auth.admin.updateUserById(userId, authPayload);
 
     if (authUpd?.error) {
-      // fallo Auth => corta aquí
       const msg = authUpd.error.message || "No se pudo actualizar el email en Auth";
       return res.status(400).json({ error: `Auth: ${msg}` });
     }
 
-    // 5) Actualizar public.users (ya con Auth OK)
     const { data: up, error: upErr } = await supabaseAdmin
       .from("users")
       .update({ email, name, code_jiliu, id_course })
@@ -666,17 +656,14 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
       .maybeSingle();
 
     if (upErr) {
-      // si es unique, lo damos humano
       if (isUniqueViolation(upErr)) {
         return res.status(409).json({ error: "Conflicto: email o code_jiliu ya existen." });
       }
       return res.status(500).json({ error: upErr.message });
     }
 
-    // 6) roles en user_type (reemplazo total)
     await replaceUserRoles(userId, roleList);
 
-    // 7) history siempre
     const { error: histErr } = await supabaseAdmin
       .from("user_history")
       .upsert({ id_student: userId, id_course }, { onConflict: "id_student,id_course" });
@@ -690,7 +677,7 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
 });
 
 // ============================================================================
-// GET /api/admin/user-by-cedula?cedula=...
+// GET /api/admin/user-by-cedula
 // ============================================================================
 adminRouter.get("/user-by-cedula", requireAuth, requireAdmin, async (req, res) => {
   try {

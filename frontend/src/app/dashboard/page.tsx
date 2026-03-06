@@ -52,6 +52,7 @@ export default function DashboardPage() {
 
   const studentCourseFixed = useMemo(() => {
     const c = me?.course ?? null;
+    console.log("C", c);
     return c;
   }, [me]);
 
@@ -297,11 +298,8 @@ export default function DashboardPage() {
   const failPct = totalPF > 0 ? Math.round((failed / totalPF) * 100) : 0;
 
   const fixedCourseName = useMemo(() => {
-    return (
-      studentCourseFixed?.name ??
-      (me?.profile?.id_course ? `ID ${me.profile.id_course}` : "—")
-    );
-  }, [studentCourseFixed, me]);
+    return studentCourseFixed?.name ?? "—";
+  }, [studentCourseFixed]);
 
   if (meLoading) return <div className="container">Cargando...</div>;
 
@@ -421,7 +419,7 @@ export default function DashboardPage() {
           <div style={{ fontWeight: 900 }}>{roleLabelFromRole(primaryRole(me))}</div>
         </div>
 
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 10, marginBottom: 20 }}>
           <div className="label">Curso</div>
           <div style={{ fontWeight: 900 }}>{fixedCourseName}</div>
         </div>

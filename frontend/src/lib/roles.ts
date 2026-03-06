@@ -20,7 +20,7 @@ export function primaryRole(me: any): RoleCode | null {
 
 export function roleLabelFromRole(role: RoleCode | null) {
   if (role === "A") return "Admin";
-  if (role === "T") return "Teacher";
-  if (role === "S") return "Student";
+  if (role === "T") return "Profesor";
+  if (role === "S") return "Estudiante";
   return "—";
 }

@@ -373,7 +373,7 @@ export default function TeacherPage() {
     setMsg(null);
 
     if (createLevelFilter === "" || createLevelFilter === "all") {
-      setMsg("Selecciona un level primero.");
+      setMsg("Selecciona un Año.");
       return;
     }
 
@@ -759,7 +759,7 @@ export default function TeacherPage() {
           </div>
         </div>
 
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 10, marginBottom: 20 }}>
           <div className="label">Rol</div>
           <div style={{ fontWeight: 900 }}>{roleLabel}</div>
         </div>
@@ -784,7 +784,7 @@ export default function TeacherPage() {
           <div className="topbar" style={{ alignItems: "center" }}>
             <div className="brand">
               <div style={{ fontWeight: 900, fontSize: 18 }}>JILIU · La Promesa</div>
-              <div style={{ color: "var(--muted)" }}>Panel Teacher</div>
+              <div style={{ color: "var(--muted)" }}>Panel Profesor</div>
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -800,28 +800,28 @@ export default function TeacherPage() {
             style={{
               marginTop: 14,
               padding: 14,
-              display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
+              gridColumn: "1 / span 2",
               gap: 12,
             }}
           >
             <div>
-              <div style={{ fontWeight: 900, fontSize: 16 }}>Sección</div>
-              <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                Elige qué panel quieres ver.
-              </div>
+              <div style={{ fontWeight: 900, fontSize: 16 }}>¿Qué quieres hacer?</div>
             </div>
 
-            <div style={{ minWidth: 260 }}>
+            <div style={{ 
+              minWidth: 260,
+              padding: 10,
+            }}>
               <select
                 className="select"
                 value={view}
                 onChange={(e) => setView(e.target.value as TeacherView)}
               >
-                <option value="EVALS">Mis evaluaciones</option>
-                <option value="CREATE">Crear evaluación</option>
-                <option value="UPSERT">Subir nota manual</option>
+                <option value="EVALS">Ver mis evaluaciones</option>
+                <option value="CREATE">Crear una evaluación</option>
+                <option value="UPSERT">Cambiar nota a mis estudiantes</option>
               </select>
             </div>
           </div>
@@ -862,7 +862,7 @@ export default function TeacherPage() {
                       setEvalLevelFilter(v === "all" ? "all" : Number(v));
                     }}
                   >
-                    <option value="all">Todos mis levels</option>
+                    <option value="all">Todos los años</option>
                     {availableLevels.map((lvl) => (
                       <option key={lvl} value={String(lvl)}>
                         {lvl}
@@ -1005,7 +1005,7 @@ export default function TeacherPage() {
                       setCreateLevelFilter(v === "" ? "" : Number(v));
                     }}
                   >
-                    <option value="">Selecciona un level</option>
+                    <option value="">Selecciona un Año</option>
                     {availableLevels.map((lvl) => (
                       <option key={lvl} value={String(lvl)}>
                         {lvl}
@@ -1026,7 +1026,7 @@ export default function TeacherPage() {
                     disabled={createLevelFilter === ""}
                   >
                     <option value="all">
-                      {createLevelFilter === "" ? "Selecciona un level primero" : "Selecciona una materia"}
+                      {createLevelFilter === "" ? "Selecciona un Año" : "Selecciona una materia"}
                     </option>
                     {createClassesFiltered.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -1176,7 +1176,7 @@ export default function TeacherPage() {
                   gap: 12,
                 }}
               >
-                <h2 style={{ margin: 0 }}>Subir nota manual (upsert)</h2>
+                <h2 style={{ margin: 0 }}>Subir nota manual</h2>
 
                 <button
                   className="btn"
@@ -1199,7 +1199,7 @@ export default function TeacherPage() {
                       setUpsertLevelFilter(v === "" ? "" : Number(v));
                     }}
                   >
-                    <option value="">Selecciona un level</option>
+                    <option value="">Selecciona un Año</option>
                     {availableLevels.map((lvl) => (
                       <option key={lvl} value={String(lvl)}>
                         {lvl}
@@ -1219,7 +1219,7 @@ export default function TeacherPage() {
                     disabled={upsertLevelFilter === ""}
                   >
                     <option value="all">
-                      {upsertLevelFilter === "" ? "Selecciona un level primero" : "Selecciona una materia"}
+                      {upsertLevelFilter === "" ? "Selecciona un Año" : "Selecciona una materia"}
                     </option>
                     {upsertClassesFiltered.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -1242,15 +1242,10 @@ export default function TeacherPage() {
                     </option>
                     {upsertEvalOptions.map((e) => (
                       <option key={e.id} value={String(e.id)}>
-                        #{e.id} · {e.title} ({Number(e.percent).toFixed(0)}%) ·{" "}
-                        {e.course?.name ?? `Curso ${e.id_course}`}
+                        {e.title} ({Number(e.percent).toFixed(0)}%)
                       </option>
                     ))}
                   </select>
-
-                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                    * Solo aparecen evaluaciones de la materia seleccionada.
-                  </div>
                 </div>
               </div>
 
@@ -1344,11 +1339,6 @@ export default function TeacherPage() {
                         )}
                       </tbody>
                     </table>
-                  </div>
-
-                  <div style={{ marginTop: 10, color: "var(--muted)", fontSize: 13 }}>
-                    Tip: si un alumno ya tenía nota, el textbox aparece precargado. Puedes editar y guardar
-                    uno por uno o “Actualizar todos”.
                   </div>
                 </div>
               )}

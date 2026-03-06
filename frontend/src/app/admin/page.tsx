@@ -33,8 +33,8 @@ type AdminView =
   | "CLASSES"
   | "TYPES"
   | "ASSIGN_TEACHER"
-  | "USERS" // Crear (manual + excel) + descargar plantilla
-  | "UPDATE_USER"; // Actualizar por cédula
+  | "USERS"
+  | "UPDATE_USER";
 
 const ROLE_OPTIONS = [
   { value: "S", label: "Student (S)" },
@@ -42,16 +42,10 @@ const ROLE_OPTIONS = [
   { value: "A", label: "Admin (A)" },
 ] as const;
 
-// ==============================
-// ✅ Plantilla Excel en Storage
-// ==============================
-// Recomendación: bucket público y guardas la URL pública aquí (o en ENV):
-// NEXT_PUBLIC_USERS_TEMPLATE_URL=https://xxxx.supabase.co/storage/v1/object/public/<bucket>/<path>
 const TEMPLATE_PUBLIC_URL =
   process.env.NEXT_PUBLIC_USERS_TEMPLATE_URL ||
   "https://xujejxbzeexqagotdvdi.supabase.co/storage/v1/object/public/assets/utilities/CargaEstudiantesJILIU.xlsx";
 
-// Si bucket es privado, configuras esto para signed URL:
 const TEMPLATE_BUCKET = process.env.NEXT_PUBLIC_TEMPLATES_BUCKET || "";
 const TEMPLATE_PATH = process.env.NEXT_PUBLIC_USERS_TEMPLATE_PATH || "";
 
@@ -62,8 +56,8 @@ export default function AdminPage() {
   const [loadingMe, setLoadingMe] = useState(true);
 
   // mensajes
-  const [msg, setMsg] = useState<string | null>(null); // rojo
-  const [okMsg, setOkMsg] = useState<string | null>(null); // verde
+  const [msg, setMsg] = useState<string | null>(null);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [view, setView] = useState<AdminView>("COURSES");
@@ -89,6 +83,7 @@ export default function AdminPage() {
   const [newType, setNewType] = useState("");
 
   // ===== assign teacher -> class =====
+  const [selAssignLevel, setSelAssignLevel] = useState<string>("");
   const [selTeacher, setSelTeacher] = useState<string>("");
   const [selClass, setSelClass] = useState<string>("");
 
@@ -110,7 +105,7 @@ export default function AdminPage() {
   });
   const [creatingUser, setCreatingUser] = useState(false);
 
-  // ===== UPDATE USER (por cédula) =====
+  // ===== UPDATE USER =====
   const [upCedula, setUpCedula] = useState("");
   const [upEmail, setUpEmail] = useState("");
   const [upName, setUpName] = useState("");
@@ -122,28 +117,24 @@ export default function AdminPage() {
     A: false,
   });
 
-  // ✅ upLoading = submit update
   const [upLoading, setUpLoading] = useState(false);
-  // ✅ upSearching = buscando por cédula
   const [upSearching, setUpSearching] = useState(false);
   const lastCedulaFetchedRef = useRef<string>("");
   const searchSeqRef = useRef<number>(0);
 
-  // plantilla download
   const [templateLoading, setTemplateLoading] = useState(false);
 
-  // ===== helpers mensajes =====
   function showOk(text: string) {
     setMsg(null);
     setOkMsg(text);
     setTimeout(() => setOkMsg(null), 4500);
   }
+
   function showErr(text: string) {
     setOkMsg(null);
     setMsg(text);
   }
 
-  // ===== auth guard =====
   useEffect(() => {
     (async () => {
       setLoadingMe(true);
@@ -195,14 +186,29 @@ export default function AdminPage() {
   }, [loadingMe]);
 
   // =========================
-  // ✅ AUTOCARGAR USER AL ESCRIBIR CÉDULA (UPDATE_USER)
+  // FILTRO DE MATERIAS EN ASSIGN_TEACHER
+  // =========================
+  const classesForAssign = useMemo(() => {
+    if (!selAssignLevel) return [];
+    return classes.filter((c) => Number(c.level) === Number(selAssignLevel));
+  }, [classes, selAssignLevel]);
+
+  const classesForCreate = useMemo(() => {
+    return classes.filter((c) => Number(c.level) === Number(newClassLevel));
+  }, [classes, newClassLevel]);
+
+  useEffect(() => {
+    setSelClass("");
+  }, [selAssignLevel]);
+
+  // =========================
+  // AUTOCARGAR USER AL ESCRIBIR CÉDULA
   // =========================
   useEffect(() => {
     if (view !== "UPDATE_USER") return;
 
     const ced = upCedula.trim();
 
-    // si está vacío, limpiar todo
     if (!ced) {
       lastCedulaFetchedRef.current = "";
       setUpSearching(false);
@@ -214,23 +220,19 @@ export default function AdminPage() {
       return;
     }
 
-    // evita consultar por muy pocos dígitos
     if (ced.length < 5) return;
 
     const seq = ++searchSeqRef.current;
 
     const t = setTimeout(async () => {
-      // evita repetir exacto lo mismo
       if (lastCedulaFetchedRef.current === ced) return;
 
       setUpSearching(true);
       try {
-        // ✅ backend: GET /api/admin/user-by-cedula?cedula=...
         const res = await apiFetch(
           `/api/admin/user-by-cedula?cedula=${encodeURIComponent(ced)}`
         );
 
-        // si llegó otra consulta después, ignora esta respuesta
         if (seq !== searchSeqRef.current) return;
 
         const item = res?.item;
@@ -252,7 +254,6 @@ export default function AdminPage() {
           A: roleSet.has("A"),
         });
 
-        // opcional: mensaje suave (sin “ensuciar” si prefieres)
         setMsg(null);
         setOkMsg("✅ Usuario cargado. Ya puedes editar.");
         setTimeout(() => setOkMsg(null), 2500);
@@ -266,7 +267,6 @@ export default function AdminPage() {
         setUpCourseId("");
         setUpRoles({ S: true, T: false, A: false });
 
-        // si no existe, muéstralo pero sin bloquear
         setOkMsg(null);
         setMsg(e?.message || "No se pudo cargar el usuario");
       } finally {
@@ -349,6 +349,7 @@ export default function AdminPage() {
     const id_teacher = selTeacher;
     const id_class = Number(selClass);
 
+    if (!selAssignLevel) return showErr("Selecciona un level.");
     if (!id_teacher) return showErr("Selecciona un teacher.");
     if (!id_class) return showErr("Selecciona una materia.");
 
@@ -358,13 +359,17 @@ export default function AdminPage() {
         body: JSON.stringify({ id_teacher, id_class }),
       });
       showOk("✅ Teacher asignado a la materia");
+
+      // opcional: limpia selección de materia y teacher
+      setSelTeacher("");
+      setSelClass("");
     } catch (e: any) {
       showErr(e?.message || "Error asignando teacher");
     }
   }
 
   // =========================
-  // USERS: helpers
+  // USERS HELPERS
   // =========================
   function rolesFromState(state: Record<"S" | "T" | "A", boolean>) {
     return (Object.entries(state) as Array<[string, boolean]>)
@@ -383,7 +388,7 @@ export default function AdminPage() {
 
   function resetUpdateUserForm() {
     lastCedulaFetchedRef.current = "";
-    searchSeqRef.current++; // cancela posibles respuestas viejas
+    searchSeqRef.current++;
     setUpCedula("");
     setUpEmail("");
     setUpName("");
@@ -394,7 +399,7 @@ export default function AdminPage() {
   }
 
   // =========================
-  // USERS: crear manual (NO opcionales)
+  // CREATE USER MANUAL
   // =========================
   async function createUserManual() {
     setUploadReport(null);
@@ -409,12 +414,12 @@ export default function AdminPage() {
     if (!name) return showErr("Nombre requerido.");
     if (!cedula) return showErr("Cédula requerida.");
     if (roles.length === 0) return showErr("Selecciona al menos 1 rol (S/T/A).");
-    if(roles.includes("S") && !code_jiliu){
+    if (roles.includes("S") && !code_jiliu) {
       return showErr("Debes seleccionar un course.");
-    }
-    else if(roles.includes("S") && !id_course){
+    } else if (roles.includes("S") && !id_course) {
       return showErr("code_jiliu requerido.");
     }
+
     setCreatingUser(true);
     try {
       await apiFetch("/api/admin/create-user", {
@@ -440,7 +445,7 @@ export default function AdminPage() {
   }
 
   // =========================
-  // USERS: upload excel (NO opcionales)
+  // EXCEL USERS
   // =========================
   async function uploadExcelUsers() {
     setUploadReport(null);
@@ -482,7 +487,7 @@ export default function AdminPage() {
   }
 
   // =========================
-  // UPDATE USER BY CEDULA
+  // UPDATE USER
   // =========================
   async function updateUserByCedula() {
     const cedula = upCedula.trim();
@@ -496,12 +501,12 @@ export default function AdminPage() {
     if (!email || !email.includes("@")) return showErr("Email inválido.");
     if (!name) return showErr("Nombre requerido.");
     if (roles.length === 0) return showErr("Selecciona al menos 1 rol (S/T/A).");
-    if(roles.includes("S") && !code_jiliu){
+    if (roles.includes("S") && !code_jiliu) {
       return showErr("Debes seleccionar un course.");
-    }
-    else if(roles.includes("S") && !id_course){
+    } else if (roles.includes("S") && !id_course) {
       return showErr("code_jiliu requerido.");
     }
+
     setUpLoading(true);
     try {
       const res = await apiFetch("/api/admin/update-user-by-cedula", {
@@ -516,7 +521,6 @@ export default function AdminPage() {
         }),
       });
 
-      // ✅ si el backend manda warn, lo mostramos
       if (res?.warn) {
         showOk(`✅ Usuario actualizado (con advertencia)`);
         setMsg(`⚠️ ${res.warn}`);
@@ -527,7 +531,6 @@ export default function AdminPage() {
       resetUpdateUserForm();
       await loadAll();
     } catch (e: any) {
-      // por ejemplo 409: conflictos
       showErr(e?.message || "Error actualizando usuario");
     } finally {
       setUpLoading(false);
@@ -535,7 +538,7 @@ export default function AdminPage() {
   }
 
   // =========================
-  // Descargar plantilla
+  // DOWNLOAD TEMPLATE
   // =========================
   async function downloadTemplate() {
     setMsg(null);
@@ -547,7 +550,6 @@ export default function AdminPage() {
       return;
     }
 
-    // si no hay URL pública, intentamos signed URL (requiere bucket/path)
     if (!TEMPLATE_BUCKET || !TEMPLATE_PATH) {
       return showErr(
         "Falta configurar NEXT_PUBLIC_USERS_TEMPLATE_URL (pública) o bucket/path para signed URL."
@@ -560,7 +562,9 @@ export default function AdminPage() {
         .from(TEMPLATE_BUCKET)
         .createSignedUrl(TEMPLATE_PATH, 120);
 
-      if (error || !data?.signedUrl) throw new Error(error?.message || "No se pudo generar signed URL");
+      if (error || !data?.signedUrl) {
+        throw new Error(error?.message || "No se pudo generar signed URL");
+      }
 
       window.open(data.signedUrl, "_blank", "noopener,noreferrer");
     } catch (e: any) {
@@ -579,7 +583,6 @@ export default function AdminPage() {
 
   if (loadingMe) return <div className="container">Cargando...</div>;
 
-  // UI medidas
   const SIDEBAR_W = 320;
   const HAM_PAD = 14;
   const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
@@ -692,7 +695,7 @@ export default function AdminPage() {
           </div>
         </div>
 
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 10, marginBottom: 20 }}>
           <div className="label">Rol</div>
           <div style={{ fontWeight: 900 }}>{roleLabel}</div>
         </div>
@@ -734,31 +737,33 @@ export default function AdminPage() {
             style={{
               marginTop: 14,
               padding: 14,
-              display: "flex",
+              gridColumn: "1 / span 2",
               alignItems: "center",
               justifyContent: "space-between",
               gap: 12,
             }}
           >
             <div>
-              <div style={{ fontWeight: 900, fontSize: 16 }}>Sección</div>
-              <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                Elige qué panel quieres ver.
-              </div>
+              <div style={{ fontWeight: 900, fontSize: 16 }}>¿Qué quieres hacer?</div>
             </div>
 
-            <div style={{ minWidth: 320 }}>
+            <div
+              style={{
+                minWidth: 320,
+                padding: 10,
+              }}
+            >
               <select
                 className="select"
                 value={view}
                 onChange={(e) => setView(e.target.value as AdminView)}
               >
-                <option value="COURSES">Crear course</option>
-                <option value="CLASSES">Crear materia</option>
-                <option value="TYPES">Crear tipo de evaluación</option>
-                <option value="ASSIGN_TEACHER">Asignar teacher a materia</option>
-                <option value="USERS">Usuarios (crear + excel)</option>
-                <option value="UPDATE_USER">Actualizar usuario (por cédula)</option>
+                <option value="COURSES">Crear un Curso</option>
+                <option value="CLASSES">Crear una Materia</option>
+                <option value="TYPES">Crear un tipo de Evaluación</option>
+                <option value="ASSIGN_TEACHER">Asignar Materias a un Profesor</option>
+                <option value="USERS">Crear Usuarios</option>
+                <option value="UPDATE_USER">Actualizar Usuarios</option>
               </select>
             </div>
           </div>
@@ -780,7 +785,7 @@ export default function AdminPage() {
               ========================= */}
           {view === "COURSES" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Crear course</h2>
+              <h2 style={{ marginTop: 0 }}>Crear un Curso</h2>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 180px", gap: 12 }}>
                 <div>
@@ -864,7 +869,7 @@ export default function AdminPage() {
               ========================= */}
           {view === "CLASSES" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Crear materia</h2>
+              <h2 style={{ marginTop: 0 }}>Crear una Materia</h2>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 180px", gap: 12 }}>
                 <div>
@@ -913,14 +918,14 @@ export default function AdminPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {classes.length === 0 ? (
+                    {classesForCreate.length === 0 ? (
                       <tr>
                         <td colSpan={2} style={{ padding: 12, color: "var(--muted)" }}>
                           {loadingData ? "Cargando..." : "Sin materias"}
                         </td>
                       </tr>
                     ) : (
-                      classes.map((c) => (
+                      classesForCreate.map((c) => (
                         <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
                           <td style={{ padding: 12, fontWeight: 500 }}>{c.name}</td>
                           <td style={{ padding: 12 }}>{c.level}</td>
@@ -938,7 +943,7 @@ export default function AdminPage() {
               ========================= */}
           {view === "TYPES" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Crear tipo de evaluación</h2>
+              <h2 style={{ marginTop: 0 }}>Crear un tipo de evaluación</h2>
 
               <div>
                 <div className="label">Tipo</div>
@@ -993,9 +998,25 @@ export default function AdminPage() {
               ========================= */}
           {view === "ASSIGN_TEACHER" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Asignar teacher a materia</h2>
+              <h2 style={{ marginTop: 0 }}>Asignar Materias a un Profesor</h2>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                <div>
+                  <div className="label">Level / Año</div>
+                  <select
+                    className="select"
+                    value={selAssignLevel}
+                    onChange={(e) => setSelAssignLevel(e.target.value)}
+                  >
+                    <option value="">Selecciona...</option>
+                    {LEVELS.map((lvl) => (
+                      <option key={lvl.value} value={String(lvl.value)}>
+                        {lvl.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div>
                   <div className="label">Teacher</div>
                   <select
@@ -1014,11 +1035,18 @@ export default function AdminPage() {
 
                 <div>
                   <div className="label">Materia</div>
-                  <select className="select" value={selClass} onChange={(e) => setSelClass(e.target.value)}>
-                    <option value="">Selecciona...</option>
-                    {classes.map((c) => (
+                  <select
+                    className="select"
+                    value={selClass}
+                    onChange={(e) => setSelClass(e.target.value)}
+                    disabled={!selAssignLevel}
+                  >
+                    <option value="">
+                      {!selAssignLevel ? "Selecciona un level primero" : "Selecciona..."}
+                    </option>
+                    {classesForAssign.map((c) => (
                       <option key={c.id} value={String(c.id)}>
-                        {c.name} (Nivel {c.level})
+                        {c.name}
                       </option>
                     ))}
                   </select>
@@ -1032,13 +1060,12 @@ export default function AdminPage() {
           )}
 
           {/* =========================
-              PANEL: USERS (crear manual + excel + template)
+              PANEL: USERS
               ========================= */}
           {view === "USERS" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Usuarios</h2>
+              <h2 style={{ marginTop: 0 }}>Crear Usuarios</h2>
 
-              {/* ✅ Descargar plantilla siempre */}
               <div
                 style={{
                   marginTop: 10,
@@ -1064,7 +1091,6 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              {/* ===== MANUAL (obligatorio todo) ===== */}
               <div
                 style={{
                   marginTop: 14,
@@ -1155,7 +1181,6 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              {/* ===== EXCEL ===== */}
               <div style={{ marginTop: 16 }}>
                 <div style={{ fontWeight: 900, fontSize: 16 }}>Subir Excel: crear usuarios</div>
                 <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
@@ -1223,7 +1248,7 @@ export default function AdminPage() {
               ========================= */}
           {view === "UPDATE_USER" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Actualizar usuario por cédula</h2>
+              <h2 style={{ marginTop: 0 }}>Actualizar Usuarios</h2>
 
               <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
                 Digita la cédula y el sistema te carga los datos para modificarlos.
