@@ -39,7 +39,7 @@ type UserMini = {
   cedula: string | null;
   id_course?: number | null;
 };
-
+const OTHER_OPTION = "__OTHER__";
 const LEVELS = [
   { value: 1, label: "Primer año" },
   { value: 2, label: "Segundo año" },
@@ -97,6 +97,8 @@ export default function AdminPage() {
   const [newClassLevel, setNewClassLevel] = useState<number>(1);
   const [newClassModuleId, setNewClassModuleId] = useState<string>("");
   const [newClassGroupId, setNewClassGroupId] = useState<string>("");
+  const [newModuleName, setNewModuleName] = useState("");
+  const [newGroupName, setNewGroupName] = useState("");
 
   const [newType, setNewType] = useState("");
 
@@ -259,12 +261,15 @@ export default function AdminPage() {
   }, [selAssignLevel]);
 
   useEffect(() => {
-    setNewClassModuleId("");
-    setNewClassGroupId("");
+  setNewClassModuleId("");
+  setNewClassGroupId("");
+  setNewModuleName("");
+  setNewGroupName("");
   }, [newClassLevel]);
 
   useEffect(() => {
     setNewClassGroupId("");
+    setNewGroupName("");
   }, [newClassModuleId]);
 
   useEffect(() => {
@@ -364,11 +369,29 @@ export default function AdminPage() {
 
   async function createClass() {
     const name = newClassName.trim();
-    const id_module = Number(newClassModuleId || "0");
-    const id_group = Number(newClassGroupId || "0");
+
+    const isOtherModule = newClassModuleId === OTHER_OPTION;
+    const isOtherGroup = newClassGroupId === OTHER_OPTION;
+
+    const id_module = !isOtherModule ? Number(newClassModuleId || "0") : 0;
+    const id_group = !isOtherGroup ? Number(newClassGroupId || "0") : 0;
+
+    const new_module_name = isOtherModule ? newModuleName.trim() : "";
+    const new_group_name = isOtherGroup ? newGroupName.trim() : "";
 
     if (!name) return showErr("Nombre de la materia requerido.");
-    if (!id_module) return showErr("Debes seleccionar un módulo.");
+
+    if (!newClassModuleId) {
+      return showErr("Debes seleccionar un módulo.");
+    }
+
+    if (isOtherModule && !new_module_name) {
+      return showErr("Debes escribir el nombre del nuevo módulo.");
+    }
+
+    if (isOtherGroup && !new_group_name) {
+      return showErr("Debes escribir el nombre del nuevo grupo.");
+    }
 
     try {
       await apiFetch("/api/admin/classes", {
@@ -376,13 +399,19 @@ export default function AdminPage() {
         body: JSON.stringify({
           name,
           level: newClassLevel,
-          id_module,
+          id_module: id_module || null,
           id_group: id_group || null,
+          new_module_name,
+          new_group_name,
         }),
       });
+
       setNewClassName("");
       setNewClassModuleId("");
       setNewClassGroupId("");
+      setNewModuleName("");
+      setNewGroupName("");
+
       showOk("✅ Materia creada");
       await loadAll();
     } catch (e: any) {
@@ -420,7 +449,7 @@ export default function AdminPage() {
         method: "POST",
         body: JSON.stringify({ id_teacher, id_class }),
       });
-      showOk("✅ Teacher asignado a la materia");
+      showOk("✅ Materia Asignada al Profesor");
       setSelTeacher("");
       setSelClass("");
     } catch (e: any) {
@@ -925,7 +954,19 @@ export default function AdminPage() {
                         {m.name}
                       </option>
                     ))}
+                    <option value={OTHER_OPTION}>Otro...</option>
                   </select>
+
+                  {newClassModuleId === OTHER_OPTION && (
+                    <div style={{ marginTop: 8 }}>
+                      <input
+                        className="input"
+                        value={newModuleName}
+                        onChange={(e) => setNewModuleName(e.target.value)}
+                        placeholder="Nombre del nuevo módulo"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -954,7 +995,19 @@ export default function AdminPage() {
                         {g.name}
                       </option>
                     ))}
+                    <option value={OTHER_OPTION}>Otro...</option>
                   </select>
+
+                  {newClassGroupId === OTHER_OPTION && (
+                    <div style={{ marginTop: 8 }}>
+                      <input
+                        className="input"
+                        value={newGroupName}
+                        onChange={(e) => setNewGroupName(e.target.value)}
+                        placeholder="Nombre del nuevo grupo"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 

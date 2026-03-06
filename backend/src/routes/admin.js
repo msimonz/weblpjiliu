@@ -199,61 +199,82 @@ adminRouter.get("/classes", requireAuth, requireAdmin, async (req, res) => {
 });
 
 adminRouter.post("/classes", requireAuth, requireAdmin, async (req, res) => {
-  const name = cleanStr(req.body?.name);
-  const level = toInt(req.body?.level);
-  const id_module = toInt(req.body?.id_module);
-  const id_group = toInt(req.body?.id_group);
+  try {
+    const name = cleanStr(req.body?.name);
+    const level = toInt(req.body?.level);
 
-  if (!name) return res.status(400).json({ error: "name requerido" });
-  if (!level || level < 1 || level > 4) {
-    return res.status(400).json({ error: "level inválido (1..4)" });
-  }
-  if (!id_module) return res.status(400).json({ error: "id_module requerido" });
+    let id_module = toInt(req.body?.id_module);
+    let id_group = toInt(req.body?.id_group);
 
-  const { data: mod, error: modErr } = await supabaseAdmin
-    .from("module")
-    .select("id,name")
-    .eq("id", id_module)
-    .maybeSingle();
+    const new_module_name = cleanStr(req.body?.new_module_name);
+    const new_group_name = cleanStr(req.body?.new_group_name);
 
-  if (modErr) return res.status(500).json({ error: modErr.message });
-  if (!mod?.id) return res.status(404).json({ error: "Módulo no existe" });
+    if (!name) return res.status(400).json({ error: "name requerido" });
+    if (!level || level < 1 || level > 4) {
+      return res.status(400).json({ error: "level inválido (1..4)" });
+    }
 
-  if (id_group) {
-    const { data: grp, error: grpErr } = await supabaseAdmin
-      .from("group")
-      .select("id,name")
-      .eq("id", id_group)
+    // módulo existente o nuevo
+    if (!id_module && !new_module_name) {
+      return res.status(400).json({ error: "Debes seleccionar un módulo o crear uno nuevo" });
+    }
+
+    if (!id_module && new_module_name) {
+      const mod = await getOrCreateModuleByName(new_module_name);
+      id_module = mod.id;
+    } else if (id_module) {
+      const { data: mod, error: modErr } = await supabaseAdmin
+        .from("module")
+        .select("id,name")
+        .eq("id", id_module)
+        .maybeSingle();
+
+      if (modErr) return res.status(500).json({ error: modErr.message });
+      if (!mod?.id) return res.status(404).json({ error: "Módulo no existe" });
+    }
+
+    // grupo existente o nuevo (opcional)
+    if (!id_group && new_group_name) {
+      const grp = await getOrCreateGroupByName(new_group_name);
+      id_group = grp.id;
+    } else if (id_group) {
+      const { data: grp, error: grpErr } = await supabaseAdmin
+        .from("group")
+        .select("id,name")
+        .eq("id", id_group)
+        .maybeSingle();
+
+      if (grpErr) return res.status(500).json({ error: grpErr.message });
+      if (!grp?.id) return res.status(404).json({ error: "Grupo no existe" });
+    }
+
+    const { data: createdClass, error: classErr } = await supabaseAdmin
+      .from("class")
+      .insert({
+        name,
+        level,
+        id_module,
+      })
+      .select("id,name,level,id_module,created_at")
       .maybeSingle();
 
-    if (grpErr) return res.status(500).json({ error: grpErr.message });
-    if (!grp?.id) return res.status(404).json({ error: "Grupo no existe" });
+    if (classErr) return res.status(500).json({ error: classErr.message });
+
+    if (id_group) {
+      const { error: cgErr } = await supabaseAdmin
+        .from("class_group")
+        .insert({
+          id_class: createdClass.id,
+          id_group,
+        });
+
+      if (cgErr) return res.status(500).json({ error: cgErr.message });
+    }
+
+    return res.json({ item: createdClass });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error creando materia" });
   }
-
-  const { data: createdClass, error: classErr } = await supabaseAdmin
-    .from("class")
-    .insert({
-      name,
-      level,
-      id_module,
-    })
-    .select("id,name,level,id_module,created_at")
-    .maybeSingle();
-
-  if (classErr) return res.status(500).json({ error: classErr.message });
-
-  if (id_group) {
-    const { error: cgErr } = await supabaseAdmin
-      .from("class_group")
-      .insert({
-        id_class: createdClass.id,
-        id_group,
-      });
-
-    if (cgErr) return res.status(500).json({ error: cgErr.message });
-  }
-
-  return res.json({ item: createdClass });
 });
 
 // ============================================================================
@@ -795,3 +816,49 @@ adminRouter.get("/user-by-cedula", requireAuth, requireAdmin, async (req, res) =
     return res.status(500).json({ error: e?.message || "Error buscando usuario" });
   }
 });
+
+async function getOrCreateModuleByName(name) {
+  const cleanName = cleanStr(name);
+  if (!cleanName) throw new Error("Nombre de módulo requerido");
+
+  const { data: existing, error: exErr } = await supabaseAdmin
+    .from("module")
+    .select("id,name")
+    .ilike("name", cleanName)
+    .maybeSingle();
+
+  if (exErr) throw new Error(exErr.message);
+  if (existing?.id) return existing;
+
+  const { data: created, error: crErr } = await supabaseAdmin
+    .from("module")
+    .insert({ name: cleanName })
+    .select("id,name")
+    .maybeSingle();
+
+  if (crErr) throw new Error(crErr.message);
+  return created;
+}
+
+async function getOrCreateGroupByName(name) {
+  const cleanName = cleanStr(name);
+  if (!cleanName) throw new Error("Nombre de grupo requerido");
+
+  const { data: existing, error: exErr } = await supabaseAdmin
+    .from("group")
+    .select("id,name")
+    .ilike("name", cleanName)
+    .maybeSingle();
+
+  if (exErr) throw new Error(exErr.message);
+  if (existing?.id) return existing;
+
+  const { data: created, error: crErr } = await supabaseAdmin
+    .from("group")
+    .insert({ name: cleanName })
+    .select("id,name")
+    .maybeSingle();
+
+  if (crErr) throw new Error(crErr.message);
+  return created;
+}
