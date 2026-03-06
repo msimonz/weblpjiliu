@@ -113,10 +113,6 @@ export default function LoginPage() {
             Iniciar sesión
           </h1>
 
-          <p style={{ marginTop: 0, color: "var(--muted)" }}>
-            Ingresa con tu cédula, contraseña y el rol con el que deseas entrar.
-          </p>
-
           {error && <div className="msgError">{error}</div>}
 
           <form onSubmit={handleLogin} style={{ marginTop: 14, display: "grid", gap: 12 }}>
