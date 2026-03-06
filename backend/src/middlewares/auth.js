@@ -7,7 +7,7 @@ async function loadProfileAndRoles(user) {
   // profile (sin type)
   const { data: profile, error: pErr } = await supabaseAdmin
     .from("users")
-    .select("id,name,email,cedula,code_jiliu,id_course,created_at")
+    .select("id,name,email,cedula,code_jiliu,id_course,course:course!users_id_course_fkey(id,name,level,year),created_at")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -34,7 +34,7 @@ async function loadProfileAndRoles(user) {
     ? "S"
     : null;
 
-  return { profile: profile || null, roles, role };
+  return { profile: profile || null, course: profile?.course || null, roles, role };
 }
 
 // ===============
@@ -52,9 +52,9 @@ export async function authMiddleware(req, res, next) {
     if (error || !data?.user) return next();
 
     const user = data.user;
-    const { profile, roles, role } = await loadProfileAndRoles(user);
+    const { profile, course, roles, role } = await loadProfileAndRoles(user);
 
-    req.auth = { user, profile, roles, role };
+    req.auth = { user, profile, course, roles, role };
     return next();
   } catch (e) {
     // si falla, no bloquea (solo deja req.auth null)
@@ -81,10 +81,10 @@ export async function requireAuth(req, res, next) {
 
     const user = data.user;
 
-    const { profile, roles, role } = await loadProfileAndRoles(user);
+    const { profile, course, roles, role } = await loadProfileAndRoles(user);
     if (!profile) return res.status(401).json({ error: "Profile no existe" });
 
-    req.auth = { user, profile, roles, role };
+    req.auth = { user, profile, course, roles, role };
     return next();
   } catch (e) {
     return res.status(401).json({ error: e?.message || "No autorizado" });

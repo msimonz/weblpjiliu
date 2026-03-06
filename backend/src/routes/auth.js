@@ -9,6 +9,7 @@ authRouter.get("/me", requireAuth, async (req, res) => {
   return res.json({
     user: req.auth.user,
     profile: req.auth.profile,
+    course: req.auth.course,
     role: req.auth.role,     // compat
     roles: req.auth.roles,   // NUEVO
   });
