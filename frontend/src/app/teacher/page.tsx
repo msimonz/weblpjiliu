@@ -9,7 +9,6 @@ import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 
-
 type TeacherClass = { id: number; name: string; level: number };
 
 type EvalItem = {
@@ -29,7 +28,7 @@ type CourseItem = { id: number; name: string; level: number; year: string };
 type EvalTypeItem = { id: number; type: string };
 
 type StudentRow = {
-  id: string; // uuid en users
+  id: string;
   name: string;
   cedula: string;
 };
@@ -40,6 +39,7 @@ type ExamGradeRow = {
 };
 
 type TeacherView = "EVALS" | "CREATE" | "UPSERT";
+type LevelValue = number | "all" | "";
 
 export default function TeacherPage() {
   const router = useRouter();
@@ -47,57 +47,69 @@ export default function TeacherPage() {
   const [me, setMe] = useState<any>(null);
   const [loadingMe, setLoadingMe] = useState(true);
 
-  // ✅ sidebar + hamburguesa (igual que student)
+  // sidebar
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // ✅ selector de panel
+  // panel
   const [view, setView] = useState<TeacherView>("EVALS");
 
   const [items, setItems] = useState<EvalItem[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // ✅ materias asignadas + filtro
+  // materias asignadas
   const [myClasses, setMyClasses] = useState<TeacherClass[]>([]);
   const [loadingClasses, setLoadingClasses] = useState(false);
-  const [classFilter, setClassFilter] = useState<number | "all">("all");
 
-  // ✅ cursos por materia (dropdown)
+  // ===== FILTROS POR PANEL =====
+  // EVALS
+  const [evalLevelFilter, setEvalLevelFilter] = useState<LevelValue>("all");
+  const [evalClassFilter, setEvalClassFilter] = useState<number | "all">("all");
+
+  // CREATE
+  const [createLevelFilter, setCreateLevelFilter] = useState<LevelValue>("");
+  const [createClassFilter, setCreateClassFilter] = useState<number | "all">("all");
+
+  // UPSERT
+  const [upsertLevelFilter, setUpsertLevelFilter] = useState<LevelValue>("");
+  const [upsertClassFilter, setUpsertClassFilter] = useState<number | "all">("all");
+
+  // cursos por materia (dropdown de CREATE)
   const [courses, setCourses] = useState<CourseItem[]>([]);
   const [loadingCourses, setLoadingCourses] = useState(false);
 
-  // ✅ tipos (dropdown + Otro)
+  // tipos
   const [types, setTypes] = useState<EvalTypeItem[]>([]);
   const [loadingTypes, setLoadingTypes] = useState(false);
 
-  // ✅ título (dropdown + Otro) basado en títulos ya usados en esa materia
-  const [titlePick, setTitlePick] = useState<string>(""); // "" => Selecciona..., "__other__" => Otro
+  // título
+  const [titlePick, setTitlePick] = useState<string>("");
   const [titleOther, setTitleOther] = useState<string>("");
 
   // crear evaluación
-  const [cCourse, setCCourse] = useState<string>(""); // id_course
-  const [cType, setCType] = useState<string>(""); // id_type | "__other__"
+  const [cCourse, setCCourse] = useState<string>("");
+  const [cType, setCType] = useState<string>("");
   const [cTypeOther, setCTypeOther] = useState<string>("");
   const [cPercent, setCPercent] = useState<number>(30);
   const [creating, setCreating] = useState(false);
 
-  // ✅ subir notas masivo
+  // subir notas
   const [gExamId, setGExamId] = useState<string>("");
   const [gRoster, setGRoster] = useState<StudentRow[]>([]);
   const [gLoadingRoster, setGLoadingRoster] = useState(false);
 
-  // map: studentId -> grade string (para textbox controlado)
   const [gradeDraft, setGradeDraft] = useState<Record<string, string>>({});
   const [savingOne, setSavingOne] = useState<Record<string, boolean>>({});
   const [savingAll, setSavingAll] = useState(false);
 
-  // ✅ NUEVO: edición de porcentajes en "Mis evaluaciones"
+  // editar porcentajes en evaluaciones
   const [percentDraft, setPercentDraft] = useState<Record<number, string>>({});
   const [savingPercents, setSavingPercents] = useState(false);
 
-  // ✅ toast confirmación
+  // toast
   const [toast, setToast] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
   const toastTimer = useRef<number | null>(null);
+
   function flash(text: string, kind: "ok" | "err" = "ok") {
     setToast({ text, kind });
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
@@ -116,7 +128,6 @@ export default function TeacherPage() {
         setMe(info);
         const activeRole = getActiveRole(info);
 
-        // Teacher solo deja entrar si rol activo es T
         if (activeRole !== "T") return router.replace(roleToRoute(activeRole));
       } catch {
         router.replace("/login");
@@ -143,8 +154,7 @@ export default function TeacherPage() {
     setMsg(null);
     setLoadingList(true);
     try {
-      const qs = classFilter === "all" ? "" : `?class_id=${classFilter}`;
-      const res = await apiFetch(`/api/teacher/evaluations${qs}`);
+      const res = await apiFetch("/api/teacher/evaluations");
       setItems(res?.items || []);
     } catch (e: any) {
       setItems([]);
@@ -192,84 +202,68 @@ export default function TeacherPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingMe]);
 
-  // ✅ recargar lista + cursos al cambiar materia
-  useEffect(() => {
-    if (loadingMe) return;
+  // =========================
+  // HELPERS GENERALES
+  // =========================
+  const availableLevels = useMemo(() => {
+    const set = new Set<number>();
+    for (const c of myClasses) {
+      if (Number.isFinite(Number(c.level))) set.add(Number(c.level));
+    }
+    return [...set].sort((a, b) => a - b);
+  }, [myClasses]);
 
-    // reset de crear evaluación (porque la materia cambia)
-    setTitlePick("");
-    setTitleOther("");
-    setCType("");
-    setCTypeOther("");
-    setCPercent(30);
+  // =========================
+  // EVALS FILTERS
+  // =========================
+  const evalClassesFiltered = useMemo(() => {
+    if (evalLevelFilter === "all") return myClasses;
+    if (evalLevelFilter === "") return [];
+    return myClasses.filter((c) => Number(c.level) === Number(evalLevelFilter));
+  }, [myClasses, evalLevelFilter]);
 
-    if (classFilter === "all") {
-      setCourses([]);
-      setCCourse("");
-    } else {
-      loadCoursesForClass(Number(classFilter));
+  const evalItemsFiltered = useMemo(() => {
+    let list = [...items];
+
+    if (evalLevelFilter !== "all" && evalLevelFilter !== "") {
+      list = list.filter((e) => Number(e.class?.level ?? 0) === Number(evalLevelFilter));
     }
 
-    loadEvaluations();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classFilter]);
-
-  // ===== Helpers seleccionados =====
-  const selectedEval = useMemo(() => {
-    const id = Number(gExamId);
-    if (!id) return null;
-    return items.find((x) => x.id === id) || null;
-  }, [gExamId, items]);
-
-  // ✅ evaluaciones que se muestran en dropdown de “Subir nota”
-  const evalOptions = useMemo(() => {
-    if (classFilter === "all") return items;
-    return items.filter((x) => x.id_class === Number(classFilter));
-  }, [items, classFilter]);
-
-  const selectedClassName = useMemo(() => {
-    if (classFilter === "all") return "—";
-    const c = myClasses.find((x) => x.id === classFilter);
-    return c?.name ?? "—";
-  }, [classFilter, myClasses]);
-
-  // ✅ títulos existentes en esa materia (para dropdown)
-  const titleOptions = useMemo(() => {
-    const list =
-      classFilter === "all" ? [] : items.filter((x) => x.id_class === Number(classFilter));
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const it of list) {
-      const t = String(it.title || "").trim();
-      if (!t) continue;
-      const key = t.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(t);
+    if (evalClassFilter !== "all") {
+      list = list.filter((e) => e.id_class === Number(evalClassFilter));
     }
-    return out;
-  }, [items, classFilter]);
 
-  // ✅ NUEVO: evaluaciones dentro de la materia elegida (para editar porcentajes)
+    return list;
+  }, [items, evalLevelFilter, evalClassFilter]);
+
   const evalsInSelectedClass = useMemo(() => {
-    if (classFilter === "all") return [];
-    return items.filter((e) => e.id_class === Number(classFilter));
-  }, [items, classFilter]);
+    if (evalClassFilter === "all") return [];
+    return items.filter((e) => e.id_class === Number(evalClassFilter));
+  }, [items, evalClassFilter]);
 
-  // ✅ inicializar percentDraft cuando cambia materia/lista
   useEffect(() => {
-    if (classFilter === "all") {
+    if (evalLevelFilter === "all") {
+      setEvalClassFilter("all");
+      return;
+    }
+    if (evalClassFilter === "all") return;
+
+    const exists = evalClassesFiltered.some((c) => c.id === Number(evalClassFilter));
+    if (!exists) setEvalClassFilter("all");
+  }, [evalLevelFilter, evalClassFilter, evalClassesFiltered]);
+
+  useEffect(() => {
+    if (evalClassFilter === "all") {
       setPercentDraft({});
       return;
     }
     const next: Record<number, string> = {};
     for (const e of evalsInSelectedClass) next[e.id] = String(Number(e.percent ?? 0));
     setPercentDraft(next);
-  }, [classFilter, evalsInSelectedClass]);
+  }, [evalClassFilter, evalsInSelectedClass]);
 
-  // ✅ detectar si hay cambios
   const percentDirty = useMemo(() => {
-    if (classFilter === "all") return false;
+    if (evalClassFilter === "all") return false;
     for (const e of evalsInSelectedClass) {
       const draft = (percentDraft[e.id] ?? "").trim();
       const n = Number(draft);
@@ -277,11 +271,11 @@ export default function TeacherPage() {
       if (Number(n) !== Number(e.percent)) return true;
     }
     return false;
-  }, [classFilter, evalsInSelectedClass, percentDraft]);
+  }, [evalClassFilter, evalsInSelectedClass, percentDraft]);
 
   async function updatePercents() {
-    if (classFilter === "all") {
-      setMsg("Selecciona una materia primero.");
+    if (evalClassFilter === "all") {
+      setMsg("Selecciona una materia específica primero.");
       return;
     }
     setMsg(null);
@@ -326,66 +320,69 @@ export default function TeacherPage() {
     }
   }
 
-  // ===== Cargar alumnos del curso + notas de esa evaluación =====
-  async function loadRosterAndGrades() {
-    setMsg(null);
-    setGLoadingRoster(true);
-    setGRoster([]);
-    setGradeDraft({});
-
-    try {
-      if (!selectedEval?.id_course) return;
-
-      const rosterRes = await apiFetch(
-        `/api/teacher/course-students?course_id=${selectedEval.id_course}`
-      );
-      const roster: StudentRow[] = rosterRes?.items || [];
-      setGRoster(roster);
-
-      const gradesRes = await apiFetch(`/api/teacher/exam-grades?exam_id=${selectedEval.id}`);
-      const existing: ExamGradeRow[] = gradesRes?.items || [];
-
-      const mapExisting = new Map<string, number>();
-      for (const r of existing) {
-        if (r?.id_student)
-          mapExisting.set(r.id_student, r.grade === null ? NaN : Number(r.grade));
-      }
-
-      const drafts: Record<string, string> = {};
-      for (const st of roster) {
-        const g = mapExisting.get(st.id);
-        drafts[st.id] = Number.isFinite(g as any) ? String(g) : "";
-      }
-      setGradeDraft(drafts);
-    } catch (e: any) {
-      setMsg(e?.message || "Error cargando alumnos/notas");
-      setGRoster([]);
-      setGradeDraft({});
-    } finally {
-      setGLoadingRoster(false);
-    }
-  }
+  // =========================
+  // CREATE FILTERS
+  // =========================
+  const createClassesFiltered = useMemo(() => {
+    if (createLevelFilter === "") return [];
+    if (createLevelFilter === "all") return myClasses;
+    return myClasses.filter((c) => Number(c.level) === Number(createLevelFilter));
+  }, [myClasses, createLevelFilter]);
 
   useEffect(() => {
-    if (!selectedEval) {
-      setGRoster([]);
-      setGradeDraft({});
-      return;
-    }
-    loadRosterAndGrades();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedEval?.id]);
+    setCreateClassFilter("all");
+    setCourses([]);
+    setCCourse("");
+    setTitlePick("");
+    setTitleOther("");
+    setCType("");
+    setCTypeOther("");
+    setCPercent(30);
+  }, [createLevelFilter]);
 
-  // ===== Crear evaluación =====
+  useEffect(() => {
+    setCourses([]);
+    setCCourse("");
+    setTitlePick("");
+    setTitleOther("");
+    setCPercent(30);
+
+    if (createClassFilter !== "all") {
+      loadCoursesForClass(Number(createClassFilter));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createClassFilter]);
+
+  const createTitleOptions = useMemo(() => {
+    if (createClassFilter === "all") return [];
+    const list = items.filter((x) => x.id_class === Number(createClassFilter));
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const it of list) {
+      const t = String(it.title || "").trim();
+      if (!t) continue;
+      const key = t.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(t);
+    }
+    return out;
+  }, [items, createClassFilter]);
+
   async function handleCreate() {
     setMsg(null);
 
-    if (classFilter === "all") {
-      setMsg("Selecciona una materia primero (en 'Mis evaluaciones').");
+    if (createLevelFilter === "" || createLevelFilter === "all") {
+      setMsg("Selecciona un level primero.");
       return;
     }
 
-    const id_class = Number(classFilter);
+    if (createClassFilter === "all") {
+      setMsg("Selecciona una materia.");
+      return;
+    }
+
+    const id_class = Number(createClassFilter);
 
     const id_course = Number(cCourse);
     if (!id_course) return setMsg("Selecciona un curso.");
@@ -401,8 +398,9 @@ export default function TeacherPage() {
     if (!title) return setMsg("Selecciona o escribe un título.");
 
     const percent = Number(cPercent);
-    if (!Number.isFinite(percent) || percent <= 0 || percent > 100)
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
       return setMsg("Percent inválido (1..100)");
+    }
 
     setCreating(true);
     try {
@@ -441,8 +439,11 @@ export default function TeacherPage() {
 
       flash("✅ Evaluación creada", "ok");
       await loadEvaluations();
-
       setView("EVALS");
+
+      // opcional: dejar sincronizado el filtro del panel de evaluaciones
+      setEvalLevelFilter(Number(createLevelFilter));
+      setEvalClassFilter(Number(createClassFilter));
     } catch (e: any) {
       setMsg(e?.message || "Error creando evaluación");
       flash("❌ No se pudo crear", "err");
@@ -451,7 +452,100 @@ export default function TeacherPage() {
     }
   }
 
-  // ===== Guardar 1 alumno =====
+  // =========================
+  // UPSERT FILTERS
+  // =========================
+  const upsertClassesFiltered = useMemo(() => {
+    if (upsertLevelFilter === "") return [];
+    if (upsertLevelFilter === "all") return myClasses;
+    return myClasses.filter((c) => Number(c.level) === Number(upsertLevelFilter));
+  }, [myClasses, upsertLevelFilter]);
+
+  useEffect(() => {
+    setUpsertClassFilter("all");
+    setGExamId("");
+    setGRoster([]);
+    setGradeDraft({});
+  }, [upsertLevelFilter]);
+
+  useEffect(() => {
+    setGExamId("");
+    setGRoster([]);
+    setGradeDraft({});
+  }, [upsertClassFilter]);
+
+  const upsertEvalOptions = useMemo(() => {
+    let list = [...items];
+
+    if (upsertLevelFilter !== "" && upsertLevelFilter !== "all") {
+      list = list.filter((e) => Number(e.class?.level ?? 0) === Number(upsertLevelFilter));
+    }
+
+    if (upsertClassFilter !== "all") {
+      list = list.filter((e) => e.id_class === Number(upsertClassFilter));
+    } else {
+      list = [];
+    }
+
+    return list;
+  }, [items, upsertLevelFilter, upsertClassFilter]);
+
+  const selectedEval = useMemo(() => {
+    const id = Number(gExamId);
+    if (!id) return null;
+    return items.find((x) => x.id === id) || null;
+  }, [gExamId, items]);
+
+  async function loadRosterAndGrades() {
+    setMsg(null);
+    setGLoadingRoster(true);
+    setGRoster([]);
+    setGradeDraft({});
+
+    try {
+      if (!selectedEval?.id_course) return;
+
+      const rosterRes = await apiFetch(
+        `/api/teacher/course-students?course_id=${selectedEval.id_course}`
+      );
+      const roster: StudentRow[] = rosterRes?.items || [];
+      setGRoster(roster);
+
+      const gradesRes = await apiFetch(`/api/teacher/exam-grades?exam_id=${selectedEval.id}`);
+      const existing: ExamGradeRow[] = gradesRes?.items || [];
+
+      const mapExisting = new Map<string, number>();
+      for (const r of existing) {
+        if (r?.id_student) {
+          mapExisting.set(r.id_student, r.grade === null ? NaN : Number(r.grade));
+        }
+      }
+
+      const drafts: Record<string, string> = {};
+      for (const st of roster) {
+        const g = mapExisting.get(st.id);
+        drafts[st.id] = Number.isFinite(g as any) ? String(g) : "";
+      }
+      setGradeDraft(drafts);
+    } catch (e: any) {
+      setMsg(e?.message || "Error cargando alumnos/notas");
+      setGRoster([]);
+      setGradeDraft({});
+    } finally {
+      setGLoadingRoster(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedEval) {
+      setGRoster([]);
+      setGradeDraft({});
+      return;
+    }
+    loadRosterAndGrades();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEval?.id]);
+
   async function saveOne(student: StudentRow) {
     if (!selectedEval?.id) return;
 
@@ -486,7 +580,6 @@ export default function TeacherPage() {
     }
   }
 
-  // ===== Guardar todos =====
   async function saveAll() {
     if (!selectedEval?.id) return;
     setSavingAll(true);
@@ -532,14 +625,12 @@ export default function TeacherPage() {
 
   if (loadingMe) return <div className="container">Cargando...</div>;
 
-  // ✅ medidas UI
   const SIDEBAR_W = 320;
   const HAM_PAD = 14;
   const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
 
   return (
     <div>
-      {/* ✅ Toast */}
       {toast && (
         <div
           style={{
@@ -562,7 +653,7 @@ export default function TeacherPage() {
         </div>
       )}
 
-      {/* ✅ HAMBURGUESA */}
+      {/* HAMBURGUESA */}
       <div
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -623,7 +714,7 @@ export default function TeacherPage() {
         </div>
       </div>
 
-      {/* ✅ SIDEBAR */}
+      {/* SIDEBAR */}
       <aside
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -672,7 +763,9 @@ export default function TeacherPage() {
           <div className="label">Rol</div>
           <div style={{ fontWeight: 900 }}>{roleLabel}</div>
         </div>
+
         <ChangePasswordButton email={me?.user?.email} className="btn" />
+
         <div style={{ marginTop: 12 }}>
           <button className="btn" onClick={handleLogout} style={{ width: "100%" }}>
             Salir
@@ -680,8 +773,13 @@ export default function TeacherPage() {
         </div>
       </aside>
 
-      {/* ✅ MAIN */}
-      <main style={{ marginLeft: sidebarOpen ? SIDEBAR_W : 0, transition: "margin-left 180ms ease" }}>
+      {/* MAIN */}
+      <main
+        style={{
+          marginLeft: sidebarOpen ? SIDEBAR_W : 0,
+          transition: "margin-left 180ms ease",
+        }}
+      >
         <div className="container">
           <div className="topbar" style={{ alignItems: "center" }}>
             <div className="brand">
@@ -696,7 +794,7 @@ export default function TeacherPage() {
             </div>
           </div>
 
-          {/* ✅ SELECTOR DE SECCIÓN */}
+          {/* SELECTOR DE SECCIÓN */}
           <div
             className="card"
             style={{
@@ -710,7 +808,9 @@ export default function TeacherPage() {
           >
             <div>
               <div style={{ fontWeight: 900, fontSize: 16 }}>Sección</div>
-              <div style={{ color: "var(--muted)", fontSize: 13 }}>Elige qué panel quieres ver.</div>
+              <div style={{ color: "var(--muted)", fontSize: 13 }}>
+                Elige qué panel quieres ver.
+              </div>
             </div>
 
             <div style={{ minWidth: 260 }}>
@@ -737,42 +837,74 @@ export default function TeacherPage() {
               ======================= */}
           {view === "EVALS" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
                 <h2 style={{ margin: 0 }}>Mis evaluaciones</h2>
                 <button onClick={loadEvaluations} className="btnLight" style={{ fontWeight: 900 }}>
                   {loadingList ? "Cargando..." : "Refrescar"}
                 </button>
               </div>
 
-              <div style={{ marginTop: 12 }}>
-                <div className="label">Materia</div>
-                <select
-                  className="select"
-                  value={classFilter}
-                  onChange={(e) =>
-                    setClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
-                  }
-                >
-                  <option value="all">Todas mis materias</option>
-                  {myClasses.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+                <div>
+                  <div className="label">Año</div>
+                  <select
+                    className="select"
+                    value={String(evalLevelFilter)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setEvalLevelFilter(v === "all" ? "all" : Number(v));
+                    }}
+                  >
+                    <option value="all">Todos mis levels</option>
+                    {availableLevels.map((lvl) => (
+                      <option key={lvl} value={String(lvl)}>
+                        {lvl}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="label">Materia</div>
+                  <select
+                    className="select"
+                    value={evalClassFilter}
+                    onChange={(e) =>
+                      setEvalClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+                    }
+                  >
+                    <option value="all">
+                      {evalLevelFilter === "all"
+                        ? "Todas mis materias"
+                        : "Todas las materias del level"}
                     </option>
-                  ))}
-                </select>
-
-                {loadingClasses && (
-                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                    Cargando materias...
-                  </div>
-                )}
-
-                {classFilter !== "all" && (
-                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                    Tip: puedes editar el <b>%</b> en esta materia y luego guardar al final.
-                  </div>
-                )}
+                    {evalClassesFiltered.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
+
+              {loadingClasses && (
+                <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                  Cargando materias...
+                </div>
+              )}
+
+              {evalClassFilter !== "all" && (
+                <div style={{ marginTop: 8, color: "var(--muted)", fontSize: 13 }}>
+                  Tip: puedes editar el <b>%</b> de esta materia y luego guardar al final.
+                </div>
+              )}
 
               <div
                 style={{
@@ -792,15 +924,17 @@ export default function TeacherPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.length === 0 ? (
+                    {evalItemsFiltered.length === 0 ? (
                       <tr>
                         <td colSpan={4} style={{ padding: 12, color: "var(--muted)" }}>
-                          {loadingList ? "Cargando..." : "No tienes evaluaciones aún."}
+                          {loadingList ? "Cargando..." : "No tienes evaluaciones con ese filtro."}
                         </td>
                       </tr>
                     ) : (
-                      items.map((e) => {
-                        const editable = classFilter !== "all" && e.id_class === Number(classFilter);
+                      evalItemsFiltered.map((e) => {
+                        const editable =
+                          evalClassFilter !== "all" && e.id_class === Number(evalClassFilter);
+
                         return (
                           <tr key={e.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
                             <td style={{ padding: 12, fontWeight: 600 }}>{e.title}</td>
@@ -813,7 +947,9 @@ export default function TeacherPage() {
                                   value={percentDraft[e.id] ?? String(e.percent)}
                                   onChange={(ev) => {
                                     const v = ev.target.value;
-                                    if (v === "") return setPercentDraft((p) => ({ ...p, [e.id]: "" }));
+                                    if (v === "") {
+                                      return setPercentDraft((p) => ({ ...p, [e.id]: "" }));
+                                    }
                                     if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
                                     setPercentDraft((p) => ({ ...p, [e.id]: v }));
                                   }}
@@ -835,7 +971,7 @@ export default function TeacherPage() {
                 </table>
               </div>
 
-              {classFilter !== "all" && (
+              {evalClassFilter !== "all" && (
                 <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 10 }}>
                   <button
                     className="btn"
@@ -857,44 +993,49 @@ export default function TeacherPage() {
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Crear evaluación</h2>
 
-              <div style={{ marginTop: 8 }}>
-                <div className="label">Materia</div>
-                <div
-                  className="input"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    fontWeight: 900,
-                    background: "var(--field-bg)",
-                    border: "1px solid var(--field-border)",
-                  }}
-                >
-                  {selectedClassName}
-                </div>
-                <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                  * La materia se toma del selector de “Mis evaluaciones”.
-                </div>
-              </div>
-
-              <div style={{ marginTop: 12 }}>
-                <div className="label">Materia (selector)</div>
-                <select
-                  className="select"
-                  value={classFilter}
-                  onChange={(e) =>
-                    setClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
-                  }
-                >
-                  <option value="all">Selecciona una materia</option>
-                  {myClasses.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+                {/* LEVEL */}
+                <div style={{ gridColumn: "1 / span 2" }}>
+                  <div className="label">Año</div>
+                  <select
+                    className="select"
+                    value={String(createLevelFilter)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCreateLevelFilter(v === "" ? "" : Number(v));
+                    }}
+                  >
+                    <option value="">Selecciona un level</option>
+                    {availableLevels.map((lvl) => (
+                      <option key={lvl} value={String(lvl)}>
+                        {lvl}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* MATERIA */}
+                <div style={{ gridColumn: "1 / span 2" }}>
+                  <div className="label">Materia</div>
+                  <select
+                    className="select"
+                    value={createClassFilter}
+                    onChange={(e) =>
+                      setCreateClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+                    }
+                    disabled={createLevelFilter === ""}
+                  >
+                    <option value="all">
+                      {createLevelFilter === "" ? "Selecciona un level primero" : "Selecciona una materia"}
+                    </option>
+                    {createClassesFiltered.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 {/* CURSO */}
                 <div style={{ gridColumn: "1 / span 2" }}>
                   <div className="label">Curso</div>
@@ -902,10 +1043,10 @@ export default function TeacherPage() {
                     className="select"
                     value={cCourse}
                     onChange={(e) => setCCourse(e.target.value)}
-                    disabled={classFilter === "all" || loadingCourses}
+                    disabled={createClassFilter === "all" || loadingCourses}
                   >
                     <option value="">
-                      {classFilter === "all"
+                      {createClassFilter === "all"
                         ? "Selecciona una materia primero"
                         : loadingCourses
                         ? "Cargando cursos..."
@@ -963,12 +1104,12 @@ export default function TeacherPage() {
                       setTitlePick(e.target.value);
                       if (e.target.value !== "__other__") setTitleOther("");
                     }}
-                    disabled={classFilter === "all"}
+                    disabled={createClassFilter === "all"}
                   >
                     <option value="">
-                      {classFilter === "all" ? "Selecciona una materia primero" : "Selecciona..."}
+                      {createClassFilter === "all" ? "Selecciona una materia primero" : "Selecciona..."}
                     </option>
-                    {titleOptions.map((t) => (
+                    {createTitleOptions.map((t) => (
                       <option key={t} value={t}>
                         {t}
                       </option>
@@ -990,7 +1131,13 @@ export default function TeacherPage() {
 
                 {/* % */}
                 <div style={{ gridColumn: "1 / span 2", marginTop: 6 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
                     <div className="label">Porcentaje</div>
                     <div style={{ fontWeight: 900, fontSize: 16 }}>{cPercent}%</div>
                   </div>
@@ -1017,11 +1164,18 @@ export default function TeacherPage() {
           )}
 
           {/* ==================
-              PANEL: UPSERT (COMPLETO)
+              PANEL: UPSERT
               ================== */}
           {view === "UPSERT" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
                 <h2 style={{ margin: 0 }}>Subir nota manual (upsert)</h2>
 
                 <button
@@ -1034,38 +1188,69 @@ export default function TeacherPage() {
                 </button>
               </div>
 
-              <div style={{ marginTop: 12 }}>
-                <div className="label">Materia</div>
-                <select
-                  className="select"
-                  value={classFilter}
-                  onChange={(e) =>
-                    setClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
-                  }
-                >
-                  <option value="all">Selecciona una materia</option>
-                  {myClasses.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 12 }}>
+                <div>
+                  <div className="label">Año</div>
+                  <select
+                    className="select"
+                    value={String(upsertLevelFilter)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setUpsertLevelFilter(v === "" ? "" : Number(v));
+                    }}
+                  >
+                    <option value="">Selecciona un level</option>
+                    {availableLevels.map((lvl) => (
+                      <option key={lvl} value={String(lvl)}>
+                        {lvl}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <div style={{ marginTop: 12 }}>
-                <div className="label">Evaluación</div>
-                <select className="select" value={gExamId} onChange={(e) => setGExamId(e.target.value)}>
-                  <option value="">Selecciona...</option>
-                  {evalOptions.map((e) => (
-                    <option key={e.id} value={String(e.id)}>
-                      #{e.id} · {e.title} ({Number(e.percent).toFixed(0)}%) ·{" "}
-                      {e.course?.name ?? `Curso ${e.id_course}`}
+                <div>
+                  <div className="label">Materia</div>
+                  <select
+                    className="select"
+                    value={upsertClassFilter}
+                    onChange={(e) =>
+                      setUpsertClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+                    }
+                    disabled={upsertLevelFilter === ""}
+                  >
+                    <option value="all">
+                      {upsertLevelFilter === "" ? "Selecciona un level primero" : "Selecciona una materia"}
                     </option>
-                  ))}
-                </select>
+                    {upsertClassesFiltered.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-                <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                  * Solo aparecen evaluaciones de la materia seleccionada.
+                <div>
+                  <div className="label">Evaluación</div>
+                  <select
+                    className="select"
+                    value={gExamId}
+                    onChange={(e) => setGExamId(e.target.value)}
+                    disabled={upsertClassFilter === "all"}
+                  >
+                    <option value="">
+                      {upsertClassFilter === "all" ? "Selecciona una materia primero" : "Selecciona..."}
+                    </option>
+                    {upsertEvalOptions.map((e) => (
+                      <option key={e.id} value={String(e.id)}>
+                        #{e.id} · {e.title} ({Number(e.percent).toFixed(0)}%) ·{" "}
+                        {e.course?.name ?? `Curso ${e.id_course}`}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                    * Solo aparecen evaluaciones de la materia seleccionada.
+                  </div>
                 </div>
               </div>
 
@@ -1075,7 +1260,14 @@ export default function TeacherPage() {
                 </div>
               ) : (
                 <div style={{ marginTop: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "baseline",
+                      gap: 12,
+                    }}
+                  >
                     <div style={{ fontWeight: 900 }}>
                       Curso: {selectedEval.course?.name ?? `ID ${selectedEval.id_course}`} · Materia:{" "}
                       {selectedEval.class?.name ?? `ID ${selectedEval.id_class}`}
@@ -1128,7 +1320,9 @@ export default function TeacherPage() {
                                   value={gradeDraft[st.id] ?? ""}
                                   onChange={(e) => {
                                     const v = e.target.value;
-                                    if (v === "") return setGradeDraft((p) => ({ ...p, [st.id]: "" }));
+                                    if (v === "") {
+                                      return setGradeDraft((p) => ({ ...p, [st.id]: "" }));
+                                    }
                                     if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
                                     setGradeDraft((p) => ({ ...p, [st.id]: v }));
                                   }}
