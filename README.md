@@ -1,4 +1,3 @@
-```markdown
 # WebNotas · JILIU | La Promesa
 
 Plataforma web para **gestión académica** (roles: **Admin / Teacher / Student**) con autenticación en **Supabase**, paneles por rol, y un backend en **Express** que expone APIs para administrar cursos, materias, evaluaciones y notas.
