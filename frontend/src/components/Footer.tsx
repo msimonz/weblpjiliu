@@ -1,5 +1,5 @@
 export default function Footer({
-  leftText = "© 2026 JILIU · La Promesa. Todos los derechos reservados.",
+  leftText = "© 2026 SOFIA · La Promesa. Todos los derechos reservados.",
   rightText = "Hecho con ♥ para La Promesa.",
 }: {
   leftText?: string;
