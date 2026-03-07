@@ -790,13 +790,13 @@ export default function AdminPage() {
         <div className="container">
           <div className="topbar" style={{ alignItems: "center" }}>
             <div className="brand">
-              <div style={{ fontWeight: 900, fontSize: 18 }}>JILIU · La Promesa</div>
+              <div style={{ fontWeight: 900, fontSize: 18 }}>SOFIA · La Promesa</div>
               <div style={{ color: "var(--muted)" }}>Panel Admin</div>
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <div className="btnLight" style={{ padding: "8px 12px", borderRadius: 999 }}>
-                {roleLabel} · {me?.user?.email}
+                Admin · {me?.user?.email}
               </div>
             </div>
           </div>

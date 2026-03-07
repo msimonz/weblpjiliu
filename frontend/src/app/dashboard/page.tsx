@@ -402,14 +402,13 @@ export default function DashboardPage() {
         <div className="container">
           <div className="topbar" style={{ alignItems: "center" }}>
             <div className="brand">
-              <div style={{ fontWeight: 900, fontSize: 18 }}>JILIU · La Promesa</div>
+              <div style={{ fontWeight: 900, fontSize: 18 }}>SOFIA · La Promesa</div>
               <div style={{ color: "var(--muted)" }}>Notas y asignaciones</div>
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <div className="btnLight">
-                {me?.role === "A" ? "Admin" : me?.role === "T" ? "Profesor" : "Estudiante"} ·{" "}
-                {me?.user?.email}
+                Estudiante  · {me?.user?.email}
               </div>
             </div>
           </div>
