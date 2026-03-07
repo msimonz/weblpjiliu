@@ -15,7 +15,7 @@ const app = express();
 app.use(cors({
   origin: [
     'http://localhost:3000',
-    'https://felapromesaxjiliu.onrender.com',
+    'https://sofialapromesa.onrender.com',
   ],
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization'],
