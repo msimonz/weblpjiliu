@@ -102,7 +102,7 @@ export default function LoginPage() {
       <div
         className="container"
         style={{
-          minHeight: "100vh",
+          minHeight: "80vh",
           display: "grid",
           placeItems: "center",
           paddingTop: HEADER_H,
