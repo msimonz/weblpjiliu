@@ -535,6 +535,7 @@ export default function DashboardPage() {
                                   key={s.class_id}
                                   style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}
                                 >
+
                                   <td style={{ padding: 12, fontWeight: 600 }}>{s.name}</td>
                                   <td
                                     style={{
