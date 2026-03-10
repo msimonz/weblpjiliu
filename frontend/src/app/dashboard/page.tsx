@@ -426,10 +426,22 @@ export default function DashboardPage() {
           >
             {/* IZQUIERDA */}
             <div className="card">
-              <h1 style={{ margin: "6px 0 6px", fontSize: 28, letterSpacing: "-0.02em" }}>
-                Consultar notas
-              </h1>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    marginBottom: 12,
+                  }}
+                >
+                  <h1 style={{ margin: "6px 0 6px", fontSize: 28, letterSpacing: "-0.02em" }}>
+                    Consultar notas
+                  </h1>
 
+                  <button type="button" onClick={loadSummary} className="btnLight">
+                    {summaryLoading ? "Cargando..." : "Refrescar"}
+                  </button>
+                </div>
               <div style={{ gridTemplateColumns: "220px 1fr 160px", gap: 12 }}>
                 <div>
                   <div className="label">Año</div>
@@ -495,9 +507,7 @@ export default function DashboardPage() {
                       >
                         <div>
                         </div>
-                        <button type="button" onClick={loadSummary} className="btnLight">
-                          {summaryLoading ? "Cargando..." : "Refrescar"}
-                        </button>
+
                       </div>
 
                       <div
@@ -647,7 +657,13 @@ export default function DashboardPage() {
                         </table>
                       </div>
 
-                      <div style={{ marginTop: 12 }}>
+                      <div
+                        style={{
+                          marginTop: 12,
+                          display: "flex",
+                          justifyContent: "flex-end",
+                        }}
+                      >
                         <button
                           type="button"
                           onClick={() => {

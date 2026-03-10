@@ -12,6 +12,15 @@ function requireTeacher(req, res, next) {
   return next();
 }
 
+function levelLabel(level) {
+  const n = Number(level);
+  if (n === 1) return "Primer año";
+  if (n === 2) return "Segundo año";
+  if (n === 3) return "Tercer año";
+  if (n === 4) return "Cuarto año";
+  return `Año ${level ?? "—"}`;
+}
+
 async function getTeacherClasses(teacherId) {
   const { data, error } = await supabaseAdmin
     .from("class_teacher")
@@ -76,6 +85,85 @@ async function getStudentsByCourseIds(courseIds) {
 }
 
 /**
+ * DASHBOARD DEL PROFESOR
+ * GET /api/teacher/dashboard
+ */
+teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacherId = req.auth.user.id;
+
+    const teacherClasses = await getTeacherClasses(teacherId);
+    const cleanClasses = (teacherClasses || []).filter(Boolean);
+
+    const groupsMap = new Map();
+
+    for (const cls of cleanClasses) {
+      const lvl = Number(cls.level || 0);
+      if (!groupsMap.has(lvl)) {
+        groupsMap.set(lvl, {
+          level: lvl,
+          level_label: levelLabel(lvl),
+          items: [],
+        });
+      }
+      groupsMap.get(lvl).items.push({
+        id: cls.id,
+        name: cls.name,
+        level: cls.level,
+      });
+    }
+
+    const groups = [...groupsMap.values()]
+      .map((g) => ({
+        ...g,
+        items: g.items.sort((a, b) => String(a.name).localeCompare(String(b.name), "es")),
+      }))
+      .sort((a, b) => a.level - b.level);
+
+    const levels = [...new Set(cleanClasses.map((c) => Number(c.level)).filter(Boolean))];
+
+    let totalStudents = 0;
+    let academicYear = new Date().getFullYear();
+
+    if (levels.length > 0) {
+      const { data: courses, error: cErr } = await supabaseAdmin
+        .from("course")
+        .select("id,year,level")
+        .in("level", levels)
+        .order("level", { ascending: true });
+
+      if (cErr) return res.status(500).json({ error: cErr.message });
+
+      const courseIds = (courses || []).map((c) => Number(c.id)).filter(Boolean);
+
+      if (courses?.length) {
+        const years = courses
+          .map((c) => Number(c.year))
+          .filter((y) => Number.isFinite(y) && y > 0);
+
+        if (years.length > 0) {
+          academicYear = Math.max(...years);
+        }
+      }
+
+      const students = await getStudentsByCourseIds(courseIds);
+      totalStudents = new Set((students || []).map((s) => s.id)).size;
+    }
+
+    return res.json({
+      summary: {
+        assigned_classes: cleanClasses.length,
+        total_students: totalStudents,
+        academic_year: academicYear,
+      },
+      groups,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * 0) Mis materias asignadas
  * GET /api/teacher/classes
  */
@@ -102,7 +190,6 @@ teacherRouter.get("/courses", requireAuth, requireTeacher, async (req, res) => {
     const teacherId = req.auth.user.id;
     const classId = req.query.class_id ? Number(req.query.class_id) : null;
 
-    // modo 1: por class_id (compatibilidad con lógica anterior)
     if (classId) {
       const allowed = await teacherHasClass(teacherId, classId);
       if (!allowed) {
@@ -130,7 +217,6 @@ teacherRouter.get("/courses", requireAuth, requireTeacher, async (req, res) => {
       return res.json({ items: courses || [] });
     }
 
-    // modo 2: todos los cursos de los levels que maneja el profesor
     const teacherClasses = await getTeacherClasses(teacherId);
     const levels = [...new Set((teacherClasses || []).map((c) => Number(c.level)).filter(Boolean))];
 
