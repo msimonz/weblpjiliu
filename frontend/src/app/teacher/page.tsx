@@ -48,7 +48,22 @@ type GradeGridResponse = {
   grades: GridGradeRow[];
 };
 
-type TeacherView = "EVALS" | "CREATE" | "UPSERT";
+type DashboardGroup = {
+  level: number;
+  level_label: string;
+  items: TeacherClass[];
+};
+
+type TeacherDashboardResponse = {
+  summary: {
+    assigned_classes: number;
+    total_students: number;
+    academic_year: number;
+  };
+  groups: DashboardGroup[];
+};
+
+type TeacherView = "DASHBOARD" | "EVALS" | "CREATE" | "UPSERT";
 type LevelValue = number | "all" | "";
 
 function gradeCellKey(studentId: string, examId: number) {
@@ -71,7 +86,7 @@ export default function TeacherPage() {
   const [loadingMe, setLoadingMe] = useState(true);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [view, setView] = useState<TeacherView>("EVALS");
+  const [view, setView] = useState<TeacherView>("DASHBOARD");
 
   const [items, setItems] = useState<EvalItem[]>([]);
   const [loadingList, setLoadingList] = useState(false);
@@ -79,6 +94,9 @@ export default function TeacherPage() {
 
   const [myClasses, setMyClasses] = useState<TeacherClass[]>([]);
   const [loadingClasses, setLoadingClasses] = useState(false);
+
+  const [dashboard, setDashboard] = useState<TeacherDashboardResponse | null>(null);
+  const [loadingDashboard, setLoadingDashboard] = useState(false);
 
   // ===== FILTROS POR PANEL =====
   // EVALS
@@ -198,6 +216,19 @@ export default function TeacherPage() {
     }
   }
 
+  async function loadDashboard() {
+    setLoadingDashboard(true);
+    try {
+      const res = await apiFetch("/api/teacher/dashboard");
+      setDashboard(res || null);
+    } catch (e: any) {
+      setDashboard(null);
+      setMsg(e?.message || "Error cargando dashboard del profesor");
+    } finally {
+      setLoadingDashboard(false);
+    }
+  }
+
   async function loadEvaluations() {
     setMsg(null);
     setLoadingList(true);
@@ -242,6 +273,7 @@ export default function TeacherPage() {
   useEffect(() => {
     if (!loadingMe) {
       loadMyClasses();
+      loadDashboard();
       loadTypes();
       loadEvaluations();
       loadTeacherCourses();
@@ -907,9 +939,10 @@ export default function TeacherPage() {
                 value={view}
                 onChange={(e) => setView(e.target.value as TeacherView)}
               >
-                <option value="EVALS">Ver mis evaluaciones</option>
-                <option value="CREATE">Crear una evaluación</option>
-                <option value="UPSERT">Cambiar nota a mis estudiantes</option>
+                <option value="DASHBOARD">Ver mis Materias</option>
+                <option value="EVALS">Ver mis Evaluaciones</option>
+                <option value="CREATE">Crear una Evaluación</option>
+                <option value="UPSERT">Cambiar Nota a mis Estudiantes</option>
               </select>
             </div>
           </div>
@@ -917,6 +950,189 @@ export default function TeacherPage() {
           {msg && (
             <div className="msgError" style={{ marginTop: 12 }}>
               {msg}
+            </div>
+          )}
+
+          {/* =======================
+              PANEL: DASHBOARD
+              ======================= */}
+          {view === "DASHBOARD" && (
+            <div style={{ marginTop: 18, display: "grid", gap: 18 }}>
+              {/* TABLA / GRID DE MATERIAS POR AÑO */}
+              <div className="card">
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 12,
+                    marginBottom: 16,
+                  }}
+                >
+                  <h2 style={{ margin: 0 }}>Mis materias por año</h2>
+
+                  <button
+                    type="button"
+                    onClick={loadDashboard}
+                    className="btnLight"
+                    style={{ fontWeight: 900 }}
+                  >
+                    {loadingDashboard ? "Cargando..." : "Refrescar"}
+                  </button>
+                </div>
+
+                {loadingDashboard ? (
+                  <div style={{ color: "var(--muted)" }}>Cargando dashboard...</div>
+                ) : !dashboard?.groups?.length ? (
+                  <div style={{ color: "var(--muted)" }}>
+                    No tienes materias asignadas actualmente.
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      overflowX: "auto",
+                      borderRadius: 18,
+                      border: "1px solid var(--stroke)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        minWidth: 900,
+                        display: "grid",
+                        gridTemplateColumns: "repeat(4, 1fr)",
+                      }}
+                    >
+                      {[1, 2, 3, 4].map((lvl, idx) => {
+                        const group = dashboard.groups.find((g) => Number(g.level) === lvl);
+                        const items = group?.items || [];
+
+                        return (
+                          <div
+                            key={lvl}
+                            style={{
+                              borderRight: idx < 3 ? "1px solid var(--stroke)" : "none",
+                              minHeight: 420,
+                              display: "flex",
+                              flexDirection: "column",
+                            }}
+                          >
+                            {/* encabezado columna */}
+                            <div
+                              style={{
+                                padding: "14px 16px",
+                                borderBottom: "1px solid var(--stroke)",
+                                background: "rgba(14,165,233,.06)",
+                                fontWeight: 700,
+                                letterSpacing: ".04em",
+                                fontSize: 15,
+                              }}
+                            >
+                              {levelLabel(lvl)}
+                            </div>
+
+                            {/* cuerpo columna */}
+                            <div
+                              style={{
+                                padding: 12,
+                                display: "grid",
+                                gap: 10,
+                                alignContent: "start",
+                                flex: 1,
+                              }}
+                            >
+                              {items.length === 0 ? (
+                                <div
+                                  style={{
+                                    fontSize: 14,
+                                    padding: "8px 4px",
+                                  }}
+                                >
+                                  Sin materias asignadas
+                                </div>
+                              ) : (
+                                items.map((item) => (
+                                  <div
+                                    key={item.id}
+                                    style={{
+                                      padding: "10px",
+                                      fontWeight: 500,
+                                      lineHeight: 0.50,
+                                    }}
+                                  >
+                                    {item.name}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* RESUMEN HORIZONTAL */}
+              <div className="card">
+                <h2 style={{ margin: 0, marginBottom: 16 }}>Resumen</h2>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, 1fr)",
+                    gap: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: 16,
+                      borderRadius: 18,
+                      border: "1px solid var(--stroke)",
+                      background:
+                        "linear-gradient(135deg, rgba(0, 170, 255, 0.2), rgba(14,165,233,.06))",
+                    }}
+                  >
+                    <div style={{ fontSize: 13, color: "var(--muted)", fontWeight: 700 }}>
+                      Materias asignadas
+                    </div>
+                    <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1.1, marginTop: 6 }}>
+                      {dashboard?.summary?.assigned_classes ?? 0}
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      padding: 16,
+                      borderRadius: 18,
+                      border: "1px solid var(--stroke)",
+                      background: "rgba(14,165,233,.04)",
+                    }}
+                  >
+                    <div style={{ fontSize: 13, color: "var(--muted)", fontWeight: 700 }}>
+                      Total estudiantes
+                    </div>
+                    <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1.1, marginTop: 6 }}>
+                      {dashboard?.summary?.total_students ?? 0}
+                    </div>
+                  </div>
+
+                  <div
+                    style={{
+                      padding: 16,
+                      borderRadius: 18,
+                      border: "1px solid var(--stroke)",
+                      background: "rgba(14,165,233,.04)",
+                    }}
+                  >
+                    <div style={{ fontSize: 13, color: "var(--muted)", fontWeight: 700 }}>
+                      Año académico
+                    </div>
+                    <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1.1, marginTop: 6 }}>
+                      {dashboard?.summary?.academic_year ?? new Date().getFullYear()}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -953,7 +1169,7 @@ export default function TeacherPage() {
                     <option value="all">Todos los años</option>
                     {availableLevels.map((lvl) => (
                       <option key={lvl} value={String(lvl)}>
-                        {lvl}
+                        {levelLabel(lvl)}
                       </option>
                     ))}
                   </select>
@@ -1291,7 +1507,7 @@ export default function TeacherPage() {
                     <option value="">Selecciona un Año</option>
                     {availableLevels.map((lvl) => (
                       <option key={lvl} value={String(lvl)}>
-                        {lvl}
+                        {levelLabel(lvl)}
                       </option>
                     ))}
                   </select>
@@ -1336,7 +1552,7 @@ export default function TeacherPage() {
                   >
                     <div style={{ fontWeight: 900 }}>
                       Materia: {gridClassInfo?.name ?? selectedUpsertClass?.name ?? "—"}
-                      {gridClassInfo?.level ? ` · Año: ${gridClassInfo.level}` : ""}
+                      {gridClassInfo?.level ? ` · Año: ${levelLabel(gridClassInfo.level)}` : ""}
                     </div>
 
                     <button type="button" onClick={loadGradeGrid} className="btnLight">
@@ -1423,7 +1639,6 @@ export default function TeacherPage() {
 
                               <td style={{ padding: 12 }}>
                                 <div style={{ fontWeight: 700 }}>{st.name}</div>
-
                               </td>
 
                               {gEvaluations.map((ev) => {
