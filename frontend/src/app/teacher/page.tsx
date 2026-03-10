@@ -939,10 +939,10 @@ export default function TeacherPage() {
                 value={view}
                 onChange={(e) => setView(e.target.value as TeacherView)}
               >
-                <option value="DASHBOARD">Ver dashboard</option>
-                <option value="EVALS">Ver mis evaluaciones</option>
-                <option value="CREATE">Crear una evaluación</option>
-                <option value="UPSERT">Cambiar nota a mis estudiantes</option>
+                <option value="DASHBOARD">Ver mis Materias</option>
+                <option value="EVALS">Ver mis Evaluaciones</option>
+                <option value="CREATE">Crear una Evaluación</option>
+                <option value="UPSERT">Cambiar Nota a mis Estudiantes</option>
               </select>
             </div>
           </div>
