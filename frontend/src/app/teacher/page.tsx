@@ -65,7 +65,40 @@ type TeacherDashboardResponse = {
 
 type TeacherView = "DASHBOARD" | "EVALS" | "CREATE" | "UPSERT";
 type LevelValue = number | "all" | "";
+const GRILLA = {
+  headerBgLight: "#d9edf7",
+  headerBgDark: "#083b5c",
+  headerTextLight: "#0f172a",
+  headerTextDark: "#eaf4ff",
+  rowHoverBgLight: "#eef6fb",
+  rowHoverBgDark: "#0b2236",
 
+  stripeLightEven: "#ffffff",
+  stripeLightOdd: "#f9fdfd",
+
+  stripeDarkEven: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)",
+  stripeDarkOdd: "#051422",
+
+  activeRowBgLight: "color-mix(in srgb, rgb(22,163,74) 10%, #ffffff 90%)",
+  activeRowBgDark: "color-mix(in srgb, rgb(22,163,74) 14%, var(--card) 86%)",
+
+  editableCellBgLight: "#f5fff7",
+ editableCellBgDark: "color-mix(in srgb, rgb(22,163,74) 9%, var(--card) 91%)",
+ // editableCellBgLight: "#f5fff7",
+ // editableCellBgDark: "color-mix(in srgb, rgb(247, 243, 244) 9%, var(--card) 91%)",
+
+  disabledCellBgLight: "#f4f5f6",
+  disabledCellBgDark: "color-mix(in srgb, var(--card) 82%, rgb(15,23,42) 18%)",
+
+  focusCellBgLight: "#eaf2ff",
+  focusCellBgDark: "color-mix(in srgb, rgb(59,130,246) 16%, var(--card) 84%)",
+
+  outerBorder: "1px solid var(--stroke)",
+  headerBottomBorder: "1px solid color-mix(in srgb, var(--stroke) 100%, transparent)",
+  rowBottomBorder: "1px solid color-mix(in srgb, var(--stroke) 85%, transparent)",
+  radiusPrimary: 18,
+  radiusSecondary: 16,
+};
 function gradeCellKey(studentId: string, examId: number) {
   return `${studentId}__${examId}`;
 }
@@ -77,6 +110,45 @@ function levelLabel(level: number | null | undefined) {
   if (n === 3) return "Tercer año";
   if (n === 4) return "Cuarto año";
   return `Año ${level ?? "—"}`;
+}
+
+function isDarkThemeEnabled() {
+  return (
+    typeof document !== "undefined" &&
+    (
+      document.documentElement.classList.contains("dark") ||
+      document.documentElement.dataset.theme === "dark" ||
+      (typeof window !== "undefined" &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches)
+    )
+  );
+}
+
+function getGrillaBaseRowBg(rowIndex: number, isDarkTheme: boolean) {
+  if (isDarkTheme) {
+    return rowIndex % 2 === 0 ? GRILLA.stripeDarkEven : GRILLA.stripeDarkOdd;
+  }
+  return rowIndex % 2 === 0 ? GRILLA.stripeLightEven : GRILLA.stripeLightOdd;
+}
+
+function getGrillaActiveRowBg(isDarkTheme: boolean) {
+  return isDarkTheme ? GRILLA.activeRowBgDark : GRILLA.activeRowBgLight;
+}
+
+function getGrillaEditableCellBg(isDarkTheme: boolean) {
+  return isDarkTheme ? GRILLA.editableCellBgDark : GRILLA.editableCellBgLight;
+}
+
+function getGrillaDisabledCellBg(isDarkTheme: boolean) {
+  return isDarkTheme ? GRILLA.disabledCellBgDark : GRILLA.disabledCellBgLight;
+}
+
+function getGrillaFocusCellBg(isDarkTheme: boolean) {
+  return isDarkTheme ? GRILLA.focusCellBgDark : GRILLA.focusCellBgLight;
+}
+
+function getGrillaTextColor(isDarkTheme: boolean) {
+  return isDarkTheme ? "var(--text)" : "#0f172a";
 }
 
 export default function TeacherPage() {
@@ -129,8 +201,11 @@ export default function TeacherPage() {
   const [cPercent, setCPercent] = useState<number>(30);
   const [creating, setCreating] = useState(false);
 
-  // ===== UPSERT MATRICIAL =====
-  const [gridClassInfo, setGridClassInfo] = useState<{ id: number; name: string; level: number } | null>(null);
+  const [gridClassInfo, setGridClassInfo] = useState<{
+    id: number;
+    name: string;
+    level: number;
+  } | null>(null);
   const [gEvaluations, setGEvaluations] = useState<EvalItem[]>([]);
   const [gRoster, setGRoster] = useState<StudentRow[]>([]);
   const [gLoadingRoster, setGLoadingRoster] = useState(false);
@@ -142,11 +217,19 @@ export default function TeacherPage() {
   const [percentDraft, setPercentDraft] = useState<Record<number, string>>({});
   const [savingPercents, setSavingPercents] = useState(false);
 
-  // toast
+  const [editingRow, setEditingRow] = useState<Record<string, boolean>>({});
+  const [rowSnapshot, setRowSnapshot] = useState<Record<string, Record<string, string>>>({});
+
   const [toast, setToast] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
   const toastTimer = useRef<number | null>(null);
 
   const pendingUpsertClassIdRef = useRef<number | null>(null);
+
+  const CEDULA_COL_W = 150;
+  const ALUMNO_COL_W = 260;
+  const EVAL_COL_W = 170;
+  const ACTION_COL_W = 160;
+  const STICKY_ALUMNO_LEFT = CEDULA_COL_W;
 
   function goToUpsertFromEvaluation(item: EvalItem) {
     const classId = Number(item.id_class);
@@ -531,6 +614,8 @@ export default function TeacherPage() {
     setGEvaluations([]);
     setGRoster([]);
     setGradeDraft({});
+    setEditingRow({});
+    setRowSnapshot({});
 
     if (pendingUpsertClassIdRef.current !== null) {
       setUpsertClassFilter(pendingUpsertClassIdRef.current);
@@ -545,6 +630,8 @@ export default function TeacherPage() {
     setGEvaluations([]);
     setGRoster([]);
     setGradeDraft({});
+    setEditingRow({});
+    setRowSnapshot({});
   }, [upsertClassFilter]);
 
   const selectedUpsertClass = useMemo(() => {
@@ -568,6 +655,8 @@ export default function TeacherPage() {
     setGEvaluations([]);
     setGRoster([]);
     setGradeDraft({});
+    setEditingRow({});
+    setRowSnapshot({});
 
     try {
       if (upsertClassFilter === "all") return;
@@ -637,6 +726,47 @@ export default function TeacherPage() {
     return gEvaluations.filter((ev) => isEvaluationApplicableToStudent(student, ev));
   }
 
+  function beginEdit(student: StudentRow) {
+    const applicableEvals = getStudentApplicableEvaluations(student);
+    if (applicableEvals.length === 0) {
+      setMsg(`No hay evaluaciones aplicables para ${student.name}`);
+      flash("❌ No hay evaluaciones para actualizar", "err");
+      return;
+    }
+
+    const snapshot: Record<string, string> = {};
+    for (const ev of applicableEvals) {
+      const key = gradeCellKey(student.id, ev.id);
+      snapshot[key] = gradeDraft[key] ?? "";
+    }
+
+    setRowSnapshot((prev) => ({ ...prev, [student.id]: snapshot }));
+    setEditingRow((prev) => ({ ...prev, [student.id]: true }));
+    setMsg(null);
+  }
+
+  function cancelEdit(student: StudentRow) {
+    const snapshot = rowSnapshot[student.id] || {};
+    setGradeDraft((prev) => {
+      const next = { ...prev };
+      for (const [key, value] of Object.entries(snapshot)) {
+        next[key] = value;
+      }
+      return next;
+    });
+
+    setEditingRow((prev) => ({ ...prev, [student.id]: false }));
+  }
+
+  async function handleRowAction(student: StudentRow) {
+    if (!editingRow[student.id]) {
+      beginEdit(student);
+      return;
+    }
+
+    await saveOne(student);
+  }
+
   async function saveOne(student: StudentRow) {
     const applicableEvals = getStudentApplicableEvaluations(student);
 
@@ -675,6 +805,13 @@ export default function TeacherPage() {
           });
         })
       );
+
+      setEditingRow((prev) => ({ ...prev, [student.id]: false }));
+      setRowSnapshot((prev) => {
+        const next = { ...prev };
+        delete next[student.id];
+        return next;
+      });
 
       flash(`✅ Notas guardadas: ${student.name}`, "ok");
     } catch (e: any) {
@@ -743,6 +880,8 @@ export default function TeacherPage() {
 
   if (loadingMe) return <div className="container">Cargando...</div>;
 
+  const isDarkTheme = isDarkThemeEnabled();
+
   const SIDEBAR_W = 320;
   const HAM_PAD = 14;
   const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
@@ -771,7 +910,48 @@ export default function TeacherPage() {
         </div>
       )}
 
-      {/* HAMBURGUESA */}
+      <style jsx>{`
+        .teacher-solid-table {
+          --table-head-bg: ${GRILLA.headerBgLight};
+          --table-head-text: ${GRILLA.headerTextLight};
+          --table-row-hover-bg: ${GRILLA.rowHoverBgLight};
+        }
+
+        :global(html.dark) .teacher-solid-table,
+        :global(html[data-theme="dark"]) .teacher-solid-table {
+          --table-head-bg: ${GRILLA.headerBgDark};
+          --table-head-text: ${GRILLA.headerTextDark};
+          --table-row-hover-bg: ${GRILLA.rowHoverBgDark};
+        }
+
+        @media (prefers-color-scheme: dark) {
+          .teacher-solid-table {
+            --table-head-bg: ${GRILLA.headerBgDark};
+            --table-head-text: ${GRILLA.headerTextDark};
+            --table-row-hover-bg: ${GRILLA.rowHoverBgDark};
+          }
+        }
+
+        .teacher-solid-table thead,
+        .teacher-solid-table thead tr,
+        .teacher-solid-table thead th {
+          background-color: var(--table-head-bg) !important;
+          background-image: none !important;
+          color: var(--table-head-text) !important;
+          opacity: 1 !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+        }
+
+        .teacher-solid-table tbody tr.table-row-hover > td {
+          transition: background-color 120ms ease;
+        }
+
+        .teacher-solid-table tbody tr.table-row-hover[data-editing="false"]:hover > td {
+          background-color: var(--table-row-hover-bg) !important;
+        }
+      `}</style>
+
       <div
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -1474,26 +1654,35 @@ export default function TeacherPage() {
                   justifyContent: "space-between",
                   alignItems: "center",
                   gap: 12,
+                  flexWrap: "wrap",
                 }}
               >
-                <h2 style={{ margin: 0 }}>Subir nota manual</h2>
+                <div>
+                  <h2 style={{ margin: 0 }}>Subir nota manual</h2>
+                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
+                    Grilla de notas estilo hoja de cálculo.
+                  </div>
+                </div>
 
                 <button
-                  className="btn"
-                  onClick={saveAll}
-                  disabled={
-                    savingAll ||
-                    upsertClassFilter === "all" ||
-                    gRoster.length === 0 ||
-                    gEvaluations.length === 0
-                  }
-                  style={{ width: 220, flexShrink: 0 }}
+                  type="button"
+                  onClick={loadGradeGrid}
+                  className="btnLight"
+                  disabled={upsertClassFilter === "all" || gLoadingRoster}
+                  style={{ width: 180, flexShrink: 0 }}
                 >
-                  {savingAll ? "Actualizando..." : "Actualizar todos"}
+                  {gLoadingRoster ? "Cargando..." : "Refrescar lista"}
                 </button>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 12 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 12,
+                  marginTop: 14,
+                }}
+              >
                 <div>
                   <div className="label">Año</div>
                   <select
@@ -1507,7 +1696,7 @@ export default function TeacherPage() {
                     <option value="">Selecciona un Año</option>
                     {availableLevels.map((lvl) => (
                       <option key={lvl} value={String(lvl)}>
-                        {levelLabel(lvl)}
+                        {lvl}
                       </option>
                     ))}
                   </select>
@@ -1519,7 +1708,9 @@ export default function TeacherPage() {
                     className="select"
                     value={upsertClassFilter}
                     onChange={(e) =>
-                      setUpsertClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+                      setUpsertClassFilter(
+                        e.target.value === "all" ? "all" : Number(e.target.value)
+                      )
                     }
                     disabled={upsertLevelFilter === ""}
                   >
@@ -1536,11 +1727,11 @@ export default function TeacherPage() {
               </div>
 
               {upsertClassFilter === "all" ? (
-                <div style={{ marginTop: 12, color: "var(--muted)" }}>
+                <div style={{ marginTop: 16, color: "var(--muted)" }}>
                   Selecciona una materia para cargar todas sus evaluaciones y notas.
                 </div>
               ) : (
-                <div style={{ marginTop: 12 }}>
+                <div style={{ marginTop: 16 }}>
                   <div
                     style={{
                       display: "flex",
@@ -1548,145 +1739,403 @@ export default function TeacherPage() {
                       alignItems: "baseline",
                       gap: 12,
                       flexWrap: "wrap",
+                      marginBottom: 12,
                     }}
                   >
                     <div style={{ fontWeight: 900 }}>
                       Materia: {gridClassInfo?.name ?? selectedUpsertClass?.name ?? "—"}
-                      {gridClassInfo?.level ? ` · Año: ${levelLabel(gridClassInfo.level)}` : ""}
                     </div>
 
-                    <button type="button" onClick={loadGradeGrid} className="btnLight">
-                      {gLoadingRoster ? "Cargando..." : "Refrescar lista"}
-                    </button>
+                    {gEvaluations.length > 0 && (
+                      <div style={{ color: "var(--muted)", fontSize: 13 }}>
+                        Haz clic en <b>Actualizar</b> para habilitar edición por fila.
+                      </div>
+                    )}
                   </div>
-
-                  {gEvaluations.length > 0 && (
-                    <div style={{ marginTop: 8, color: "var(--muted)", fontSize: 13 }}>
-                      Se muestran todas las evaluaciones de esta materia. Cada alumno puede editar
-                      únicamente las evaluaciones que pertenecen a su curso.
-                    </div>
-                  )}
 
                   <div
                     style={{
-                      marginTop: 12,
-                      overflowX: "auto",
-                      overflowY: "hidden",
-                      borderRadius: 18,
-                      border: "1px solid var(--stroke)",
+                      borderRadius: GRILLA.radiusSecondary,
+                      overflow: "hidden",
+                      border: "1px solid color-mix(in srgb, var(--stroke) 100%, transparent)",
+                      background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)",
+                      boxShadow: "var(--shadow)",
                     }}
                   >
-                    <table
+                    <div
                       style={{
-                        width: "100%",
-                        minWidth: `${upsertDynamicMinWidth}px`,
-                        borderCollapse: "collapse",
+                        overflowX: "auto",
+                        overflowY: "auto",
+                        maxHeight: "68vh",
+                        background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)",
                       }}
                     >
-                      <thead>
-                        <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                          <th style={{ textAlign: "left", padding: 12, width: 170 }}>Cédula</th>
-                          <th style={{ textAlign: "left", padding: 12, minWidth: 320 }}>Alumno</th>
-
+                      <table
+                        className="teacher-solid-table"
+                        style={{
+                          width: "100%",
+                          minWidth: `${upsertDynamicMinWidth}px`,
+                          borderCollapse: "separate",
+                          borderSpacing: 0,
+                          tableLayout: "fixed",
+                          fontSize: 14,
+                          color: "var(--text)",
+                        }}
+                      >
+                        <colgroup>
+                          <col style={{ width: `${CEDULA_COL_W}px` }} />
+                          <col style={{ width: `${ALUMNO_COL_W}px` }} />
                           {gEvaluations.map((ev) => (
+                            <col key={ev.id} style={{ width: `${EVAL_COL_W}px` }} />
+                          ))}
+                          <col style={{ width: `${ACTION_COL_W}px` }} />
+                        </colgroup>
+
+                        <thead>
+                          <tr>
                             <th
-                              key={ev.id}
                               style={{
                                 textAlign: "left",
-                                padding: 12,
-                                minWidth: 220,
-                                whiteSpace: "normal",
-                                verticalAlign: "bottom",
+                                padding: "8px 10px",
+                                borderBottom: GRILLA.headerBottomBorder,
+                                fontWeight: 800,
+                                position: "sticky",
+                                top: 0,
+                                left: 0,
+                                zIndex: 6,
+                                whiteSpace: "nowrap",
+                                boxShadow: "none",
                               }}
                             >
-                              <div style={{ fontWeight: 900 }}>{getEvaluationColumnLabel(ev)}</div>
+                              Cédula
                             </th>
-                          ))}
 
-                          <th style={{ textAlign: "left", padding: 12, width: 180 }}></th>
-                        </tr>
-                      </thead>
-
-                      <tbody>
-                        {gLoadingRoster ? (
-                          <tr>
-                            <td
-                              colSpan={Math.max(3, gEvaluations.length + 3)}
-                              style={{ padding: 12, color: "var(--muted)" }}
+                            <th
+                              style={{
+                                textAlign: "left",
+                                padding: "8px 10px",
+                                borderBottom: GRILLA.headerBottomBorder,
+                                fontWeight: 800,
+                                position: "sticky",
+                                top: 0,
+                                left: STICKY_ALUMNO_LEFT,
+                                zIndex: 6,
+                                boxShadow: "none",
+                              }}
                             >
-                              Cargando alumnos y notas...
-                            </td>
-                          </tr>
-                        ) : gRoster.length === 0 ? (
-                          <tr>
-                            <td
-                              colSpan={Math.max(3, gEvaluations.length + 3)}
-                              style={{ padding: 12, color: "var(--muted)" }}
+                              Alumno
+                            </th>
+
+                            {gEvaluations.map((ev) => (
+                              <th
+                                key={ev.id}
+                                style={{
+                                  textAlign: "left",
+                                  padding: "8px 10px",
+                                  borderBottom: GRILLA.headerBottomBorder,
+                                  fontWeight: 800,
+                                  position: "sticky",
+                                  top: 0,
+                                  zIndex: 5,
+                                  lineHeight: 1.2,
+                                }}
+                              >
+                                {getEvaluationColumnLabel(ev)}
+                              </th>
+                            ))}
+
+                            <th
+                              style={{
+                                textAlign: "center",
+                                padding: "8px 10px",
+                                borderBottom: GRILLA.headerBottomBorder,
+                                fontWeight: 800,
+                                position: "sticky",
+                                top: 0,
+                                zIndex: 5,
+                              }}
                             >
-                              No se encontraron alumnos para esta materia.
-                            </td>
+                              Acción
+                            </th>
                           </tr>
-                        ) : gEvaluations.length === 0 ? (
-                          <tr>
-                            <td colSpan={3} style={{ padding: 12, color: "var(--muted)" }}>
-                              Esta materia aún no tiene evaluaciones creadas.
-                            </td>
-                          </tr>
-                        ) : (
-                          gRoster.map((st) => (
-                            <tr key={st.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                              <td style={{ padding: 12, fontWeight: 500 }}>{st.cedula}</td>
+                        </thead>
 
-                              <td style={{ padding: 12 }}>
-                                <div style={{ fontWeight: 700 }}>{st.name}</div>
-                              </td>
-
-                              {gEvaluations.map((ev) => {
-                                const key = gradeCellKey(st.id, ev.id);
-                                const enabled = isEvaluationApplicableToStudent(st, ev);
-
-                                return (
-                                  <td key={ev.id} style={{ padding: 12 }}>
-                                    <input
-                                      className="input"
-                                      inputMode="numeric"
-                                      value={gradeDraft[key] ?? ""}
-                                      disabled={!enabled || savingAll || !!savingOne[st.id]}
-                                      onChange={(e) => {
-                                        if (!enabled) return;
-                                        const v = e.target.value;
-                                        if (v === "") {
-                                          return setGradeDraft((p) => ({ ...p, [key]: "" }));
-                                        }
-                                        if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
-                                        setGradeDraft((p) => ({ ...p, [key]: v }));
-                                      }}
-                                      placeholder={enabled ? "—" : "N/A"}
-                                      style={{
-                                        opacity: enabled ? 1 : 0.55,
-                                        minWidth: 110,
-                                      }}
-                                    />
-                                  </td>
-                                );
-                              })}
-
-                              <td style={{ padding: 12 }}>
-                                <button
-                                  className="btn"
-                                  onClick={() => saveOne(st)}
-                                  disabled={!!savingOne[st.id] || savingAll}
-                                  style={{ width: "100%" }}
-                                >
-                                  {savingOne[st.id] ? "Actualizando..." : "Actualizar"}
-                                </button>
+                        <tbody>
+                          {gLoadingRoster ? (
+                            <tr>
+                              <td
+                                colSpan={Math.max(3, gEvaluations.length + 3)}
+                                style={{
+                                  padding: 16,
+                                  color: "var(--muted)",
+                                  background: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)",
+                                }}
+                              >
+                                Cargando alumnos y notas...
                               </td>
                             </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                          ) : gRoster.length === 0 ? (
+                            <tr>
+                              <td
+                                colSpan={Math.max(3, gEvaluations.length + 3)}
+                                style={{
+                                  padding: 16,
+                                  color: "var(--muted)",
+                                  background: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)",
+                                }}
+                              >
+                                No se encontraron alumnos para esta materia.
+                              </td>
+                            </tr>
+                          ) : gEvaluations.length === 0 ? (
+                            <tr>
+                              <td
+                                colSpan={3}
+                                style={{
+                                  padding: 16,
+                                  color: "var(--muted)",
+                                  background: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)",
+                                }}
+                              >
+                                Esta materia aún no tiene evaluaciones creadas.
+                              </td>
+                            </tr>
+                          ) : (
+                            gRoster.map((st, rowIndex) => {
+                              const isEditing = !!editingRow[st.id];
+                              const isBusy = !!savingOne[st.id] || savingAll;
+
+                              const baseRowBg = getGrillaBaseRowBg(rowIndex, isDarkTheme);
+                              const activeRowBg = getGrillaActiveRowBg(isDarkTheme);
+                              const editableCellBg = getGrillaEditableCellBg(isDarkTheme);
+                              const disabledCellBg = getGrillaDisabledCellBg(isDarkTheme);
+                              const cellTextColor = getGrillaTextColor(isDarkTheme);
+
+                              return (
+                                <tr
+                                  key={st.id}
+                                  className="table-row-hover"
+                                  data-editing={isEditing ? "true" : "false"}
+                                  style={{
+                                    background: isEditing ? activeRowBg : baseRowBg,
+                                  }}
+                                >
+                                  <td
+                                    style={{
+                                      padding: "2px 10px",
+                                      borderBottom: GRILLA.rowBottomBorder,
+                                      fontWeight: 700,
+                                      background: isEditing ? activeRowBg : baseRowBg,
+                                      position: "sticky",
+                                      left: 0,
+                                      zIndex: 4,
+                                      whiteSpace: "nowrap",
+                                      lineHeight: 1.15,
+                                      boxShadow: "none",
+                                      color: cellTextColor,
+                                    }}
+                                  >
+                                    {st.cedula}
+                                  </td>
+
+                                  <td
+                                    style={{
+                                      padding: "2px 10px",
+                                      borderBottom: GRILLA.rowBottomBorder,
+                                      background: isEditing ? activeRowBg : baseRowBg,
+                                      position: "sticky",
+                                      left: STICKY_ALUMNO_LEFT,
+                                      zIndex: 4,
+                                      boxShadow: "none",
+                                      color: cellTextColor,
+                                    }}
+                                  >
+                                    <div style={{ fontWeight: 700, lineHeight: 1.15 }}>
+                                      {st.name}
+                                    </div>
+                                  </td>
+
+                                  {gEvaluations.map((ev) => {
+                                    const key = gradeCellKey(st.id, ev.id);
+                                    const enabledForCourse = isEvaluationApplicableToStudent(st, ev);
+                                    const editable = enabledForCourse && isEditing && !isBusy;
+
+                                    return (
+                                      <td
+                                        key={ev.id}
+                                        style={{
+                                          padding: 0,
+                                          borderBottom: GRILLA.rowBottomBorder,
+                                          background: enabledForCourse
+                                            ? isEditing
+                                              ? editableCellBg
+                                              : "transparent"
+                                            : disabledCellBg,
+                                        }}
+                                      >
+                                        <input
+                                          className="input"
+                                          inputMode="numeric"
+                                          value={gradeDraft[key] ?? ""}
+                                          readOnly={!editable}
+                                          disabled={!enabledForCourse || isBusy}
+                                          onChange={(e) => {
+                                            if (!editable) return;
+                                            const v = e.target.value;
+                                            if (v === "") {
+                                              return setGradeDraft((p) => ({
+                                                ...p,
+                                                [key]: "",
+                                              }));
+                                            }
+                                            if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
+                                            setGradeDraft((p) => ({ ...p, [key]: v }));
+                                          }}
+                                          placeholder={enabledForCourse ? "—" : "N/A"}
+                                          onFocus={(e) => {
+                                            if (editable) {
+                                              e.currentTarget.style.background = getGrillaFocusCellBg(isDarkTheme);
+                                              e.currentTarget.style.boxShadow =
+                                                "inset 0 0 0 1.5px #3b82f6";
+                                            }
+                                          }}
+                                          onBlur={(e) => {
+                                            e.currentTarget.style.background = editable
+                                              ? editableCellBg
+                                              : "transparent";
+                                            e.currentTarget.style.boxShadow = "none";
+                                          }}
+                                          style={{
+                                            width: "100%",
+                                            minWidth: 0,
+                                            height: 26,
+                                            border: "none",
+                                            borderRadius: 0,
+                                            outline: "none",
+                                            background: editable ? editableCellBg : "transparent",
+                                            boxShadow: "none",
+                                            padding: "0 10px",
+                                            fontSize: 13,
+                                            lineHeight: 1,
+                                            fontWeight: editable ? 700 : 500,
+                                            color: enabledForCourse
+                                              ? cellTextColor
+                                              : isDarkTheme
+                                                ? "var(--muted)"
+                                                : "#94a3b8",
+                                            cursor: editable ? "text" : "default",
+                                            opacity: enabledForCourse ? 1 : 0.6,
+                                          }}
+                                        />
+                                      </td>
+                                    );
+                                  })}
+
+                                  <td
+                                    style={{
+                                      padding: "4px 8px",
+                                      borderBottom: GRILLA.rowBottomBorder,
+                                      background: isEditing ? activeRowBg : baseRowBg,
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        gap: 8,
+                                        justifyContent: "center",
+                                        alignItems: "center",
+                                      }}
+                                    >
+                                      <button
+                                        className="btn"
+                                        onClick={() => handleRowAction(st)}
+                                        disabled={isBusy}
+                                        style={{
+                                          minWidth: 104,
+                                          padding: "5px 10px",
+                                          background: isEditing
+                                            ? "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)"
+                                            : "linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%)",
+                                          border: isEditing
+                                            ? "1px solid rgba(34,197,94,.8)"
+                                            : "1px solid rgba(2,132,199,.8)",
+                                          color: "#fff",
+                                          boxShadow: isEditing
+                                            ? "0 5px 14px rgba(34,197,94,.18)"
+                                            : "0 5px 14px rgba(2,132,199,.16)",
+                                          fontSize: 13,
+                                        }}
+                                      >
+                                        {isBusy
+                                          ? "Actualizando..."
+                                          : isEditing
+                                            ? "Guardar"
+                                            : "Actualizar"}
+                                      </button>
+
+                                      {isEditing && (
+                                        <button
+                                          type="button"
+                                          className="btnLight"
+                                          onClick={() => cancelEdit(st)}
+                                          disabled={isBusy}
+                                          style={{
+                                            minWidth: 90,
+                                            padding: "5px 10px",
+                                            background: isDarkTheme
+                                              ? "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)"
+                                              : "#ffffff",
+                                            border:
+                                              "1px solid color-mix(in srgb, var(--stroke) 100%, transparent)",
+                                            color: isDarkTheme ? "var(--text)" : "#334155",
+                                            fontSize: 13,
+                                          }}
+                                        >
+                                          Cancelar
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
+
+                  {gEvaluations.length > 0 && gRoster.length > 0 && (
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 12,
+                        marginTop: 12,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div style={{ color: "var(--muted)", fontSize: 13 }}>
+                        Total estudiantes: <b>{gRoster.length}</b> · Total evaluaciones:{" "}
+                        <b>{gEvaluations.length}</b>
+                      </div>
+
+                      <button
+                        className="btn"
+                        onClick={saveAll}
+                        disabled={savingAll}
+                        style={{
+                          width: 220,
+                          background: "linear-gradient(180deg, #0f172a 0%, #1e293b 100%)",
+                          color: "#fff",
+                          border: "1px solid rgba(30,41,59,.85)",
+                        }}
+                      >
+                        {savingAll ? "Guardando..." : "Guardar toda la grilla"}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
