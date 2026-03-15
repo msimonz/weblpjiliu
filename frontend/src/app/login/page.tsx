@@ -21,6 +21,7 @@ export default function LoginPage() {
 
   const [cedula, setCedula] = useState("");
   const [password, setPassword] = useState("");
+  const [cedulaHint, setCedulaHint] = useState("");
 
   // ✅ mostrar/ocultar contraseña
   const [showPw, setShowPw] = useState(false);
@@ -30,6 +31,7 @@ export default function LoginPage() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
 
   const roleToRoute = (role: RoleCode) => {
     if (role === "A") return "/admin";
@@ -133,12 +135,31 @@ export default function LoginPage() {
               <div className="label">Cédula</div>
               <input
                 className="input"
+                type="text"
                 value={cedula}
-                onChange={(e) => setCedula(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+
+                  if (/^\d*$/.test(value)) {
+                    setCedula(value);
+                    setCedulaHint("");
+                  } else {
+                    setCedula(value.replace(/\D/g, ""));
+                    setCedulaHint("Solo puedes ingresar números en la cédula");
+                  }
+                }}
                 placeholder="Ej: 1020304050"
                 inputMode="numeric"
                 autoComplete="username"
+                pattern="[0-9]*"
+                maxLength={15}
               />
+
+              {cedulaHint && (
+                <div style={{ marginTop: 6, color: "#d32f2f", fontSize: 13 }}>
+                  {cedulaHint}
+                </div>
+              )}
             </div>
 
             {/* ✅ Contraseña con ojito */}
