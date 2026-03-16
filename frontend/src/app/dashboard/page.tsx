@@ -13,12 +13,11 @@ type ClassItem = { id: number; name: string; level: number };
 
 type GradeItem = {
   exam_id: number;
+  type: string | null;
   title: string;
   percent: number;
   grade: number | null;
   finished_at: string | null;
-  attempts: number | null;
-  source: string | null;
 };
 
 type SummaryItem = {
@@ -85,15 +84,8 @@ export default function DashboardPage() {
 
   const debounceRef = useRef<number | null>(null);
 
-  const [pwOpen, setPwOpen] = useState(false);
-  const [pw1, setPw1] = useState("");
-  const [pw2, setPw2] = useState("");
-  const [pwLoading, setPwLoading] = useState(false);
-  const [pwMsg, setPwMsg] = useState<string | null>(null);
-
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // auth guard
   useEffect(() => {
     (async () => {
       setMeLoading(true);
@@ -113,21 +105,17 @@ export default function DashboardPage() {
     })();
   }, [router]);
 
-  // set year to real student level
   useEffect(() => {
     if (!meLoading && studentLevelFixed) {
       setLevel(studentLevelFixed);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meLoading, studentLevelFixed]);
 
-  // reset when level changes
   useEffect(() => {
     setSelectedClass(null);
     setQ("");
     setSuggestions([]);
     setOpenSug(false);
-
     setItems([]);
     setWeighted(null);
     setError(null);
@@ -158,10 +146,8 @@ export default function DashboardPage() {
 
   useEffect(() => {
     loadSummary();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [level, blockedByYear]);
 
-  // autocomplete
   useEffect(() => {
     setError(null);
 
@@ -200,11 +186,6 @@ export default function DashboardPage() {
     };
   }, [q, level, blockedByYear]);
 
-  const canConsult = useMemo(
-    () => !!selectedClass?.id && !blockedByYear,
-    [selectedClass, blockedByYear]
-  );
-
   function pickClass(c: ClassItem) {
     setSelectedClass(c);
     setQ(c.name);
@@ -213,7 +194,7 @@ export default function DashboardPage() {
 
   async function handleConsult(classOverride?: { id: number; name: string }) {
     if (blockedByYear) {
-      setError("Aún no ha cursado este año.");
+      setError("Sin notas para este año..");
       return;
     }
 
@@ -230,6 +211,10 @@ export default function DashboardPage() {
     setLoadingGrades(true);
     try {
       const res = await apiFetch(`/api/student/grades?level=${level}&class_id=${classId}`);
+
+      console.log("RESPUESTA /grades:", res);
+      console.log("ITEMS /grades:", res?.items);
+
       setItems(res?.items || []);
       setWeighted(typeof res?.weighted === "number" ? res.weighted : null);
     } catch (e: any) {
@@ -253,7 +238,6 @@ export default function DashboardPage() {
   const passed = summaryStats?.passed ?? 0;
   const failed = summaryStats?.failed ?? 0;
 
-  // ✅ NUEVO: porcentajes para “barra de progreso” dentro de las tarjetas
   const totalPF = passed + failed;
   const passPct = totalPF > 0 ? Math.round((passed / totalPF) * 100) : 0;
   const failPct = totalPF > 0 ? Math.round((failed / totalPF) * 100) : 0;
@@ -264,14 +248,234 @@ export default function DashboardPage() {
 
   if (meLoading) return <div className="container">Cargando...</div>;
 
-  // ✅ medidas UI
   const SIDEBAR_W = 320;
   const HAM_PAD = 14;
   const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
+  const topbarLeftPad = sidebarOpen ? 18 : 58;
+
+  const summaryGridStyle: React.CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: 12,
+    marginTop: 12,
+    alignItems: "stretch",
+  };
+
+  const summaryBoxBase: React.CSSProperties = {
+    borderRadius: 18,
+    minHeight: 0,
+    display: "flex",
+    alignItems: "center",
+    minWidth: 0,
+  };
 
   return (
     <div>
-      {/* ✅ HAMBURGUESA (se pega al borde del sidebar cuando abre) */}
+      <style jsx>{`
+        .teacher-solid-table {
+          --table-head-bg: #0f172a;
+          --table-head-text: #ffffff;
+          --table-row-hover-bg: rgba(14, 165, 233, 0.08);
+        }
+
+        :global(html.dark) .teacher-solid-table,
+        :global(html[data-theme="dark"]) .teacher-solid-table {
+          --table-head-bg: #111827;
+          --table-head-text: #f8fafc;
+          --table-row-hover-bg: rgba(59, 130, 246, 0.12);
+        }
+
+        @media (prefers-color-scheme: dark) {
+          .teacher-solid-table {
+            --table-head-bg: #111827;
+            --table-head-text: #f8fafc;
+            --table-row-hover-bg: rgba(59, 130, 246, 0.12);
+          }
+        }
+
+        .teacher-solid-table thead,
+        .teacher-solid-table thead tr,
+        .teacher-solid-table thead th {
+          background-color: var(--table-head-bg) !important;
+          background-image: none !important;
+          color: var(--table-head-text) !important;
+          opacity: 1 !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+        }
+
+        .teacher-solid-table tbody tr.table-row-hover > td {
+          transition: background-color 120ms ease;
+          line-height: 1.15;
+        }
+
+        .teacher-solid-table tbody tr.table-row-hover:hover > td {
+          background-color: var(--table-row-hover-bg) !important;
+        }
+
+        .fit-table-shell {
+          margin-top: 12px;
+          overflow-x: hidden;
+          border-radius: 18px;
+          border: 1px solid var(--stroke);
+          background: var(--card);
+        }
+
+        .fit-table {
+          width: 100%;
+          border-collapse: collapse;
+          table-layout: fixed;
+        }
+
+        .fit-th,
+        .fit-td {
+          padding: 8px 10px;
+          border-bottom: 1px solid var(--stroke);
+          font-size: 13px;
+          line-height: 1.15;
+          vertical-align: middle;
+          min-width: 0;
+        }
+
+        .fit-th {
+          text-align: left;
+        }
+
+        .fit-wrap {
+          white-space: normal;
+          word-break: break-word;
+          overflow-wrap: anywhere;
+        }
+
+        .fit-num {
+          white-space: nowrap;
+          text-align: center;
+        }
+
+        .fit-date {
+          white-space: normal;
+          word-break: break-word;
+          text-align: center;
+        }
+
+        .fit-btn {
+          width: 100%;
+          margin-top: 0;
+          padding: 6px 10px;
+          min-height: 30px;
+          line-height: 1;
+          font-size: 12px;
+        }
+
+        .summaryCardInner {
+          position: relative;
+          width: 100%;
+          padding: 8px 10px;
+          min-width: 0;
+        }
+
+        .summaryTitle {
+          font-size: 12px;
+          font-weight: 800;
+          line-height: 1.05;
+          word-break: break-word;
+        }
+
+        .summaryValue {
+          font-size: 22px;
+          font-weight: 900;
+          line-height: 1;
+          margin-top: 3px;
+          word-break: break-word;
+        }
+
+        .summaryMeta {
+          margin-top: 3px;
+          color: var(--muted);
+          font-size: 9px;
+          line-height: 1.05;
+          word-break: break-word;
+        }
+
+        .dashboard-topbar {
+          flex-wrap: wrap;
+          row-gap: 10px;
+        }
+
+        .dashboard-topbar .brand {
+          min-width: 0;
+          max-width: 100%;
+        }
+
+        .dashboard-topbar .brand > div:first-child {
+          white-space: normal;
+          word-break: normal;
+          overflow-wrap: normal;
+        }
+
+        @media (max-width: 768px) {
+          .fit-table {
+            table-layout: fixed;
+          }
+
+          .fit-th,
+          .fit-td {
+            padding: 6px 4px;
+            font-size: 11px;
+            line-height: 1.05;
+          }
+
+          .fit-btn {
+            padding: 5px 4px;
+            min-height: 28px;
+            font-size: 10px;
+          }
+
+          .fit-tight {
+            letter-spacing: -0.01em;
+          }
+
+          .summaryCardInner {
+            padding: 6px 7px;
+          }
+
+          .summaryTitle {
+            font-size: 9px;
+            line-height: 1;
+          }
+
+          .summaryValue {
+            font-size: 15px;
+            line-height: 1;
+            margin-top: 2px;
+          }
+
+          .summaryMeta {
+            font-size: 7px;
+            line-height: 1;
+            margin-top: 2px;
+          }
+
+          .dashboard-topbar {
+            padding-left: 58px !important;
+          }
+
+          .dashboard-topbar .brand {
+            flex: 1 1 100%;
+          }
+
+          .dashboard-topbar .brand > div:first-child {
+            font-size: 15px !important;
+            line-height: 1.05;
+          }
+
+          .dashboard-topbar .brand > div:last-child {
+            font-size: 12px !important;
+            line-height: 1.15;
+          }
+        }
+      `}</style>
+
       <div
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -280,7 +484,7 @@ export default function DashboardPage() {
           top: 0,
           left: 0,
           zIndex: 70,
-          width: sidebarOpen ? SIDEBAR_W + HAM_PAD + 44 : HAM_PAD + 44,
+          width: sidebarOpen ? SIDEBAR_W + 14 + 44 : 14 + 44,
           height: 72,
         }}
       >
@@ -332,7 +536,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ✅ SIDEBAR (oculta y aparece con hover) */}
       <aside
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
@@ -384,7 +587,9 @@ export default function DashboardPage() {
           <div className="label">Curso</div>
           <div style={{ fontWeight: 900 }}>{fixedCourseName}</div>
         </div>
+
         <ChangePasswordButton email={me?.user?.email} className="btn" />
+
         <div style={{ marginTop: 12 }}>
           <button className="btn" onClick={handleLogout} style={{ width: "100%" }}>
             Salir
@@ -392,7 +597,6 @@ export default function DashboardPage() {
         </div>
       </aside>
 
-      {/* ✅ CONTENIDO */}
       <main
         style={{
           marginLeft: sidebarOpen ? SIDEBAR_W : 0,
@@ -400,16 +604,20 @@ export default function DashboardPage() {
         }}
       >
         <div className="container">
-          <div className="topbar" style={{ alignItems: "center" }}>
+          <div
+            className="topbar dashboard-topbar"
+            style={{
+              alignItems: "center",
+              paddingLeft: topbarLeftPad,
+            }}
+          >
             <div className="brand">
               <div style={{ fontWeight: 900, fontSize: 18 }}>SOFIA · La Promesa</div>
               <div style={{ color: "var(--muted)" }}>Notas y asignaciones</div>
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <div className="btnLight">
-                Estudiante  · {me?.user?.email}
-              </div>
+              <div className="btnLight">Estudiante · {me?.user?.email}</div>
             </div>
           </div>
 
@@ -418,33 +626,124 @@ export default function DashboardPage() {
           <div
             style={{
               marginTop: 18,
-              display: "grid",
-              gridTemplateColumns: "1.2fr .8fr",
+              display: "flex",
+              flexDirection: "column",
               gap: 18,
-              alignItems: "start",
+              alignItems: "stretch",
             }}
           >
-            {/* IZQUIERDA */}
             <div className="card">
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                    marginBottom: 12,
-                  }}
-                >
-                  <h1 style={{ margin: "6px 0 6px", fontSize: 28, letterSpacing: "-0.02em" }}>
-                    Consultar notas
-                  </h1>
+              <h2 style={{ marginTop: 6 }}>
+                Resumen del año <span style={{ fontSize: "0.7em" }}>(Materias)</span>
+              </h2>
 
-                  <button type="button" onClick={loadSummary} className="btnLight">
-                    {summaryLoading ? "Cargando..." : "Refrescar"}
-                  </button>
+              {blockedByYear ? (
+                <div style={{ marginTop: 12, color: "var(--muted)", fontWeight: 800 }}>
+                  Sin notas para este año..
                 </div>
-              <div style={{ gridTemplateColumns: "220px 1fr 160px", gap: 12 }}>
+              ) : (
+                <div style={summaryGridStyle}>
+                  <div
+                    className="btnLight"
+                    style={{
+                      ...summaryBoxBase,
+                      position: "relative",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      aria-hidden
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        width: `${passPct}%`,
+                        background:
+                          "linear-gradient(180deg, rgba(34,197,94,.22), rgba(21,128,61,.18))",
+                      }}
+                    />
+                    <div className="summaryCardInner">
+                      <div className="summaryTitle">Pasadas</div>
+                      <div className="summaryValue">{summaryStats ? passed : "—"}</div>
+                    </div>
+                  </div>
+
+                  <div
+                    className="btnLight"
+                    style={{
+                      ...summaryBoxBase,
+                      position: "relative",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      aria-hidden
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        width: `${failPct}%`,
+                        background:
+                          "linear-gradient(180deg, rgba(239,68,68,.22), rgba(185,28,28,.18))",
+                      }}
+                    />
+                    <div className="summaryCardInner">
+                      <div className="summaryTitle">Perdidas</div>
+                      <div className="summaryValue">{summaryStats ? failed : "—"}</div>
+                    </div>
+                  </div>
+
+                  <div
+                    className="btnLight"
+                    style={{
+                      ...summaryBoxBase,
+                      border: "1px solid var(--stroke)",
+                    }}
+                  >
+                    <div className="summaryCardInner">
+                      <div className="summaryTitle">Promedio</div>
+                      <div
+                        className="summaryValue"
+                        style={{
+                          color: gradeTextColor(summaryStats?.avg_weighted ?? null),
+                        }}
+                      >
+                        {summaryStats?.avg_weighted === null || !summaryStats
+                          ? "—"
+                          : summaryStats.avg_weighted.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="card">
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  marginBottom: 12,
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <h1 style={{ margin: "6px 0 6px", fontSize: 28, letterSpacing: "-0.02em" }}>
+                  Consultar notas
+                </h1>
+
+                <button type="button" onClick={loadSummary} className="btnLight">
+                  {summaryLoading ? "Cargando..." : "Refrescar"}
+                </button>
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "220px 1fr 160px",
+                  gap: 12,
+                }}
+              >
                 <div>
-                  <div className="label">Año</div>
                   <select
                     className="select"
                     value={level}
@@ -459,13 +758,12 @@ export default function DashboardPage() {
 
                   {blockedByYear && (
                     <div style={{ marginTop: 8, color: "#b45309", fontWeight: 800, fontSize: 13 }}>
-                      Aún no ha cursado este año.
+                      Sin notas para este año..
                     </div>
                   )}
                 </div>
 
                 <div style={{ position: "relative" }}>
-
                   {openSug && (suggestions.length > 0 || loadingSug) && (
                     <div
                       style={{
@@ -483,85 +781,68 @@ export default function DashboardPage() {
                         backdropFilter: "blur(12px)",
                         WebkitBackdropFilter: "blur(12px)",
                       }}
-                    >
-                    </div>
+                    ></div>
                   )}
                 </div>
               </div>
 
               {blockedByYear ? (
                 <div style={{ marginTop: 18, color: "var(--muted)", fontWeight: 800 }}>
-                  Aún no ha cursado este año.
+                  Sin notas para este año..
                 </div>
               ) : (
                 <>
                   {!selectedClass && (
                     <div style={{ marginTop: 18 }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          gap: 12,
-                        }}
-                      >
-                        <div>
-                        </div>
-
-                      </div>
-
-                      <div
-                        style={{
-                          marginTop: 12,
-                          overflow: "hidden",
-                          borderRadius: 18,
-                          border: "1px solid var(--stroke)",
-                        }}
-                      >
-                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <div className="fit-table-shell">
+                        <table className="teacher-solid-table fit-table">
+                          <colgroup>
+                            <col style={{ width: "56%" }} />
+                            <col style={{ width: "20%" }} />
+                            <col style={{ width: "24%" }} />
+                          </colgroup>
                           <thead>
-                            <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                              <th style={{ textAlign: "left", padding: 12 }}>Materia</th>
-                              <th style={{ textAlign: "left", padding: 12, width: 120 }}>Nota</th>
-                              <th style={{ textAlign: "left", padding: 12, width: 140 }}></th>
+                            <tr>
+                              <th className="fit-th fit-wrap">Materia</th>
+                              <th className="fit-th fit-num fit-tight">Nota final</th>
+                              <th className="fit-th fit-num fit-tight">Acción</th>
                             </tr>
                           </thead>
                           <tbody>
                             {summaryLoading ? (
-                              <tr>
-                                <td colSpan={3} style={{ padding: 12, color: "var(--muted)" }}>
+                              <tr className="table-row-hover">
+                                <td colSpan={3} className="fit-td fit-wrap" style={{ color: "var(--muted)" }}>
                                   Cargando materias...
                                 </td>
                               </tr>
                             ) : summaryItems.length === 0 ? (
-                              <tr>
-                                <td colSpan={3} style={{ padding: 12, color: "var(--muted)" }}>
+                              <tr className="table-row-hover">
+                                <td colSpan={3} className="fit-td fit-wrap" style={{ color: "var(--muted)" }}>
                                   No hay materias/evaluaciones registradas para este año todavía.
                                 </td>
                               </tr>
                             ) : (
                               summaryItems.map((s) => (
-                                <tr
-                                  key={s.class_id}
-                                  style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}
-                                >
+                                <tr key={s.class_id} className="table-row-hover">
+                                  <td className="fit-td fit-wrap" style={{ fontWeight: 600 }}>
+                                    {s.name}
+                                  </td>
 
-                                  <td style={{ padding: 12, fontWeight: 600 }}>{s.name}</td>
                                   <td
+                                    className="fit-td fit-num"
                                     style={{
-                                      padding: 12,
                                       fontWeight: 700,
                                       color: gradeTextColor(s.weighted),
                                     }}
                                   >
                                     {s.weighted === null ? "—" : s.weighted.toFixed(2)}
                                   </td>
-                                  <td style={{ padding: 12 }}>
+
+                                  <td className="fit-td fit-num">
                                     <button
                                       type="button"
                                       onClick={() => handleConsult({ id: s.class_id, name: s.name })}
-                                      className="btn"
-                                      style={{ width: "100%", marginTop: 0 }}
+                                      className="btn fit-btn"
                                     >
                                       Detalle
                                     </button>
@@ -583,6 +864,7 @@ export default function DashboardPage() {
                           justifyContent: "space-between",
                           gap: 18,
                           alignItems: "flex-end",
+                          flexWrap: "wrap",
                         }}
                       >
                         <div>
@@ -604,48 +886,63 @@ export default function DashboardPage() {
                         </div>
                       </div>
 
-                      <div
-                        style={{
-                          marginTop: 12,
-                          overflow: "hidden",
-                          borderRadius: 18,
-                          border: "1px solid var(--stroke)",
-                        }}
-                      >
-                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <div className="fit-table-shell">
+                        <table className="teacher-solid-table fit-table">
+                          <colgroup>
+                            <col style={{ width: "18%" }} />
+                            <col style={{ width: "34%" }} />
+                            <col style={{ width: "8%" }} />
+                            <col style={{ width: "18%" }} />
+                            <col style={{ width: "22%" }} />
+                          </colgroup>
                           <thead>
-                            <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                              <th style={{ textAlign: "left", padding: 12 }}>Evaluación</th>
-                              <th style={{ textAlign: "left", padding: 12, width: 70 }}>%</th>
-                              <th style={{ textAlign: "left", padding: 12, width: 90 }}>Nota</th>
-                              <th style={{ textAlign: "left", padding: 12, width: 120 }}>Fecha</th>
+                            <tr>
+                              <th className="fit-th fit-wrap fit-tight">Tipo</th>
+                              <th className="fit-th fit-wrap fit-tight">Evaluación</th>
+                              <th className="fit-th fit-num fit-tight">%</th>
+                              <th className="fit-th fit-num fit-tight">Nota</th>
+                              <th className="fit-th fit-date fit-tight">Fecha</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {items.length === 0 ? (
-                              <tr>
-                                <td colSpan={4} style={{ padding: 12, color: "var(--muted)" }}>
+                            {loadingGrades ? (
+                              <tr className="table-row-hover">
+                                <td colSpan={5} className="fit-td fit-wrap" style={{ color: "var(--muted)" }}>
+                                  Cargando evaluaciones...
+                                </td>
+                              </tr>
+                            ) : items.length === 0 ? (
+                              <tr className="table-row-hover">
+                                <td colSpan={5} className="fit-td fit-wrap" style={{ color: "var(--muted)" }}>
                                   No hay evaluaciones/notas para esta materia en este año.
                                 </td>
                               </tr>
                             ) : (
                               items.map((it) => (
-                                <tr
-                                  key={it.exam_id}
-                                  style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}
-                                >
-                                  <td style={{ padding: 12, fontWeight: 900 }}>{it.title}</td>
-                                  <td style={{ padding: 12 }}>{Number(it.percent).toFixed(0)}%</td>
+                                <tr key={it.exam_id} className="table-row-hover">
+                                  <td className="fit-td fit-wrap" style={{ fontWeight: 700 }}>
+                                    {it.type}
+                                  </td>
+
+                                  <td className="fit-td fit-wrap" style={{ fontWeight: 900 }}>
+                                    {it.title}
+                                  </td>
+
+                                  <td className="fit-td fit-num">
+                                    {Number(it.percent).toFixed(0)}%
+                                  </td>
+
                                   <td
+                                    className="fit-td fit-num"
                                     style={{
-                                      padding: 12,
                                       fontWeight: 900,
                                       color: gradeTextColor(it.grade),
                                     }}
                                   >
                                     {it.grade === null ? "—" : Number(it.grade).toFixed(2)}
                                   </td>
-                                  <td style={{ padding: 12 }}>
+
+                                  <td className="fit-td fit-date">
                                     {it.finished_at
                                       ? new Date(it.finished_at).toLocaleDateString()
                                       : "—"}
@@ -683,125 +980,11 @@ export default function DashboardPage() {
                 </>
               )}
             </div>
-
-            {/* DERECHA */}
-            <div className="card">
-              <h2 style={{ marginTop: 6 }}>Resumen del año</h2>
-              <p style={{ marginTop: 0, color: "var(--muted)" }}>
-                Totales calculados con ponderado por materia.
-              </p>
-
-              {blockedByYear ? (
-                <div style={{ marginTop: 12, color: "var(--muted)", fontWeight: 800 }}>
-                  Aún no ha cursado este año.
-                </div>
-              ) : (
-                <>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: 12,
-                      marginTop: 12,
-                    }}
-                  >
-                    {/* ✅ PASADAS con “barra de progreso” en el background */}
-                    <div
-                      className="btnLight"
-                      style={{
-                        position: "relative",
-                        overflow: "hidden",
-                        borderRadius: 18,
-                      }}
-                    >
-                      <div
-                        aria-hidden
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          width: `${passPct}%`,
-                          background:
-                            "linear-gradient(180deg, rgba(34,197,94,.22), rgba(21,128,61,.18))",
-                        }}
-                      />
-                      <div style={{ position: "relative" }}>
-                        <div className="label">Materias pasadas</div>
-                        <div style={{ fontSize: 26, fontWeight: 900 }}>
-                          {summaryStats ? passed : "—"}
-                        </div>
-                        <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12, fontWeight: 800 }}>
-                          {summaryStats ? `${passPct}% del total` : "—"}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* ✅ PERDIDAS con “barra de progreso” en el background */}
-                    <div
-                      className="btnLight"
-                      style={{
-                        position: "relative",
-                        overflow: "hidden",
-                        borderRadius: 18,
-                      }}
-                    >
-                      <div
-                        aria-hidden
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          width: `${failPct}%`,
-                          background:
-                            "linear-gradient(180deg, rgba(239,68,68,.22), rgba(185,28,28,.18))",
-                        }}
-                      />
-                      <div style={{ position: "relative" }}>
-                        <div className="label">Materias perdidas</div>
-                        <div style={{ fontSize: 26, fontWeight: 900 }}>
-                          {summaryStats ? failed : "—"}
-                        </div>
-                        <div style={{ marginTop: 4, color: "var(--muted)", fontSize: 12, fontWeight: 800 }}>
-                          {summaryStats ? `${failPct}% del total` : "—"}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div
-                      className="btnLight"
-                      style={{
-                        gridColumn: "1 / span 2",
-                        padding: 14,
-                        borderRadius: 18,
-                        border: "1px solid var(--stroke)",
-                      }}
-                    >
-                      <div className="label">Promedio ponderado total</div>
-                      <div
-                        style={{
-                          fontSize: 26,
-                          fontWeight: 900,
-                          color: gradeTextColor(summaryStats?.avg_weighted ?? null),
-                        }}
-                      >
-                        {summaryStats?.avg_weighted === null || !summaryStats
-                          ? "—"
-                          : summaryStats.avg_weighted.toFixed(2)}
-                      </div>
-                      <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                        Umbral para “pasada”:{" "}
-                        {summaryStats ? summaryStats.pass_grade.toFixed(2) : "—"}
-                        {summaryStats?.pending ? ` · Pendientes: ${summaryStats.pending}` : ""}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* ✅ QUITADO: gráfica de barras de abajo */}
-                </>
-              )}
-            </div>
           </div>
         </div>
       </main>
-      <Footer rightText="Hecha para la Iglesia La Promesa." />
+
+      <Footer rightText="Desarrollado para la Iglesia La Promesa." />
     </div>
   );
 }
