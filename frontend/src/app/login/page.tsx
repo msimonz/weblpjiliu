@@ -1,17 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
 import { getRoles, roleLabelFromRole, type RoleCode } from "@/lib/roles";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
+import ChangePasswordButton from "@/components/ChangePasswordButton";
 
 export default function LoginPage() {
   const router = useRouter();
 
-  // logo desde Supabase Storage (para <Header mode="simple" />)
   const [logoUrl, setLogoUrl] = useState<string>("");
 
   useEffect(() => {
@@ -22,22 +22,38 @@ export default function LoginPage() {
   const [cedula, setCedula] = useState("");
   const [password, setPassword] = useState("");
   const [cedulaHint, setCedulaHint] = useState("");
-
-  // ✅ mostrar/ocultar contraseña
   const [showPw, setShowPw] = useState(false);
-
-  // ✅ rol elegido
   const [rolePick, setRolePick] = useState<RoleCode>("S");
-
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
+  // Recuperación de contraseña
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetEmailError, setResetEmailError] = useState("");
+  const [sendingReset, setSendingReset] = useState(false);
+  const changePwRef = useRef<HTMLDivElement | null>(null);
 
   const roleToRoute = (role: RoleCode) => {
     if (role === "A") return "/admin";
     if (role === "T") return "/teacher";
     return "/dashboard";
   };
+
+  async function resolveEmailByCedula(cedulaValue: string) {
+    const c = cedulaValue.trim();
+    if (!c) throw new Error("Ingresa tu cédula");
+
+    const resolved = await apiFetch("/api/auth/resolve-login", {
+      method: "POST",
+      body: JSON.stringify({ cedula: c }),
+    });
+
+    const email = resolved?.email;
+    if (!email) throw new Error("No se encontró email para esa cédula");
+
+    return email as string;
+  }
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -49,23 +65,14 @@ export default function LoginPage() {
 
     setLoading(true);
     try {
-      // 1) resolver cédula -> email real
-      const resolved = await apiFetch("/api/auth/resolve-login", {
-        method: "POST",
-        body: JSON.stringify({ cedula: c }),
-      });
+      const email = await resolveEmailByCedula(c);
 
-      const email = resolved?.email;
-      if (!email) throw new Error("No se encontró email para esa cédula");
-
-      // 2) login en supabase con email+password
       const { error: authErr } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
       if (authErr) throw new Error("Cédula o contraseña incorrectas");
 
-      // 3) validar roles reales contra el rol seleccionado
       const info = await apiFetch("/api/auth/me");
       const roles = getRoles(info);
 
@@ -74,7 +81,6 @@ export default function LoginPage() {
         throw new Error(`No tienes el rol "${roleLabelFromRole(rolePick)}" asignado.`);
       }
 
-      // 4) guardar rol activo y redirigir
       localStorage.setItem("active_role", rolePick);
       router.replace(roleToRoute(rolePick));
     } catch (err: any) {
@@ -84,139 +90,463 @@ export default function LoginPage() {
     }
   }
 
+  function openForgotPasswordModal() {
+    setResetEmail("");
+    setResetEmailError("");
+    setShowForgotModal(true);
+  }
+
+  function closeForgotPasswordModal() {
+    if (sendingReset) return;
+    setShowForgotModal(false);
+    setResetEmailError("");
+  }
+
+  function isValidEmail(value: string) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+  }
+
+  function handleSendResetEmail() {
+    setResetEmailError("");
+    setError(null);
+
+    const email = resetEmail.trim();
+
+    if (!email) {
+      setResetEmailError("Ingresa tu correo electrónico");
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      setResetEmailError("Ingresa un correo electrónico válido");
+      return;
+    }
+
+    setSendingReset(true);
+
+    setTimeout(() => {
+      const btn = changePwRef.current?.querySelector("button");
+      if (btn) {
+        btn.click();
+        setShowForgotModal(false);
+      } else {
+        setResetEmailError("No fue posible iniciar la recuperación");
+      }
+      setSendingReset(false);
+    }, 0);
+  }
+
   const HEADER_H = 82;
 
   return (
     <div
       style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        padding: 20,
+        minHeight: "100dvh",
+        width: "100%",
+        maxWidth: "100vw",
+        overflowX: "clip",
+        display: "flex",
+        flexDirection: "column",
+        boxSizing: "border-box",
+        position: "relative",
       }}
     >
-      {/* ✅ Header global (dark-ready) */}
-      <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 80 }}>
+      <div
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 80,
+          width: "100%",
+          maxWidth: "100vw",
+        }}
+      >
         <Header logoUrl={logoUrl} />
       </div>
 
-      {/* ✅ LOGIN CARD (bajado para no chocar con el header fixed) */}
-      <div
-        className="container"
+      <main
         style={{
-          minHeight: "80vh",
-          display: "grid",
-          placeItems: "center",
-          paddingTop: HEADER_H,
+          flex: 1,
+          width: "100%",
+          maxWidth: "100vw",
+          overflowX: "clip",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          paddingTop: `calc(env(safe-area-inset-top, 0px) + ${HEADER_H}px + 12px)`,
+          paddingBottom: 24,
+          paddingLeft: 16,
+          paddingRight: 16,
+          boxSizing: "border-box",
         }}
       >
-        <div className="card" style={{ width: 420 }}>
-          <h1 style={{ margin: "6px 0 6px", fontSize: 28, letterSpacing: "-0.02em" }}>
-            Iniciar sesión
-          </h1>
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 400,
+            margin: "0 auto",
+            boxSizing: "border-box",
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              width: "100%",
+              maxWidth: "100%",
+              boxSizing: "border-box",
+              padding: "18px 16px",
+              borderRadius: 18,
+              overflow: "hidden",
+            }}
+          >
+            <h1
+              style={{
+                margin: "0 0 6px",
+                fontSize: "clamp(24px, 6vw, 28px)",
+                lineHeight: 1.1,
+                letterSpacing: "-0.02em",
+              }}
+            >
+              Iniciar sesión
+            </h1>
 
-          {error && <div className="msgError">{error}</div>}
+           
 
-          <form onSubmit={handleLogin} style={{ marginTop: 14, display: "grid", gap: 12 }}>
-            <div>
-              <div className="label">Rol</div>
-              <select
-                className="select"
-                value={rolePick}
-                onChange={(e) => setRolePick(e.target.value as RoleCode)}
-              >
-                <option value="S">Estudiante</option>
-                <option value="T">Profesor</option>
-                <option value="A">Admin</option>
-              </select>
-            </div>
-
-            <div>
-              <div className="label">Cédula</div>
-              <input
-                className="input"
-                type="text"
-                value={cedula}
-                onChange={(e) => {
-                  const value = e.target.value;
-
-                  if (/^\d*$/.test(value)) {
-                    setCedula(value);
-                    setCedulaHint("");
-                  } else {
-                    setCedula(value.replace(/\D/g, ""));
-                    setCedulaHint("Solo puedes ingresar números en la cédula");
-                  }
+            {error && (
+              <div
+                className="msgError"
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  marginBottom: 10,
                 }}
-                placeholder="Ej: 1020304050"
-                inputMode="numeric"
-                autoComplete="username"
-                pattern="[0-9]*"
-                maxLength={15}
-              />
+              >
+                {error}
+              </div>
+            )}
 
-              {cedulaHint && (
-                <div style={{ marginTop: 6, color: "#d32f2f", fontSize: 13 }}>
-                  {cedulaHint}
-                </div>
-              )}
-            </div>
+            <form
+              onSubmit={handleLogin}
+              style={{
+                marginTop: 4,
+                display: "grid",
+                gap: 12,
+                width: "100%",
+              }}
+            >
+              <div style={{ width: "100%" }}>
 
-            {/* ✅ Contraseña con ojito */}
-            <div>
-              <div className="label">Contraseña</div>
-
-              <div style={{ position: "relative" }}>
-                <input
-                  className="input"
-                  type={showPw ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Tu contraseña"
-                  autoComplete="current-password"
-                  style={{ paddingRight: 52 }}
-                />
-
-                <button
-                  type="button"
-                  onClick={() => setShowPw((v) => !v)}
-                  aria-label={showPw ? "Ocultar contraseña" : "Mostrar contraseña"}
-                  title={showPw ? "Ocultar" : "Mostrar"}
+                <select
+                  className="select"
+                  value={rolePick}
+                  onChange={(e) => setRolePick(e.target.value as RoleCode)}
                   style={{
-                    position: "absolute",
-                    right: 10,
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    width: 38,
-                    height: 38,
-                    borderRadius: 12,
-                    border: "1px solid var(--btn-light-border)",
-                    background: "var(--btn-light-bg)",
-                    color: "var(--btn-light-text)",
-                    boxShadow: "var(--btn-light-shadow)",
-                    cursor: "pointer",
-                    display: "grid",
-                    placeItems: "center",
-                    padding: 0,
+                    width: "100%",
+                    minHeight: 46,
+                    boxSizing: "border-box",
+                    fontSize: 16,
                   }}
                 >
-                  <span style={{ fontSize: 16, lineHeight: 1 }}>{showPw ? "🙈" : "👁️"}</span>
-                </button>
+                  <option value="S">Estudiante</option>
+                  <option value="T">Profesor</option>
+                  <option value="A">Admin</option>
+                </select>
               </div>
+
+              <div style={{ width: "100%" }}>
+                <div className="label" style={{ marginBottom: 6, fontSize: 14 }}>
+                  Cédula
+                </div>
+                <input
+                  className="input"
+                  type="text"
+                  value={cedula}
+                  onChange={(e) => {
+                    const value = e.target.value;
+
+                    if (/^\d*$/.test(value)) {
+                      setCedula(value);
+                      setCedulaHint("");
+                    } else {
+                      setCedula(value.replace(/\D/g, ""));
+                      setCedulaHint("Solo puedes ingresar números en la cédula");
+                    }
+                  }}
+                  placeholder="Ej: 1020304050"
+                  inputMode="numeric"
+                  autoComplete="username"
+                  pattern="[0-9]*"
+                  maxLength={15}
+                  style={{
+                    width: "100%",
+                    minHeight: 46,
+                    boxSizing: "border-box",
+                    fontSize: 16,
+                  }}
+                />
+
+                {cedulaHint && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      color: "#d32f2f",
+                      fontSize: 13,
+                      lineHeight: 1.3,
+                    }}
+                  >
+                    {cedulaHint}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ width: "100%" }}>
+                <div className="label" style={{ marginBottom: 6, fontSize: 14 }}>
+                  Contraseña
+                </div>
+
+                <div
+                  style={{
+                    position: "relative",
+                    width: "100%",
+                  }}
+                >
+                  <input
+                    className="input"
+                    type={showPw ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Tu contraseña"
+                    autoComplete="current-password"
+                    style={{
+                      width: "100%",
+                      minHeight: 46,
+                      boxSizing: "border-box",
+                      fontSize: 16,
+                      paddingRight: 52,
+                    }}
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setShowPw((v) => !v)}
+                    aria-label={showPw ? "Ocultar contraseña" : "Mostrar contraseña"}
+                    title={showPw ? "Ocultar" : "Mostrar"}
+                    style={{
+                      position: "absolute",
+                      right: 8,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      width: 34,
+                      height: 34,
+                      borderRadius: 10,
+                      border: "1px solid var(--btn-light-border)",
+                      background: "var(--btn-light-bg)",
+                      color: "var(--btn-light-text)",
+                      boxShadow: "var(--btn-light-shadow)",
+                      cursor: "pointer",
+                      display: "grid",
+                      placeItems: "center",
+                      padding: 0,
+                    }}
+                  >
+                    <span style={{ fontSize: 15, lineHeight: 1 }}>
+                      {showPw ? "🙈" : "👁️"}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <button
+                className="btn"
+                type="submit"
+                disabled={loading}
+                style={{
+                  width: "100%",
+                  minHeight: 46,
+                  boxSizing: "border-box",
+                  marginTop: 2,
+                  fontSize: 15,
+                }}
+              >
+                {loading ? "Ingresando..." : "Ingresar"}
+              </button>
+            </form>
+
+            <div
+              style={{
+                marginTop: 12,
+                fontSize: 13,
+                lineHeight: 1.35,
+                textAlign: "center",
+              }}
+            >
+              <button
+                type="button"
+                onClick={openForgotPasswordModal}
+                style={{
+                  background: "transparent",
+                  border: 0,
+                  padding: 0,
+                  margin: 0,
+                  color: "var(--primary)",
+                  textDecoration: "underline",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                ¿Olvidó su contraseña?
+              </button>
             </div>
 
-            <button className="btn" type="submit" disabled={loading} style={{ width: "100%" }}>
-              {loading ? "Ingresando..." : "Ingresar"}
-            </button>
-          </form>
-
-          <div style={{ marginTop: 14, color: "var(--muted)", fontSize: 13 }}>
-            Si no tienes acceso o olvidaste tu contraseña, contacta al administrador.
+            {/* Botón oculto reutilizando ChangePasswordButton */}
+            <div
+              ref={changePwRef}
+              style={{
+                position: "absolute",
+                width: 0,
+                height: 0,
+                overflow: "hidden",
+                opacity: 0,
+                pointerEvents: "none",
+              }}
+            >
+              {resetEmail ? (
+                <ChangePasswordButton email={resetEmail} className="btn" />
+              ) : null}
+            </div>
           </div>
         </div>
+      </main>
+
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "100vw",
+          overflowX: "clip",
+        }}
+      >
+        <Footer rightText="Hecho para la Iglesia La Promesa." />
       </div>
 
-      <Footer rightText="Hecho para la Iglesia La Promesa." />
+      {/* Modal recuperar contraseña */}
+      {showForgotModal && (
+        <div
+          onClick={closeForgotPasswordModal}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 200,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            boxSizing: "border-box",
+          }}
+        >
+          <div
+            className="card"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 380,
+              borderRadius: 18,
+              padding: "18px 16px",
+              boxSizing: "border-box",
+            }}
+          >
+            <h2
+              style={{
+                margin: "0 0 8px",
+                fontSize: 16,
+                lineHeight: 1.15,
+                letterSpacing: "-0.02em",
+              }}
+            >
+               Recuperar contraseña
+            </h2>
+
+       
+
+            <div style={{ width: "100%" }}>
+
+              <input
+                className="input"
+                type="email"
+                value={resetEmail}
+                onChange={(e) => {
+                  setResetEmail(e.target.value);
+                  setResetEmailError("");
+                }}
+                placeholder="Correo"
+                autoComplete="email"
+                style={{
+                  width: "100%",
+                  minHeight: 46,
+                  boxSizing: "border-box",
+                  fontSize: 16,
+                }}
+              />
+            </div>
+
+            {resetEmailError && (
+              <div
+                style={{
+                  marginTop: 8,
+                  color: "#d32f2f",
+                  fontSize: 13,
+                  lineHeight: 1.3,
+                }}
+              >
+                {resetEmailError}
+              </div>
+            )}
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 10,
+                marginTop: 16,
+              }}
+            >
+              <button
+                type="button"
+                onClick={closeForgotPasswordModal}
+                disabled={sendingReset}
+                style={{
+                  minHeight: 44,
+                  borderRadius: 12,
+                  border: "1px solid var(--btn-light-border)",
+                  background: "var(--btn-light-bg)",
+                  color: "var(--btn-light-text)",
+                  cursor: "pointer",
+                  fontSize: 14,
+                  fontWeight: 600,
+                }}
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSendResetEmail}
+                disabled={sendingReset}
+                className="btn"
+                style={{
+                  width: "100%",
+                  minHeight: 44,
+                  fontSize: 14,
+                }}
+              >
+                {sendingReset ? "Enviando..." : "Enviar correo"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
