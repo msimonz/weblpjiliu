@@ -214,7 +214,7 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
   // evaluaciones de esa materia en el course REAL del estudiante
   const { data: evals, error: evalErr } = await supabaseAdmin
     .from("evaluation")
-    .select("id,title,percent,created_at")
+    .select("id,title,percent,created_at,id_type")
     .eq("id_course", course.id)
     .eq("id_class", classId)
     .order("created_at", { ascending: true });
@@ -227,6 +227,30 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
   }
 
   const evalIds = evaluations.map((e) => e.id);
+
+  // tipos usados por esas evaluaciones
+  const typeIds = [
+    ...new Set(
+      evaluations
+        .map((ev) => ev.id_type)
+        .filter((v) => v !== null && v !== undefined)
+    ),
+  ];
+
+  const typeMap = new Map();
+
+  if (typeIds.length > 0) {
+    const { data: typeRows, error: typeErr } = await supabaseAdmin
+      .from("evaluation_type")
+      .select("id,type")
+      .in("id", typeIds);
+
+    if (typeErr) return res.status(500).json({ error: typeErr.message });
+
+    for (const t of typeRows || []) {
+      typeMap.set(String(t.id), t.type);
+    }
+  }
 
   // notas del estudiante para esos exámenes
   const { data: gradeRows, error: gradesErr } = await supabaseAdmin
@@ -242,8 +266,15 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
 
   const items = evaluations.map((ev) => {
     const g = gradeMap.get(ev.id) || null;
+
+    const resolvedType =
+      ev.id_type !== null && ev.id_type !== undefined
+        ? typeMap.get(String(ev.id_type)) || "no encontrado"
+        : "no encontrado";
+
     return {
       exam_id: ev.id,
+      type: resolvedType,
       title: ev.title,
       percent: Number(ev.percent ?? 0),
       grade: g ? Number(g.grade ?? 0) : null,
