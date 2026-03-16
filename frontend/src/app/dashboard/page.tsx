@@ -238,10 +238,6 @@ export default function DashboardPage() {
   const passed = summaryStats?.passed ?? 0;
   const failed = summaryStats?.failed ?? 0;
 
-  const totalPF = passed + failed;
-  const passPct = totalPF > 0 ? Math.round((passed / totalPF) * 100) : 0;
-  const failPct = totalPF > 0 ? Math.round((failed / totalPF) * 100) : 0;
-
   const fixedCourseName = useMemo(() => {
     return studentCourseFixed?.name ?? "—";
   }, [studentCourseFixed]);
@@ -253,24 +249,13 @@ export default function DashboardPage() {
   const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
   const topbarLeftPad = sidebarOpen ? 18 : 58;
 
-  const summaryGridStyle: React.CSSProperties = {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-    gap: 12,
-    marginTop: 12,
-    alignItems: "stretch",
-  };
-
-  const summaryBoxBase: React.CSSProperties = {
-    borderRadius: 18,
-    minHeight: 0,
-    display: "flex",
-    alignItems: "center",
-    minWidth: 0,
-  };
-
   return (
-    <div>
+    <div
+      style={{
+        fontFamily:
+          '"Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif',
+      }}
+    >
       <style jsx>{`
         .teacher-solid-table {
           --table-head-bg: #0f172a;
@@ -302,11 +287,13 @@ export default function DashboardPage() {
           opacity: 1 !important;
           backdrop-filter: none !important;
           -webkit-backdrop-filter: none !important;
+          font-weight: 600 !important;
         }
 
         .teacher-solid-table tbody tr.table-row-hover > td {
           transition: background-color 120ms ease;
           line-height: 1.15;
+          font-weight: 400;
         }
 
         .teacher-solid-table tbody tr.table-row-hover:hover > td {
@@ -319,6 +306,14 @@ export default function DashboardPage() {
           border-radius: 18px;
           border: 1px solid var(--stroke);
           background: var(--card);
+        }
+
+        .fit-table-shell-flat {
+          margin-top: 12px;
+          overflow-x: hidden;
+          border-radius: 0;
+          border: 0;
+          background: transparent;
         }
 
         .fit-table {
@@ -361,40 +356,20 @@ export default function DashboardPage() {
         .fit-btn {
           width: 100%;
           margin-top: 0;
-          padding: 6px 10px;
+          padding: 0 10px;
+          height: 30px;
           min-height: 30px;
           line-height: 1;
           font-size: 12px;
+          font-weight: 600;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
         }
 
-        .summaryCardInner {
-          position: relative;
-          width: 100%;
-          padding: 8px 10px;
-          min-width: 0;
-        }
-
-        .summaryTitle {
-          font-size: 12px;
-          font-weight: 800;
-          line-height: 1.05;
-          word-break: break-word;
-        }
-
-        .summaryValue {
-          font-size: 22px;
-          font-weight: 900;
-          line-height: 1;
-          margin-top: 3px;
-          word-break: break-word;
-        }
-
-        .summaryMeta {
-          margin-top: 3px;
-          color: var(--muted);
-          font-size: 9px;
-          line-height: 1.05;
-          word-break: break-word;
+        .summaryHeadText {
+          font-size: 15.5px !important;
+          font-weight: 600 !important;
         }
 
         .dashboard-topbar {
@@ -411,6 +386,124 @@ export default function DashboardPage() {
           white-space: normal;
           word-break: normal;
           overflow-wrap: normal;
+          font-weight: 700 !important;
+        }
+
+        .dashboard-topbar .brand > div:last-child {
+          font-weight: 400;
+        }
+
+        .topbarUserText {
+          color: var(--muted);
+          font-size: 13px;
+          font-weight: 500;
+          line-height: 1.2;
+          text-align: right;
+          word-break: break-word;
+        }
+
+        .flatSection {
+          padding: 0;
+          margin: 0;
+          background: transparent;
+          border: 0;
+          box-shadow: none;
+        }
+
+        .flatSection + .flatSection {
+          margin-top: 24px;
+        }
+
+        .sectionTitle {
+          margin: 0 0 8px;
+          font-size: 16px;
+          line-height: 1.05;
+          letter-spacing: -0.01em;
+          font-weight: 700;
+        }
+
+        .sectionSubtitle {
+          margin: 0;
+          font-size: 24px;
+          line-height: 1.1;
+          font-weight: 700;
+        }
+
+        .sectionMinor {
+          margin-left: 4px;
+          font-size: 0.7em;
+          font-weight: 500;
+        }
+
+        .yearRefreshRow {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 12px;
+          align-items: stretch;
+          margin-top: 10px;
+        }
+
+        .yearSelectWrap {
+          min-width: 0;
+          width: 100%;
+        }
+
+        .yearSelectWrap .select {
+          width: 100%;
+          min-width: 0;
+          height: 30px;
+          min-height: 30px;
+          padding-top: 0;
+          padding-bottom: 0;
+          line-height: 1;
+          font-weight: 400;
+        }
+
+        .yearRefreshBtn {
+          white-space: nowrap;
+          min-width: 118px;
+          height: 30px;
+          min-height: 30px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          align-self: center;
+          margin: 0;
+          padding: 0 12px;
+          line-height: 1;
+          font-size: 12px;
+          font-weight: 600;
+        }
+
+        .actionBtn {
+          background: linear-gradient(180deg, #22c7ff 0%, #0ea5e9 100%) !important;
+          color: #ffffff !important;
+          border: 1px solid rgba(56, 189, 248, 0.82) !important;
+          box-shadow: 0 10px 24px rgba(2, 132, 199, 0.22);
+          transition:
+            transform 120ms ease,
+            filter 120ms ease,
+            box-shadow 120ms ease,
+            border-color 120ms ease;
+          font-weight: 600 !important;
+        }
+
+        .actionBtn:hover {
+          filter: brightness(1.05);
+          box-shadow: 0 14px 30px rgba(2, 132, 199, 0.28);
+          border-color: rgba(125, 211, 252, 0.95) !important;
+        }
+
+        .actionBtn:active {
+          transform: translateY(1px);
+        }
+
+        .actionBtn:disabled {
+          opacity: 0.72;
+          cursor: not-allowed;
+          transform: none;
+          filter: none;
+          box-shadow: 0 6px 16px rgba(2, 132, 199, 0.16);
         }
 
         @media (max-width: 768px) {
@@ -426,7 +519,8 @@ export default function DashboardPage() {
           }
 
           .fit-btn {
-            padding: 5px 4px;
+            padding: 0 6px;
+            height: 28px;
             min-height: 28px;
             font-size: 10px;
           }
@@ -435,25 +529,8 @@ export default function DashboardPage() {
             letter-spacing: -0.01em;
           }
 
-          .summaryCardInner {
-            padding: 6px 7px;
-          }
-
-          .summaryTitle {
-            font-size: 9px;
-            line-height: 1;
-          }
-
-          .summaryValue {
-            font-size: 15px;
-            line-height: 1;
-            margin-top: 2px;
-          }
-
-          .summaryMeta {
-            font-size: 7px;
-            line-height: 1;
-            margin-top: 2px;
+          .summaryHeadText {
+            font-size: 12px !important;
           }
 
           .dashboard-topbar {
@@ -472,6 +549,38 @@ export default function DashboardPage() {
           .dashboard-topbar .brand > div:last-child {
             font-size: 12px !important;
             line-height: 1.15;
+          }
+
+          .topbarUserText {
+            font-size: 12px;
+            text-align: left;
+          }
+
+          .sectionTitle {
+            font-size: 14px;
+          }
+
+          .sectionSubtitle {
+            font-size: 20px;
+          }
+
+          .yearRefreshRow {
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 10px;
+          }
+
+          .yearSelectWrap .select {
+            height: 28px;
+            min-height: 28px;
+            font-size: 10px;
+          }
+
+          .yearRefreshBtn {
+            min-width: 102px;
+            height: 28px;
+            min-height: 28px;
+            padding: 0 10px;
+            font-size: 10px;
           }
         }
       `}</style>
@@ -558,14 +667,16 @@ export default function DashboardPage() {
           color: "var(--text)",
         }}
       >
-        <div style={{ fontWeight: 900, fontSize: 18 }}>Perfil del estudiante</div>
-        <div style={{ color: "var(--muted)", marginTop: 4, fontSize: 13 }}>
+        <div style={{ fontWeight: 700, fontSize: 18 }}>Perfil del estudiante</div>
+        <div style={{ color: "var(--muted)", marginTop: 4, fontSize: 13, fontWeight: 400 }}>
           Datos del usuario autenticado
         </div>
 
         <div style={{ marginTop: 14 }}>
-          <div className="label">Nombre</div>
-          <div style={{ fontWeight: 900 }}>
+          <div className="label" style={{ fontWeight: 500 }}>
+            Nombre
+          </div>
+          <div style={{ fontWeight: 600 }}>
             {me?.profile?.name ??
               me?.profile?.full_name ??
               me?.user?.user_metadata?.full_name ??
@@ -574,24 +685,30 @@ export default function DashboardPage() {
         </div>
 
         <div style={{ marginTop: 10 }}>
-          <div className="label">Email</div>
-          <div style={{ fontWeight: 900, wordBreak: "break-word" }}>{me?.user?.email ?? "—"}</div>
+          <div className="label" style={{ fontWeight: 500 }}>
+            Email
+          </div>
+          <div style={{ fontWeight: 500, wordBreak: "break-word" }}>{me?.user?.email ?? "—"}</div>
         </div>
 
         <div style={{ marginTop: 10 }}>
-          <div className="label">Rol</div>
-          <div style={{ fontWeight: 900 }}>{roleLabelFromRole(primaryRole(me))}</div>
+          <div className="label" style={{ fontWeight: 500 }}>
+            Rol
+          </div>
+          <div style={{ fontWeight: 600 }}>{roleLabelFromRole(primaryRole(me))}</div>
         </div>
 
         <div style={{ marginTop: 10, marginBottom: 20 }}>
-          <div className="label">Curso</div>
-          <div style={{ fontWeight: 900 }}>{fixedCourseName}</div>
+          <div className="label" style={{ fontWeight: 500 }}>
+            Curso
+          </div>
+          <div style={{ fontWeight: 600 }}>{fixedCourseName}</div>
         </div>
 
-        <ChangePasswordButton email={me?.user?.email} className="btn" />
+        <ChangePasswordButton email={me?.user?.email} className="btn actionBtn" />
 
         <div style={{ marginTop: 12 }}>
-          <button className="btn" onClick={handleLogout} style={{ width: "100%" }}>
+          <button className="btn actionBtn" onClick={handleLogout} style={{ width: "100%" }}>
             Salir
           </button>
         </div>
@@ -612,138 +729,93 @@ export default function DashboardPage() {
             }}
           >
             <div className="brand">
-              <div style={{ fontWeight: 900, fontSize: 18 }}>SOFIA · La Promesa</div>
+              <div style={{ fontSize: 18 }}>SOFIA · La Promesa</div>
               <div style={{ color: "var(--muted)" }}>Notas y asignaciones</div>
             </div>
 
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <div className="btnLight">Estudiante · {me?.user?.email}</div>
-            </div>
+            <div className="topbarUserText">Estudiante · {me?.user?.email}</div>
           </div>
 
           {error && <div className="msgError">{error}</div>}
 
           <div
             style={{
-              marginTop: 18,
+              marginTop: 16,
               display: "flex",
               flexDirection: "column",
-              gap: 18,
+              gap: 20,
               alignItems: "stretch",
             }}
           >
-            <div className="card">
-              <h2 style={{ marginTop: 6 }}>
-                Resumen del año <span style={{ fontSize: "0.7em" }}>(Materias)</span>
+            <section className="flatSection">
+              <h2 className="sectionSubtitle">
+                Resumen del año <span className="sectionMinor">(Materias)</span>
               </h2>
 
               {blockedByYear ? (
-                <div style={{ marginTop: 12, color: "var(--muted)", fontWeight: 800 }}>
+                <div style={{ marginTop: 12, color: "var(--muted)", fontWeight: 500 }}>
                   Sin notas para este año..
                 </div>
               ) : (
-                <div style={summaryGridStyle}>
-                  <div
-                    className="btnLight"
-                    style={{
-                      ...summaryBoxBase,
-                      position: "relative",
-                      overflow: "hidden",
-                    }}
-                  >
-                    <div
-                      aria-hidden
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        width: `${passPct}%`,
-                        background:
-                          "linear-gradient(180deg, rgba(34,197,94,.22), rgba(21,128,61,.18))",
-                      }}
-                    />
-                    <div className="summaryCardInner">
-                      <div className="summaryTitle">Pasadas</div>
-                      <div className="summaryValue">{summaryStats ? passed : "—"}</div>
-                    </div>
-                  </div>
+                <div className="fit-table-shell-flat">
+                  <table className="teacher-solid-table fit-table">
+                    <colgroup>
+                      <col style={{ width: "33.33%" }} />
+                      <col style={{ width: "33.33%" }} />
+                      <col style={{ width: "33.34%" }} />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th className="fit-th fit-num fit-tight summaryHeadText">Pasadas</th>
+                        <th className="fit-th fit-num fit-tight summaryHeadText">Perdidas</th>
+                        <th className="fit-th fit-num fit-tight summaryHeadText">Promedio</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="table-row-hover">
+                        <td
+                          className="fit-td fit-num"
+                          style={{
+                            fontWeight: 900,
+                            color: passed > 0 ? "rgb(21,128,61)" : "inherit",
+                          }}
+                        >
+                          {summaryStats ? passed : "—"}
+                        </td>
 
-                  <div
-                    className="btnLight"
-                    style={{
-                      ...summaryBoxBase,
-                      position: "relative",
-                      overflow: "hidden",
-                    }}
-                  >
-                    <div
-                      aria-hidden
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        width: `${failPct}%`,
-                        background:
-                          "linear-gradient(180deg, rgba(239,68,68,.22), rgba(185,28,28,.18))",
-                      }}
-                    />
-                    <div className="summaryCardInner">
-                      <div className="summaryTitle">Perdidas</div>
-                      <div className="summaryValue">{summaryStats ? failed : "—"}</div>
-                    </div>
-                  </div>
+                        <td
+                          className="fit-td fit-num"
+                          style={{
+                            fontWeight: 800,
+                            color: failed > 0 ? "rgb(185,28,28)" : "inherit",
+                          }}
+                        >
+                          {summaryStats ? failed : "—"}
+                        </td>
 
-                  <div
-                    className="btnLight"
-                    style={{
-                      ...summaryBoxBase,
-                      border: "1px solid var(--stroke)",
-                    }}
-                  >
-                    <div className="summaryCardInner">
-                      <div className="summaryTitle">Promedio</div>
-                      <div
-                        className="summaryValue"
-                        style={{
-                          color: gradeTextColor(summaryStats?.avg_weighted ?? null),
-                        }}
-                      >
-                        {summaryStats?.avg_weighted === null || !summaryStats
-                          ? "—"
-                          : summaryStats.avg_weighted.toFixed(2)}
-                      </div>
-                    </div>
-                  </div>
+                        <td
+                          className="fit-td fit-num"
+                          style={{
+                            fontWeight: 700,
+                            color: gradeTextColor(summaryStats?.avg_weighted ?? null),
+                          }}
+                        >
+                          {summaryStats?.avg_weighted === null || !summaryStats
+                            ? "—"
+                            : summaryStats.avg_weighted.toFixed(2)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               )}
-            </div>
+            </section>
 
-            <div className="card">
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  marginBottom: 12,
-                  gap: 12,
-                  flexWrap: "wrap",
-                }}
-              >
-                <h1 style={{ margin: "6px 0 6px", fontSize: 28, letterSpacing: "-0.02em" }}>
-                  Consultar notas
-                </h1>
+            <section className="flatSection">
+              <h1 className="sectionTitle">Consultar notas</h1>
 
-                <button type="button" onClick={loadSummary} className="btnLight">
-                  {summaryLoading ? "Cargando..." : "Refrescar"}
-                </button>
-              </div>
-
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "220px 1fr 160px",
-                  gap: 12,
-                }}
-              >
-                <div>
+              <div className="yearRefreshRow">
+                <div className="yearSelectWrap">
                   <select
                     className="select"
                     value={level}
@@ -757,44 +829,52 @@ export default function DashboardPage() {
                   </select>
 
                   {blockedByYear && (
-                    <div style={{ marginTop: 8, color: "#b45309", fontWeight: 800, fontSize: 13 }}>
+                    <div style={{ marginTop: 8, color: "#b45309", fontWeight: 500, fontSize: 13 }}>
                       Sin notas para este año..
                     </div>
                   )}
                 </div>
 
-                <div style={{ position: "relative" }}>
-                  {openSug && (suggestions.length > 0 || loadingSug) && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        zIndex: 20,
-                        left: 0,
-                        right: 0,
-                        top: 76,
-                        border: "1px solid var(--stroke2)",
-                        borderRadius: 16,
-                        overflow: "hidden",
-                        boxShadow: "0 18px 45px rgba(2,132,199,.10)",
-                        background: "var(--card)",
-                        color: "var(--text)",
-                        backdropFilter: "blur(12px)",
-                        WebkitBackdropFilter: "blur(12px)",
-                      }}
-                    ></div>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  onClick={loadSummary}
+                  className="btn actionBtn yearRefreshBtn"
+                >
+                  {summaryLoading ? "Cargando..." : "Refrescar"}
+                </button>
+              </div>
+
+              <div style={{ position: "relative" }}>
+                {openSug && (suggestions.length > 0 || loadingSug) && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      zIndex: 20,
+                      left: 0,
+                      right: 0,
+                      top: 12,
+                      border: "1px solid var(--stroke2)",
+                      borderRadius: 16,
+                      overflow: "hidden",
+                      boxShadow: "0 18px 45px rgba(2,132,199,.10)",
+                      background: "var(--card)",
+                      color: "var(--text)",
+                      backdropFilter: "blur(12px)",
+                      WebkitBackdropFilter: "blur(12px)",
+                    }}
+                  ></div>
+                )}
               </div>
 
               {blockedByYear ? (
-                <div style={{ marginTop: 18, color: "var(--muted)", fontWeight: 800 }}>
+                <div style={{ marginTop: 18, color: "var(--muted)", fontWeight: 500 }}>
                   Sin notas para este año..
                 </div>
               ) : (
                 <>
                   {!selectedClass && (
-                    <div style={{ marginTop: 18 }}>
-                      <div className="fit-table-shell">
+                    <div style={{ marginTop: 16 }}>
+                      <div className="fit-table-shell-flat">
                         <table className="teacher-solid-table fit-table">
                           <colgroup>
                             <col style={{ width: "56%" }} />
@@ -805,7 +885,7 @@ export default function DashboardPage() {
                             <tr>
                               <th className="fit-th fit-wrap">Materia</th>
                               <th className="fit-th fit-num fit-tight">Nota final</th>
-                              <th className="fit-th fit-num fit-tight">Acción</th>
+                              <th className="fit-th fit-num fit-tight"></th>
                             </tr>
                           </thead>
                           <tbody>
@@ -824,14 +904,14 @@ export default function DashboardPage() {
                             ) : (
                               summaryItems.map((s) => (
                                 <tr key={s.class_id} className="table-row-hover">
-                                  <td className="fit-td fit-wrap" style={{ fontWeight: 600 }}>
+                                  <td className="fit-td fit-wrap" style={{ fontWeight: 500 }}>
                                     {s.name}
                                   </td>
 
                                   <td
                                     className="fit-td fit-num"
                                     style={{
-                                      fontWeight: 700,
+                                      fontWeight: 600,
                                       color: gradeTextColor(s.weighted),
                                     }}
                                   >
@@ -842,7 +922,7 @@ export default function DashboardPage() {
                                     <button
                                       type="button"
                                       onClick={() => handleConsult({ id: s.class_id, name: s.name })}
-                                      className="btn fit-btn"
+                                      className="btn actionBtn fit-btn"
                                     >
                                       Detalle
                                     </button>
@@ -857,7 +937,7 @@ export default function DashboardPage() {
                   )}
 
                   {selectedClass && (
-                    <div style={{ marginTop: 18 }}>
+                    <div style={{ marginTop: 16 }}>
                       <div
                         style={{
                           display: "flex",
@@ -868,25 +948,14 @@ export default function DashboardPage() {
                         }}
                       >
                         <div>
-                          <div className="label">Materia</div>
-                          <div style={{ fontWeight: 900, fontSize: 16 }}>{selectedClass.name}</div>
-                        </div>
-
-                        <div style={{ textAlign: "right" }}>
-                          <div className="label">Ponderado total</div>
-                          <div
-                            style={{
-                              fontWeight: 900,
-                              fontSize: 22,
-                              color: gradeTextColor(weighted),
-                            }}
-                          >
-                            {weighted === null ? "—" : weighted.toFixed(2)}
+                          <div className="label" style={{ fontWeight: 500 }}>
+                            Materia
                           </div>
+                          <div style={{ fontWeight: 600, fontSize: 16 }}>{selectedClass.name}</div>
                         </div>
                       </div>
 
-                      <div className="fit-table-shell">
+                      <div className="fit-table-shell-flat">
                         <table className="teacher-solid-table fit-table">
                           <colgroup>
                             <col style={{ width: "18%" }} />
@@ -920,22 +989,20 @@ export default function DashboardPage() {
                             ) : (
                               items.map((it) => (
                                 <tr key={it.exam_id} className="table-row-hover">
-                                  <td className="fit-td fit-wrap" style={{ fontWeight: 700 }}>
+                                  <td className="fit-td fit-wrap" style={{ fontWeight: 500 }}>
                                     {it.type}
                                   </td>
 
-                                  <td className="fit-td fit-wrap" style={{ fontWeight: 900 }}>
+                                  <td className="fit-td fit-wrap" style={{ fontWeight: 600 }}>
                                     {it.title}
                                   </td>
 
-                                  <td className="fit-td fit-num">
-                                    {Number(it.percent).toFixed(0)}%
-                                  </td>
+                                  <td className="fit-td fit-num">{Number(it.percent).toFixed(0)}%</td>
 
                                   <td
                                     className="fit-td fit-num"
                                     style={{
-                                      fontWeight: 900,
+                                      fontWeight: 700,
                                       color: gradeTextColor(it.grade),
                                     }}
                                   >
@@ -970,21 +1037,21 @@ export default function DashboardPage() {
                             setWeighted(null);
                             loadSummary();
                           }}
-                          className="btnLight"
+                          className="btn actionBtn yearRefreshBtn"
                         >
-                          Volver a materias
+                          Volver
                         </button>
                       </div>
                     </div>
                   )}
                 </>
               )}
-            </div>
+            </section>
           </div>
         </div>
       </main>
 
-      <Footer rightText="Desarrollado para la Iglesia La Promesa." />
+      <Footer />
     </div>
   );
 }
