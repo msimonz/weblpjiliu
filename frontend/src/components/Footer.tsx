@@ -1,6 +1,6 @@
 export default function Footer({
-  leftText = "© 2026 SOFIA · La Promesa. Todos los derechos reservados.",
-  rightText = "Hecho con ♥ para La Promesa.",
+  leftText = "© 2026 SOFIA · La Promesa",
+  rightText = "",
 }: {
   leftText?: string;
   rightText?: string;
@@ -26,8 +26,8 @@ export default function Footer({
           flexWrap: "wrap",
         }}
       >
-        <div style={{ fontSize: 12, fontWeight: 700 }}>{leftText}</div>
-        <div style={{ fontSize: 12, fontWeight: 700 }}>{rightText}</div>
+        <div style={{ fontSize: 8, fontWeight: 700 }}>{leftText}</div>
+        <div style={{ fontSize: 8, fontWeight: 700 }}>{rightText}</div>
       </div>
     </footer>
   );
