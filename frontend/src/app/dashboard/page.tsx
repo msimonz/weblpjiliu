@@ -249,6 +249,9 @@ export default function DashboardPage() {
   const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
   const topbarLeftPad = sidebarOpen ? 18 : 58;
 
+  const passedActive = passed > 0;
+  const failedActive = failed > 0;
+
   return (
     <div
       style={{
@@ -416,7 +419,7 @@ export default function DashboardPage() {
 
         .sectionTitle {
           margin: 0 0 8px;
-          font-size: 16px;
+          font-size: 20px;
           line-height: 1.05;
           letter-spacing: -0.01em;
           font-weight: 700;
@@ -473,6 +476,71 @@ export default function DashboardPage() {
           line-height: 1;
           font-size: 12px;
           font-weight: 600;
+        }
+
+        .summaryCardsGrid {
+          margin-top: 12px;
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
+          align-items: start;
+        }
+
+        .summaryCardItem {
+          min-width: 0;
+        }
+
+        .summaryCardLabel {
+          margin: 0 0 6px;
+          text-align: center;
+          font-size: 12px;
+          line-height: 1.05;
+          font-weight: 700;
+          color: #ffffff;
+          white-space: nowrap;
+        }
+
+        .summaryCardBox {
+          width: 100%;
+          height: 30px;
+          min-height: 30px;
+          border-radius: 14px;
+          border: 1px solid var(--stroke);
+          background: var(--card);
+          box-shadow: var(--shadow);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0 10px;
+          box-sizing: border-box;
+        }
+
+        .summaryCardValue {
+          font-size: 15.5px;
+          line-height: 1;
+          font-weight: 800;
+        }
+
+.summaryCardBoxPassedActive {
+  background: linear-gradient(
+    180deg,
+    rgba(21, 128, 61, 0.3) 0%,
+    rgba(22, 101, 52, 0.3) 100%
+  );
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+.summaryCardBoxFailedActive {
+  background: linear-gradient(
+    180deg,
+    rgba(185, 28, 28, 0.3) 0%,
+    rgba(127, 29, 29, 0.3) 100%
+  );
+  border-color: rgba(248, 113, 113, 0.5);
+}
+
+        .summaryCardValueLight {
+          color: #ffffff;
         }
 
         .actionBtn {
@@ -557,7 +625,7 @@ export default function DashboardPage() {
           }
 
           .sectionTitle {
-            font-size: 14px;
+            font-size: 18px;
           }
 
           .sectionSubtitle {
@@ -581,6 +649,26 @@ export default function DashboardPage() {
             min-height: 28px;
             padding: 0 10px;
             font-size: 10px;
+          }
+
+          .summaryCardsGrid {
+            gap: 10px;
+          }
+
+          .summaryCardLabel {
+            font-size: 11px;
+            margin-bottom: 5px;
+          }
+
+          .summaryCardBox {
+            height: 28px;
+            min-height: 28px;
+            border-radius: 12px;
+            padding: 0 8px;
+          }
+
+          .summaryCardValue {
+            font-size: 13px;
           }
         }
       `}</style>
@@ -733,7 +821,15 @@ export default function DashboardPage() {
               <div style={{ color: "var(--muted)" }}>Notas y asignaciones</div>
             </div>
 
-            <div className="topbarUserText">Estudiante · {me?.user?.email}</div>
+            {/* <div className="topbarUserText">Estudiante · {me?.user?.email}</div> */}
+                <div className="topbarUserText">
+                     Estudiante ·{" "}
+                     {me?.profile?.name ??
+                     me?.profile?.full_name ??
+                     me?.user?.user_metadata?.full_name ??
+                     me?.user?.email ??
+                     "—"}
+                </div>
           </div>
 
           {error && <div className="msgError">{error}</div>}
@@ -757,56 +853,48 @@ export default function DashboardPage() {
                   Sin notas para este año..
                 </div>
               ) : (
-                <div className="fit-table-shell-flat">
-                  <table className="teacher-solid-table fit-table">
-                    <colgroup>
-                      <col style={{ width: "33.33%" }} />
-                      <col style={{ width: "33.33%" }} />
-                      <col style={{ width: "33.34%" }} />
-                    </colgroup>
-                    <thead>
-                      <tr>
-                        <th className="fit-th fit-num fit-tight summaryHeadText">Pasadas</th>
-                        <th className="fit-th fit-num fit-tight summaryHeadText">Perdidas</th>
-                        <th className="fit-th fit-num fit-tight summaryHeadText">Promedio</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr className="table-row-hover">
-                        <td
-                          className="fit-td fit-num"
-                          style={{
-                            fontWeight: 900,
-                            color: passed > 0 ? "rgb(21,128,61)" : "inherit",
-                          }}
-                        >
-                          {summaryStats ? passed : "—"}
-                        </td>
+                <div className="summaryCardsGrid">
+                  <div className="summaryCardItem">
+                    <div className="summaryCardLabel">Pasadas</div>
+                    <div
+                      className={`summaryCardBox ${passedActive ? "summaryCardBoxPassedActive" : ""}`}
+                    >
+                      <span
+                        className={`summaryCardValue ${passedActive ? "summaryCardValueLight" : ""}`}
+                      >
+                        {summaryStats ? passed : "—"}
+                      </span>
+                    </div>
+                  </div>
 
-                        <td
-                          className="fit-td fit-num"
-                          style={{
-                            fontWeight: 800,
-                            color: failed > 0 ? "rgb(185,28,28)" : "inherit",
-                          }}
-                        >
-                          {summaryStats ? failed : "—"}
-                        </td>
+                  <div className="summaryCardItem">
+                    <div className="summaryCardLabel">Perdidas</div>
+                    <div
+                      className={`summaryCardBox ${failedActive ? "summaryCardBoxFailedActive" : ""}`}
+                    >
+                      <span
+                        className={`summaryCardValue ${failedActive ? "summaryCardValueLight" : ""}`}
+                      >
+                        {summaryStats ? failed : "—"}
+                      </span>
+                    </div>
+                  </div>
 
-                        <td
-                          className="fit-td fit-num"
-                          style={{
-                            fontWeight: 700,
-                            color: gradeTextColor(summaryStats?.avg_weighted ?? null),
-                          }}
-                        >
-                          {summaryStats?.avg_weighted === null || !summaryStats
-                            ? "—"
-                            : summaryStats.avg_weighted.toFixed(2)}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+                  <div className="summaryCardItem">
+                    <div className="summaryCardLabel">Promedio</div>
+                    <div className="summaryCardBox">
+                      <span
+                        className="summaryCardValue"
+                        style={{
+                          color: gradeTextColor(summaryStats?.avg_weighted ?? null),
+                        }}
+                      >
+                        {summaryStats?.avg_weighted === null || !summaryStats
+                          ? "—"
+                          : summaryStats.avg_weighted.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
             </section>
@@ -891,13 +979,21 @@ export default function DashboardPage() {
                           <tbody>
                             {summaryLoading ? (
                               <tr className="table-row-hover">
-                                <td colSpan={3} className="fit-td fit-wrap" style={{ color: "var(--muted)" }}>
+                                <td
+                                  colSpan={3}
+                                  className="fit-td fit-wrap"
+                                  style={{ color: "var(--muted)" }}
+                                >
                                   Cargando materias...
                                 </td>
                               </tr>
                             ) : summaryItems.length === 0 ? (
                               <tr className="table-row-hover">
-                                <td colSpan={3} className="fit-td fit-wrap" style={{ color: "var(--muted)" }}>
+                                <td
+                                  colSpan={3}
+                                  className="fit-td fit-wrap"
+                                  style={{ color: "var(--muted)" }}
+                                >
                                   No hay materias/evaluaciones registradas para este año todavía.
                                 </td>
                               </tr>
@@ -976,13 +1072,21 @@ export default function DashboardPage() {
                           <tbody>
                             {loadingGrades ? (
                               <tr className="table-row-hover">
-                                <td colSpan={5} className="fit-td fit-wrap" style={{ color: "var(--muted)" }}>
+                                <td
+                                  colSpan={5}
+                                  className="fit-td fit-wrap"
+                                  style={{ color: "var(--muted)" }}
+                                >
                                   Cargando evaluaciones...
                                 </td>
                               </tr>
                             ) : items.length === 0 ? (
                               <tr className="table-row-hover">
-                                <td colSpan={5} className="fit-td fit-wrap" style={{ color: "var(--muted)" }}>
+                                <td
+                                  colSpan={5}
+                                  className="fit-td fit-wrap"
+                                  style={{ color: "var(--muted)" }}
+                                >
                                   No hay evaluaciones/notas para esta materia en este año.
                                 </td>
                               </tr>
