@@ -417,7 +417,7 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
     const ws = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
-    const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || "password";
+    const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || "123456";
 
     const results = {
       created: 0,
@@ -862,3 +862,27 @@ async function getOrCreateGroupByName(name) {
   if (crErr) throw new Error(crErr.message);
   return created;
 }
+// ============================================================================
+// 6) DESASIGNAR TEACHER DE CLASS
+// ============================================================================
+adminRouter.post("/unassign-teacher", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id_teacher = cleanStr(req.body?.id_teacher);
+    const id_class = toInt(req.body?.id_class);
+
+    if (!id_teacher) return res.status(400).json({ error: "id_teacher requerido" });
+    if (!id_class) return res.status(400).json({ error: "id_class requerido" });
+
+    const { error } = await supabaseAdmin
+      .from("class_teacher")
+      .delete()
+      .eq("id_teacher", id_teacher)
+      .eq("id_class", id_class);
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error desasignando teacher" });
+  }
+});

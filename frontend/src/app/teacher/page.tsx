@@ -1234,9 +1234,9 @@ export default function TeacherPage() {
                                   <div
                                     key={item.id}
                                     style={{
-                                      padding: "10px",
+                                      padding: "-2px",
                                       fontWeight: 500,
-                                      lineHeight: 0.50,
+                                      lineHeight: 1.4,
                                     }}
                                   >
                                     {item.name}
