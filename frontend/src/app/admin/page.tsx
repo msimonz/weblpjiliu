@@ -831,8 +831,8 @@ export default function AdminPage() {
                 <option value="CLASSES">Crear una Materia</option>
                 <option value="TYPES">Crear un tipo de Evaluación</option>
                 <option value="ASSIGN_TEACHER">Asignar Materias a un Profesor</option>
-                <option value="USERS">Crear Usuarios</option>
-                <option value="UPDATE_USER">Actualizar Usuarios</option>
+                <option value="USERS">Crear Persona</option>
+                <option value="UPDATE_USER">Actualizar Persona</option>
               </select>
             </div>
           </div>
@@ -1176,7 +1176,7 @@ export default function AdminPage() {
 
           {view === "USERS" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Crear Usuarios</h2>
+              <h2 style={{ marginTop: 0 }}>Crear Persona</h2>
 
               <div
                 style={{
@@ -1195,7 +1195,7 @@ export default function AdminPage() {
                 <div>
                   <div style={{ fontWeight: 900 }}>Plantilla Excel</div>
                   <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                    Descárgala para cargar usuarios correctamente.
+                    Descárgala para cargar personas correctamente.
                   </div>
                 </div>
                 <button className="btn" onClick={downloadTemplate} disabled={templateLoading}>
@@ -1294,7 +1294,7 @@ export default function AdminPage() {
               </div>
 
               <div style={{ marginTop: 16 }}>
-                <div style={{ fontWeight: 900, fontSize: 16 }}>Subir Excel: crear usuarios</div>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>Subir Excel: Crear Personas</div>
                 <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
                   Columnas obligatorias: <b>email</b>, <b>name</b>, <b>cedula</b>, <b>code_jiliu</b>, <b>id_course</b>, <b>type</b> (S/T/A o lista S,T).
                 </div>
@@ -1356,7 +1356,7 @@ export default function AdminPage() {
 
           {view === "UPDATE_USER" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Actualizar Usuarios</h2>
+              <h2 style={{ marginTop: 0 }}>Actualizar Persona</h2>
 
               <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
                 Digita la cédula y el sistema te carga los datos para modificarlos.
