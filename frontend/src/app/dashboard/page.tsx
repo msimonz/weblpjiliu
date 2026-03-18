@@ -247,7 +247,6 @@ export default function DashboardPage() {
   const SIDEBAR_W = 320;
   const HAM_PAD = 14;
   const hamLeft = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
-  const topbarLeftPad = sidebarOpen ? 18 : 58;
 
   const passedActive = passed > 0;
   const failedActive = failed > 0;
@@ -399,7 +398,6 @@ export default function DashboardPage() {
             className="topbar dashboard-topbar"
             style={{
               alignItems: "center",
-              paddingLeft: topbarLeftPad,
             }}
           >
             <div className="brand">
@@ -407,15 +405,14 @@ export default function DashboardPage() {
               <div style={{ color: "var(--muted)" }}>Notas y asignaciones</div>
             </div>
 
-            {/* <div className="topbarUserText">Estudiante · {me?.user?.email}</div> */}
-                <div className="topbarUserText">
-                     Estudiante ·{" "}
-                     {me?.profile?.name ??
-                     me?.profile?.full_name ??
-                     me?.user?.user_metadata?.full_name ??
-                     me?.user?.email ??
-                     "—"}
-                </div>
+            <div className="topbarUserText">
+              Estudiante ·{" "}
+              {me?.profile?.name ??
+                me?.profile?.full_name ??
+                me?.user?.user_metadata?.full_name ??
+                me?.user?.email ??
+                "—"}
+            </div>
           </div>
 
           {error && <div className="msgError">{error}</div>}
@@ -430,23 +427,56 @@ export default function DashboardPage() {
             }}
           >
             <section className="flatSection">
-              <h2 className="sectionSubtitle">
-                Resumen del año <span className="sectionMinor">(Materias)</span>
-              </h2>
+              <h2 className="sectionSubtitle">Resumen:</h2>
 
-              {blockedByYear ? (
-                <div style={{ marginTop: 12, color: "var(--muted)", fontWeight: 500 }}>
+              <div
+                className="yearRefreshRow"
+                style={{
+                  marginTop: 16,
+                  alignItems: "flex-start",
+                }}
+              >
+                <div className="yearSelectWrap">
+                  <select
+                    className="select"
+                    value={level}
+                    onChange={(e) => setLevel(Number(e.target.value))}
+                  >
+                    {LEVELS.map((x) => (
+                      <option key={x.value} value={x.value}>
+                        {x.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={loadSummary}
+                  className="btn actionBtn yearRefreshBtn"
+                >
+                  {summaryLoading ? "Cargando..." : "Refrescar"}
+                </button>
+              </div>
+
+              {blockedByYear && (
+                <div style={{ marginTop: 8, color: "#b45309", fontWeight: 500, fontSize: 13 }}>
                   Sin notas para este año..
                 </div>
-              ) : (
-                <div className="summaryCardsGrid">
+              )}
+
+              {!blockedByYear && (
+                <div className="summaryCardsGrid" style={{ marginTop: 36 }}>
                   <div className="summaryCardItem">
-                    <div className="summaryCardLabel">Pasadas</div>
+                    <div className="summaryCardLabel" style={{ color: "var(--text)" }}>
+                      Aprobadas
+                    </div>
                     <div
                       className={`summaryCardBox ${passedActive ? "summaryCardBoxPassedActive" : ""}`}
                     >
                       <span
                         className={`summaryCardValue ${passedActive ? "summaryCardValueLight" : ""}`}
+                        style={{ color: "var(--text)" }}
                       >
                         {summaryStats ? passed : "—"}
                       </span>
@@ -454,12 +484,15 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="summaryCardItem">
-                    <div className="summaryCardLabel">Perdidas</div>
+                    <div className="summaryCardLabel" style={{ color: "var(--text)" }}>
+                      Perdidas
+                    </div>
                     <div
                       className={`summaryCardBox ${failedActive ? "summaryCardBoxFailedActive" : ""}`}
                     >
                       <span
                         className={`summaryCardValue ${failedActive ? "summaryCardValueLight" : ""}`}
+                        style={{ color: "var(--text)" }}
                       >
                         {summaryStats ? failed : "—"}
                       </span>
@@ -467,7 +500,9 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="summaryCardItem">
-                    <div className="summaryCardLabel">Promedio</div>
+                    <div className="summaryCardLabel" style={{ color: "var(--text)" }}>
+                      Promedio
+                    </div>
                     <div className="summaryCardBox">
                       <span
                         className="summaryCardValue"
@@ -486,38 +521,6 @@ export default function DashboardPage() {
             </section>
 
             <section className="flatSection">
-              <h1 className="sectionTitle">Consultar notas</h1>
-
-              <div className="yearRefreshRow">
-                <div className="yearSelectWrap">
-                  <select
-                    className="select"
-                    value={level}
-                    onChange={(e) => setLevel(Number(e.target.value))}
-                  >
-                    {LEVELS.map((x) => (
-                      <option key={x.value} value={x.value}>
-                        {x.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  {blockedByYear && (
-                    <div style={{ marginTop: 8, color: "#b45309", fontWeight: 500, fontSize: 13 }}>
-                      Sin notas para este año..
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={loadSummary}
-                  className="btn actionBtn yearRefreshBtn"
-                >
-                  {summaryLoading ? "Cargando..." : "Refrescar"}
-                </button>
-              </div>
-
               <div style={{ position: "relative" }}>
                 {openSug && (suggestions.length > 0 || loadingSug) && (
                   <div
@@ -541,25 +544,55 @@ export default function DashboardPage() {
               </div>
 
               {blockedByYear ? (
-                <div style={{ marginTop: 18, color: "var(--muted)", fontWeight: 500 }}>
-                  Sin notas para este año..
-                </div>
+                <div style={{ marginTop: 18, color: "var(--muted)", fontWeight: 500 }}></div>
               ) : (
                 <>
                   {!selectedClass && (
-                    <div style={{ marginTop: 16 }}>
-                      <div className="fit-table-shell-flat">
-                        <table className="teacher-solid-table fit-table">
+                    <div style={{ marginTop: -10 }}>
+                      <div
+                        className="fit-table-shell-flat"
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          borderRadius: 0,
+                          boxShadow: "none",
+                          overflow: "visible",
+                          padding: 0,
+                        }}
+                      >
+                        <table
+                          className="teacher-solid-table fit-table"
+                          style={{
+                            background: "transparent",
+                            borderCollapse: "collapse",
+                            boxShadow: "none",
+                            borderRadius: 0,
+                            overflow: "visible",
+                          }}
+                        >
                           <colgroup>
                             <col style={{ width: "56%" }} />
                             <col style={{ width: "20%" }} />
                             <col style={{ width: "24%" }} />
                           </colgroup>
                           <thead>
-                            <tr>
-                              <th className="fit-th fit-wrap">Materia</th>
-                              <th className="fit-th fit-num fit-tight">Nota final</th>
-                              <th className="fit-th fit-num fit-tight"></th>
+                            <tr style={{ background: "transparent" }}>
+                              <th
+                                className="fit-th fit-wrap"
+                                style={{ background: "transparent", color: "#000" }}
+                              >
+                                Materia
+                              </th>
+                              <th
+                                className="fit-th fit-num fit-tight"
+                                style={{ background: "transparent", color: "#000" }}
+                              >
+                                Nota final
+                              </th>
+                              <th
+                                className="fit-th fit-num fit-tight"
+                                style={{ background: "transparent", color: "#000" }}
+                              ></th>
                             </tr>
                           </thead>
                           <tbody>
@@ -580,13 +613,16 @@ export default function DashboardPage() {
                                   className="fit-td fit-wrap"
                                   style={{ color: "var(--muted)" }}
                                 >
-                                  No hay materias/evaluaciones registradas para este año todavía.
+                                  No hay materias registradas para este año todavía.
                                 </td>
                               </tr>
                             ) : (
                               summaryItems.map((s) => (
                                 <tr key={s.class_id} className="table-row-hover">
-                                  <td className="fit-td fit-wrap" style={{ fontWeight: 500 }}>
+                                  <td
+                                    className="fit-td fit-wrap"
+                                    style={{ fontWeight: 500, color: "var(--text)" }}
+                                  >
                                     {s.name}
                                   </td>
 
@@ -594,10 +630,13 @@ export default function DashboardPage() {
                                     className="fit-td fit-num"
                                     style={{
                                       fontWeight: 600,
-                                      color: gradeTextColor(s.weighted),
+                                      color:
+                                        s.weighted === null
+                                          ? "var(--text)"
+                                          : gradeTextColor(s.weighted),
                                     }}
                                   >
-                                    {s.weighted === null ? "—" : s.weighted.toFixed(2)}
+                                    {s.weighted === null ? "-" : s.weighted.toFixed(2)}
                                   </td>
 
                                   <td className="fit-td fit-num">
@@ -633,12 +672,34 @@ export default function DashboardPage() {
                           <div className="label" style={{ fontWeight: 500 }}>
                             Materia
                           </div>
-                          <div style={{ fontWeight: 600, fontSize: 16 }}>{selectedClass.name}</div>
+                          <div style={{ fontWeight: 600, fontSize: 16, color: "var(--text)" }}>
+                            {selectedClass.name}
+                          </div>
                         </div>
                       </div>
 
-                      <div className="fit-table-shell-flat">
-                        <table className="teacher-solid-table fit-table">
+                      <div
+                        className="fit-table-shell-flat"
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          borderRadius: 0,
+                          boxShadow: "none",
+                          overflow: "visible",
+                          padding: 0,
+                          marginTop: 8,
+                        }}
+                      >
+                        <table
+                          className="teacher-solid-table fit-table"
+                          style={{
+                            background: "transparent",
+                            borderCollapse: "collapse",
+                            boxShadow: "none",
+                            borderRadius: 0,
+                            overflow: "visible",
+                          }}
+                        >
                           <colgroup>
                             <col style={{ width: "18%" }} />
                             <col style={{ width: "34%" }} />
@@ -647,12 +708,37 @@ export default function DashboardPage() {
                             <col style={{ width: "22%" }} />
                           </colgroup>
                           <thead>
-                            <tr>
-                              <th className="fit-th fit-wrap fit-tight">Tipo</th>
-                              <th className="fit-th fit-wrap fit-tight">Evaluación</th>
-                              <th className="fit-th fit-num fit-tight">%</th>
-                              <th className="fit-th fit-num fit-tight">Nota</th>
-                              <th className="fit-th fit-date fit-tight">Fecha</th>
+                            <tr style={{ background: "transparent" }}>
+                              <th
+                                className="fit-th fit-wrap fit-tight"
+                                style={{ background: "transparent", color: "#000" }}
+                              >
+                                Tipo
+                              </th>
+                              <th
+                                className="fit-th fit-wrap fit-tight"
+                                style={{ background: "transparent", color: "#000" }}
+                              >
+                                Evaluación
+                              </th>
+                              <th
+                                className="fit-th fit-num fit-tight"
+                                style={{ background: "transparent", color: "#000" }}
+                              >
+                                %
+                              </th>
+                              <th
+                                className="fit-th fit-num fit-tight"
+                                style={{ background: "transparent", color: "#000" }}
+                              >
+                                Nota
+                              </th>
+                              <th
+                                className="fit-th fit-date fit-tight"
+                                style={{ background: "transparent", color: "#000" }}
+                              >
+                                Fecha
+                              </th>
                             </tr>
                           </thead>
                           <tbody>
@@ -679,15 +765,23 @@ export default function DashboardPage() {
                             ) : (
                               items.map((it) => (
                                 <tr key={it.exam_id} className="table-row-hover">
-                                  <td className="fit-td fit-wrap" style={{ fontWeight: 500 }}>
+                                  <td
+                                    className="fit-td fit-wrap"
+                                    style={{ fontWeight: 500, color: "var(--text)" }}
+                                  >
                                     {it.type}
                                   </td>
 
-                                  <td className="fit-td fit-wrap" style={{ fontWeight: 600 }}>
+                                  <td
+                                    className="fit-td fit-wrap"
+                                    style={{ fontWeight: 600, color: "var(--text)" }}
+                                  >
                                     {it.title}
                                   </td>
 
-                                  <td className="fit-td fit-num">{Number(it.percent).toFixed(0)}%</td>
+                                  <td className="fit-td fit-num" style={{ color: "var(--text)" }}>
+                                    {Number(it.percent).toFixed(0)}%
+                                  </td>
 
                                   <td
                                     className="fit-td fit-num"
@@ -699,7 +793,7 @@ export default function DashboardPage() {
                                     {it.grade === null ? "—" : Number(it.grade).toFixed(2)}
                                   </td>
 
-                                  <td className="fit-td fit-date">
+                                  <td className="fit-td fit-date" style={{ color: "var(--text)" }}>
                                     {it.finished_at
                                       ? new Date(it.finished_at).toLocaleDateString()
                                       : "—"}

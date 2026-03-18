@@ -427,7 +427,7 @@ export default function LoginPage() {
           overflowX: "clip",
         }}
       >
-        <Footer rightText="Hecho para la Iglesia La Promesa." />
+        <Footer />
       </div>
 
       {/* Modal recuperar contraseña */}

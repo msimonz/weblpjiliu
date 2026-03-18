@@ -135,13 +135,13 @@ button, input, select{ font: inherit; }
 
 /* ✅ NUEVO: base para botones "neutros" que NO usan .btn */
 button{
-  color: var(--text);
+  color: var(--sky2);
 }
 
 .container{
-  max-width: 1500px;
+  width: 95%;
   /*width: min(1100px, calc(100% - 32px));*/
-  margin: 0 auto;
+  margin-left : 50px;
   padding: 32px 20px 60px;
 }
 
@@ -294,8 +294,8 @@ button{
 /* ✅ NUEVO: Botón claro/neutral (para "Volver", "Refrescar", etc.) */
 .btnLight{
   border: 1px solid var(--btn-light-border);
-  background: var(--btn-light-bg);
-  color: var(--btn-light-text);
+  background: var(--sky2);
+  color: white;
   border-radius: 16px;
   padding: 12px 14px;
   cursor:pointer;
@@ -304,7 +304,7 @@ button{
 }
 
 .btnLight:hover{
-  background: var(--btn-light-hover);
+  background: var(--sky);
 }
 
 .btnLight:disabled{
@@ -455,8 +455,8 @@ button{
 }
 
 .teacher-solid-table {
-  --table-head-bg: #0f172a;
-  --table-head-text: #ffffff;
+  --table-head-bg: transparent;
+  --table-head-text: #000000;
   --table-row-hover-bg: rgba(14, 165, 233, 0.08);
 }
 html.dark .teacher-solid-table,
@@ -481,7 +481,7 @@ html[data-theme="dark"] .teacher-solid-table {
   opacity: 1 !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
 }
 .teacher-solid-table tbody tr.table-row-hover > td {
   transition: background-color 120ms ease;
@@ -559,7 +559,7 @@ html[data-theme="dark"] .teacher-solid-table {
   row-gap: 10px;
 }
 .dashboard-topbar .brand {
-  margin-left: -55px;
+  margin-left: 0;
   max-width: 100%;
 }
 .dashboard-topbar .brand > div:first-child {
@@ -598,7 +598,7 @@ html[data-theme="dark"] .teacher-solid-table {
 }
 .sectionSubtitle {
   margin: 0;
-  font-size: 24px;
+  font-size: 14px;
   line-height: 1.1;
   font-weight: 700;
 }
@@ -625,7 +625,7 @@ html[data-theme="dark"] .teacher-solid-table {
   min-height: 30px;
   padding: 0 12px;
   line-height: 1;
-  font-weight: 400;
+  font-weight: 900;
 }
 .yearRefreshBtn {
   white-space: nowrap;
@@ -670,6 +670,72 @@ html[data-theme="dark"] .teacher-solid-table {
   box-shadow: 0 6px 16px rgba(2, 132, 199, 0.16);
 }
 
+ .summaryCardsGrid {
+          margin-top: 12px;
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
+          align-items: start;
+        }
+
+        .summaryCardItem {
+          min-width: 0;
+        }
+
+        .summaryCardLabel {
+          margin: 0 0 6px;
+          text-align: center;
+          font-size: 12px;
+          line-height: 1.05;
+          font-weight: 700;
+          color: #ffffff;
+          white-space: nowrap;
+        }
+
+        .summaryCardBox {
+          width: 100%;
+          height: 30px;
+          min-height: 30px;
+          border-radius: 14px;
+          border: 1px solid var(--stroke);
+          background: var(--card);
+          box-shadow: var(--shadow);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0 10px;
+          box-sizing: border-box;
+        }
+
+        .summaryCardValue {
+          font-size: 15.5px;
+          line-height: 1;
+          font-weight: 800;
+        }
+
+.summaryCardBoxPassedActive {
+  background: linear-gradient(
+    180deg,
+    rgba(21, 128, 61, 0.3) 0%,
+    rgba(22, 101, 52, 0.3) 100%
+  );
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+.summaryCardBoxFailedActive {
+  background: linear-gradient(
+    180deg,
+    rgba(185, 28, 28, 0.3) 0%,
+    rgba(127, 29, 29, 0.3) 100%
+  );
+  border-color: rgba(248, 113, 113, 0.5);
+}
+
+        .summaryCardValueLight {
+          color: #ffffff;
+        }
+
+
 @media (max-width: 768px) {
   .fit-table {
     table-layout: fixed;
@@ -711,10 +777,10 @@ html[data-theme="dark"] .teacher-solid-table {
     text-align: left;
   }
   .sectionTitle {
-    font-size: 14px;
+    font-size: 18px;
   }
   .sectionSubtitle {
-    font-size: 20px;
+    font-size: 18px;
   }
   .yearRefreshRow {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -723,13 +789,36 @@ html[data-theme="dark"] .teacher-solid-table {
   .yearSelectWrap .select {
     height: 28px;
     min-height: 28px;
-    font-size: 10px;
+    font-size: 14px;
   }
   .yearRefreshBtn {
     min-width: 102px;
     height: 28px;
     min-height: 28px;
-    padding: 0 10px;
+    padding: 0 14px;
     font-size: 10px;
   }
+  .summaryCardsGrid {
+            gap: 10px;
+          }
+
+          .summaryCardLabel {
+            font-size: 11px;
+            margin-bottom: 5px;
+          }
+
+          .summaryCardBox {
+            height: 28px;
+            min-height: 28px;
+            border-radius: 12px;
+            padding: 0 8px;
+          }
+
+          .summaryCardValue {
+            font-size: 13px;
+          }  
+          .container { 
+            margin: 0 auto;
+          }
+
 }
