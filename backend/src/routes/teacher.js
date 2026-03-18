@@ -12,6 +12,11 @@ function requireTeacher(req, res, next) {
   return next();
 }
 
+function isAdmin(req) {
+  const roles = req.auth?.roles || [];
+  return roles.includes("A");
+}
+
 function levelLabel(level) {
   const n = Number(level);
   if (n === 1) return "Primer año";
@@ -31,6 +36,17 @@ async function getTeacherClasses(teacherId) {
   if (error) throw error;
 
   return (data || []).map((r) => r.class).filter(Boolean);
+}
+
+async function getAllClasses() {
+  const { data, error } = await supabaseAdmin
+    .from("class")
+    .select("id,name,level")
+    .order("level", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (error) throw error;
+  return data || [];
 }
 
 async function teacherHasClass(teacherId, classId) {
@@ -85,14 +101,18 @@ async function getStudentsByCourseIds(courseIds) {
 }
 
 /**
- * DASHBOARD DEL PROFESOR
+ * DASHBOARD DEL PROFESOR / ADMIN
  * GET /api/teacher/dashboard
  */
 teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) => {
   try {
+    const admin = isAdmin(req);
     const teacherId = req.auth.user.id;
 
-    const teacherClasses = await getTeacherClasses(teacherId);
+    const teacherClasses = admin
+      ? await getAllClasses()
+      : await getTeacherClasses(teacherId);
+
     const cleanClasses = (teacherClasses || []).filter(Boolean);
 
     const groupsMap = new Map();
@@ -116,7 +136,9 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
     const groups = [...groupsMap.values()]
       .map((g) => ({
         ...g,
-        items: g.items.sort((a, b) => String(a.name).localeCompare(String(b.name), "es")),
+        items: g.items.sort((a, b) =>
+          String(a.name).localeCompare(String(b.name), "es")
+        ),
       }))
       .sort((a, b) => a.level - b.level);
 
@@ -164,13 +186,18 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
 });
 
 /**
- * 0) Mis materias asignadas
+ * 0) Mis materias asignadas / Todas las materias si es Admin
  * GET /api/teacher/classes
  */
 teacherRouter.get("/classes", requireAuth, requireTeacher, async (req, res) => {
   try {
+    const admin = isAdmin(req);
     const teacherId = req.auth.user.id;
-    const items = await getTeacherClasses(teacherId);
+
+    const items = admin
+      ? await getAllClasses()
+      : await getTeacherClasses(teacherId);
+
     return res.json({ items });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -178,22 +205,22 @@ teacherRouter.get("/classes", requireAuth, requireTeacher, async (req, res) => {
 });
 
 /**
- * Cursos del profesor
+ * Cursos del profesor / Todos si es Admin
  * GET /api/teacher/courses
  * GET /api/teacher/courses?class_id=1
- *
- * - Si viene class_id: devuelve cursos del mismo level de esa materia
- * - Si NO viene class_id: devuelve todos los cursos de los levels en los que el profesor tiene materias
  */
 teacherRouter.get("/courses", requireAuth, requireTeacher, async (req, res) => {
   try {
+    const admin = isAdmin(req);
     const teacherId = req.auth.user.id;
     const classId = req.query.class_id ? Number(req.query.class_id) : null;
 
     if (classId) {
-      const allowed = await teacherHasClass(teacherId, classId);
-      if (!allowed) {
-        return res.status(403).json({ error: "La materia no está asignada a este profesor" });
+      if (!admin) {
+        const allowed = await teacherHasClass(teacherId, classId);
+        if (!allowed) {
+          return res.status(403).json({ error: "La materia no está asignada a este profesor" });
+        }
       }
 
       const { data: cls, error: clsErr } = await supabaseAdmin
@@ -214,6 +241,17 @@ teacherRouter.get("/courses", requireAuth, requireTeacher, async (req, res) => {
 
       if (cErr) return res.status(500).json({ error: cErr.message });
 
+      return res.json({ items: courses || [] });
+    }
+
+    if (admin) {
+      const { data: courses, error: cErr } = await supabaseAdmin
+        .from("course")
+        .select("id,name,level,year")
+        .order("level", { ascending: true })
+        .order("id", { ascending: true });
+
+      if (cErr) return res.status(500).json({ error: cErr.message });
       return res.json({ items: courses || [] });
     }
 
@@ -275,15 +313,13 @@ teacherRouter.post("/evaluation-types", requireAuth, requireTeacher, async (req,
 });
 
 /**
- * 1) Mis evaluaciones
+ * 1) Mis evaluaciones / Todas si es Admin
  * GET /api/teacher/evaluations
- * GET /api/teacher/evaluations?class_id=1
- * GET /api/teacher/evaluations?level=1
- * GET /api/teacher/evaluations?level=1&class_id=1
  */
 teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) => {
   try {
     const teacherId = req.auth.user.id;
+    const admin = isAdmin(req);
     const classId = req.query.class_id ? Number(req.query.class_id) : null;
     const level = req.query.level ? Number(req.query.level) : null;
 
@@ -301,9 +337,9 @@ teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) 
         class:class(id,name,level),
         evaluation_type:evaluation_type(id,type)
       `)
-      .eq("id_teacher", teacherId)
       .order("created_at", { ascending: false });
 
+    if (!admin) q = q.eq("id_teacher", teacherId);
     if (classId) q = q.eq("id_class", classId);
 
     const { data, error } = await q;
@@ -328,13 +364,16 @@ teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) 
 teacherRouter.get("/class-grade-grid", requireAuth, requireTeacher, async (req, res) => {
   try {
     const teacherId = req.auth.user.id;
+    const admin = isAdmin(req);
     const classId = Number(req.query.class_id);
 
     if (!classId) return res.status(400).json({ error: "class_id requerido" });
 
-    const allowed = await teacherHasClass(teacherId, classId);
-    if (!allowed) {
-      return res.status(403).json({ error: "La materia no está asignada a este profesor" });
+    if (!admin) {
+      const allowed = await teacherHasClass(teacherId, classId);
+      if (!allowed) {
+        return res.status(403).json({ error: "La materia no está asignada a este profesor" });
+      }
     }
 
     const { data: cls, error: clsErr } = await supabaseAdmin
@@ -346,7 +385,7 @@ teacherRouter.get("/class-grade-grid", requireAuth, requireTeacher, async (req, 
     if (clsErr) return res.status(500).json({ error: clsErr.message });
     if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
 
-    const { data: evaluations, error: evErr } = await supabaseAdmin
+    let evQuery = supabaseAdmin
       .from("evaluation")
       .select(`
         id,
@@ -360,10 +399,15 @@ teacherRouter.get("/class-grade-grid", requireAuth, requireTeacher, async (req, 
         class:class(id,name,level),
         evaluation_type:evaluation_type(id,type)
       `)
-      .eq("id_teacher", teacherId)
       .eq("id_class", classId)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true });
+
+    if (!admin) {
+      evQuery = evQuery.eq("id_teacher", teacherId);
+    }
+
+    const { data: evaluations, error: evErr } = await evQuery;
 
     if (evErr) return res.status(500).json({ error: evErr.message });
 
@@ -475,6 +519,7 @@ teacherRouter.get("/course-students", requireAuth, requireTeacher, async (req, r
  */
 teacherRouter.get("/exam-grades", requireAuth, requireTeacher, async (req, res) => {
   const teacherId = req.auth.user.id;
+  const admin = isAdmin(req);
   const examId = Number(req.query.exam_id);
   if (!examId) return res.status(400).json({ error: "exam_id requerido" });
 
@@ -486,7 +531,7 @@ teacherRouter.get("/exam-grades", requireAuth, requireTeacher, async (req, res) 
 
   if (evErr) return res.status(500).json({ error: evErr.message });
   if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
-  if (ev.id_teacher !== req.auth.user.id) {
+  if (!admin && ev.id_teacher !== teacherId) {
     return res.status(403).json({ error: "No es tu evaluación" });
   }
 
@@ -508,6 +553,7 @@ teacherRouter.get("/exam-grades", requireAuth, requireTeacher, async (req, res) 
 teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res) => {
   try {
     const teacherId = req.auth.user.id;
+    const admin = isAdmin(req);
 
     const { id_course, id_class, percent, title, id_type, type_text } = req.body || {};
 
@@ -518,9 +564,11 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
     const classIdNum = Number(id_class);
     const courseIdNum = Number(id_course);
 
-    const allowed = await teacherHasClass(teacherId, classIdNum);
-    if (!allowed) {
-      return res.status(403).json({ error: "La materia no está asignada a este profesor" });
+    if (!admin) {
+      const allowed = await teacherHasClass(teacherId, classIdNum);
+      if (!allowed) {
+        return res.status(403).json({ error: "La materia no está asignada a este profesor" });
+      }
     }
 
     const p = Number(percent);
@@ -610,6 +658,7 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
  */
 teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
   const teacherId = req.auth.user.id;
+  const admin = isAdmin(req);
   const { exam_id, student_cedula, grade } = req.body || {};
 
   const examId = Number(exam_id);
@@ -631,7 +680,9 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
 
   if (evErr) return res.status(500).json({ error: evErr.message });
   if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
-  if (ev.id_teacher !== teacherId) return res.status(403).json({ error: "No es tu evaluación" });
+  if (!admin && ev.id_teacher !== teacherId) {
+    return res.status(403).json({ error: "No es tu evaluación" });
+  }
 
   const { data: st, error: stErr } = await supabaseAdmin
     .from("users")
@@ -675,6 +726,7 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
 teacherRouter.patch("/evaluations/:id", requireAuth, requireTeacher, async (req, res) => {
   try {
     const teacherId = req.auth.user.id;
+    const admin = isAdmin(req);
     const id = Number(req.params.id);
     const percent = Number(req.body?.percent);
 
@@ -691,7 +743,7 @@ teacherRouter.patch("/evaluations/:id", requireAuth, requireTeacher, async (req,
 
     if (evErr) return res.status(500).json({ error: evErr.message });
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
-    if (ev.id_teacher !== teacherId) {
+    if (!admin && ev.id_teacher !== teacherId) {
       return res.status(403).json({ error: "No puedes editar esta evaluación" });
     }
 
