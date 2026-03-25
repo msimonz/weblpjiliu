@@ -449,7 +449,7 @@ teacherRouter.get("/class-grade-grid", requireAuth, requireTeacher, async (req, 
     if (examIds.length > 0 && studentIds.length > 0) {
       const { data: gRows, error: gErr } = await supabaseAdmin
         .from("grades")
-        .select("id_student,id_exam,grade")
+        .select("id_student,id_exam,grade,attempts")
         .in("id_exam", examIds)
         .in("id_student", studentIds);
 

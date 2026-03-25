@@ -39,6 +39,7 @@ type GridGradeRow = {
   id_student: string;
   id_exam: number;
   grade: number | null;
+  attempts?: number | null;
 };
 
 type GradeGridResponse = {
@@ -210,6 +211,7 @@ export default function TeacherPage() {
   const [gRoster, setGRoster] = useState<StudentRow[]>([]);
   const [gLoadingRoster, setGLoadingRoster] = useState(false);
 
+  const [gGrades, setGGrades] = useState<GridGradeRow[]>([]);
   const [gradeDraft, setGradeDraft] = useState<Record<string, string>>({});
   const [savingOne, setSavingOne] = useState<Record<string, boolean>>({});
   const [savingAll, setSavingAll] = useState(false);
@@ -672,6 +674,7 @@ export default function TeacherPage() {
       setGridClassInfo(res?.class || null);
       setGEvaluations(evals);
       setGRoster(roster);
+      setGGrades(grades);
 
       const drafts: Record<string, string> = {};
       for (const g of grades) {
@@ -684,6 +687,7 @@ export default function TeacherPage() {
       setGridClassInfo(null);
       setGEvaluations([]);
       setGRoster([]);
+      setGGrades([]);
       setGradeDraft({});
     } finally {
       setGLoadingRoster(false);
@@ -1959,6 +1963,9 @@ export default function TeacherPage() {
                                     const key = gradeCellKey(st.id, ev.id);
                                     const enabledForCourse = isEvaluationApplicableToStudent(st, ev);
                                     const editable = enabledForCourse && isEditing && !isBusy;
+                                    const gradeRecord = gGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
+                                    const attempts = gradeRecord?.attempts ?? 0;
+                                    const noPresentó = enabledForCourse && attempts === 0;
 
                                     return (
                                       <td
@@ -1971,8 +1978,41 @@ export default function TeacherPage() {
                                               ? editableCellBg
                                               : "transparent"
                                             : disabledCellBg,
+                                          position: "relative",
                                         }}
                                       >
+                                        {noPresentó && !isEditing ? (
+                                          <div
+                                            style={{
+                                              display: "flex",
+                                              alignItems: "center",
+                                              justifyContent: "left",
+                                              height: 26,
+                                              padding: "0 6px",
+                                            }}
+                                          >
+                                            <span
+                                              style={{
+                                                display: "inline-block",
+                                                padding: "2px 10px",
+                                                borderRadius: 4,
+                                                fontSize: 11,
+                                                fontWeight: 700,
+                                                letterSpacing: 0.3,
+                                                background: isDarkTheme
+                                                  ? "rgba(239,68,68,0.15)"
+                                                  : "rgba(239,68,68,0.1)",
+                                                color: isDarkTheme ? "#fca5a5" : "#dc2626",
+                                                border: isDarkTheme
+                                                  ? "1px solid rgba(239,68,68,0.3)"
+                                                  : "1px solid rgba(239,68,68,0.25)",
+                                                whiteSpace: "nowrap",
+                                              }}
+                                            >
+                                              No Presentó
+                                            </span>
+                                          </div>
+                                        ) : (
                                         <input
                                           className="input"
                                           inputMode="numeric"
@@ -2027,6 +2067,7 @@ export default function TeacherPage() {
                                             opacity: enabledForCourse ? 1 : 0.6,
                                           }}
                                         />
+                                        )}
                                       </td>
                                     );
                                   })}
