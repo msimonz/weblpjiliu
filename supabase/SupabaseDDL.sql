@@ -242,3 +242,77 @@ with check (
 
 create policy "grades_admin_all" on public.grades
 for all using (public.is_admin()) with check (public.is_admin());
+
+
+
+-- =========================================================
+-- JILIU / La Promesa - Índices finales recomendados
+-- PostgreSQL / Supabase
+-- Ejecutar sentencia por sentencia
+-- =========================================================
+
+-- 1) class_group:
+-- evita full scans y además protege contra duplicados de la relación
+-- (id_class, id_group)
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_class_group_id_class_id_group_uq
+ON public.class_group (id_class, id_group);
+
+-- 2) class_group:
+-- para búsquedas/joins desde group -> class_group
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_class_group_id_group
+ON public.class_group (id_group);
+
+-- 3) class:
+-- FK a module; importante para joins y cascadas/validaciones
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_class_id_module
+ON public.class (id_module);
+
+-- 4) class:
+-- listado de materias por nivel y orden por nombre
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_class_level_name
+ON public.class (level, name);
+
+-- 5) class:
+-- búsquedas por ILIKE '%texto%' sobre name
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_class_name_trgm
+ON public.class
+USING gin (name gin_trgm_ops);
+
+-- 6) users:
+-- alumnos por curso y orden por nombre
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_id_course_name
+ON public.users (id_course, name);
+
+-- 7) class_teacher:
+-- la PK actual sirve para (id_teacher, id_class),
+-- pero falta el camino inverso por id_class
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_class_teacher_id_class
+ON public.class_teacher (id_class);
+
+-- 8) user_history:
+-- la PK actual empieza por id_student; falta acceso por id_course
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_history_id_course
+ON public.user_history (id_course);
+
+-- 9) evaluation:
+-- listados por profesor ordenados por fecha
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_evaluation_teacher_created_desc
+ON public.evaluation (id_teacher, created_at DESC);
+
+-- 10) evaluation:
+-- consultas por curso + materia
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_evaluation_course_class_created_id
+ON public.evaluation (id_course, id_class, created_at ASC, id ASC);
+
+-- 11) evaluation:
+-- consultas por materia en orden cronológico
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_evaluation_class_created_id
+ON public.evaluation (id_class, created_at ASC, id ASC);
+
+ALTER TABLE public.class_teacher
+DROP CONSTRAINT IF EXISTS class_teacher_unique;
+
+ALTER TABLE public.user_history
+DROP CONSTRAINT IF EXISTS user_history_unique;

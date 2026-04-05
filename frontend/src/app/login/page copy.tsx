@@ -47,8 +47,6 @@ export default function LoginPage() {
     const resolved = await apiFetch("/api/auth/resolve-login", {
       method: "POST",
       body: JSON.stringify({ cedula: c }),
-      requireAuth: false,
-      skipAuthRedirect: true,
     });
 
     const email = resolved?.email;
@@ -213,6 +211,8 @@ export default function LoginPage() {
               Iniciar sesión
             </h1>
 
+           
+
             {error && (
               <div
                 className="msgError"
@@ -236,6 +236,7 @@ export default function LoginPage() {
               }}
             >
               <div style={{ width: "100%" }}>
+
                 <select
                   className="select"
                   value={rolePick}
@@ -399,6 +400,7 @@ export default function LoginPage() {
               </button>
             </div>
 
+            {/* Botón oculto reutilizando ChangePasswordButton */}
             <div
               ref={changePwRef}
               style={{
@@ -428,6 +430,7 @@ export default function LoginPage() {
         <Footer />
       </div>
 
+      {/* Modal recuperar contraseña */}
       {showForgotModal && (
         <div
           onClick={closeForgotPasswordModal}
@@ -462,10 +465,13 @@ export default function LoginPage() {
                 letterSpacing: "-0.02em",
               }}
             >
-              Recuperar contraseña
+               Recuperar contraseña
             </h2>
 
+       
+
             <div style={{ width: "100%" }}>
+
               <input
                 className="input"
                 type="email"

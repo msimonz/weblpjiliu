@@ -1086,9 +1086,14 @@ export default function TeacherPage() {
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <div className="btnLight" style={{ padding: "8px 12px", borderRadius: 999 }}>
-                Profesor · {me?.user?.email}
+              <div className="topbarUserText">
+                Profesor ·{" "}{me?.profile?.name ??
+                me?.profile?.full_name ??
+                me?.user?.user_metadata?.full_name ??
+                me?.user?.email ??
+                "—"}
               </div>
+
             </div>
           </div>
 

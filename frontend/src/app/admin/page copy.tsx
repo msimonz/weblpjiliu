@@ -866,7 +866,7 @@ export default function AdminPage() {
       if (upsertClassFilter === "all") return;
 
       const res: GradeGridResponse = await apiFetch(
-        `/api/admin/class-grade-grid?class_id=${Number(upsertClassFilter)}`
+        `/api/teacher/class-grade-grid?class_id=${Number(upsertClassFilter)}`
       );
 
       const evals = res?.evaluations || [];
@@ -988,7 +988,7 @@ export default function AdminPage() {
       await Promise.all(
         applicableEvals.map((ev) => {
           const key = gradeCellKey(student.id, ev.id);
-          return apiFetch("/api/admin/grades", {
+          return apiFetch("/api/teacher/grades", {
             method: "POST",
             body: JSON.stringify({
               exam_id: ev.id,
@@ -1048,7 +1048,7 @@ export default function AdminPage() {
 
       await Promise.all(
         payloads.map((p) =>
-          apiFetch("/api/admin/grades", {
+          apiFetch("/api/teacher/grades", {
             method: "POST",
             body: JSON.stringify(p),
           })
