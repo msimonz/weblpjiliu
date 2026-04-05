@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import { primaryRole, roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
+import * as XLSX from "xlsx";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 
 type Course = { id: number; name: string; level: number; year: string | null };
@@ -65,6 +66,7 @@ type GridGradeRow = {
   id_student: string;
   id_exam: number;
   grade: number | null;
+  attempts?: number | null;
 };
 
 type GradeGridResponse = {
@@ -263,7 +265,31 @@ export default function AdminPage() {
   } | null>(null);
   const [gEvaluations, setGEvaluations] = useState<EvalItem[]>([]);
   const [gRoster, setGRoster] = useState<StudentRow[]>([]);
+  const [gGrades, setGGrades] = useState<GridGradeRow[]>([]);
   const [gLoadingRoster, setGLoadingRoster] = useState(false);
+
+  const [grillaSortKey, setGrillaSortKey] = useState<"cedula" | "name">("name");
+  const [grillaSortDir, setGrillaSortDir] = useState<"asc" | "desc">("asc");
+
+  const sortedRoster = useMemo(() => {
+    const copy = [...gRoster];
+    copy.sort((a, b) => {
+      const valA = grillaSortKey === "cedula" ? a.cedula : a.name;
+      const valB = grillaSortKey === "cedula" ? b.cedula : b.name;
+      const cmp = valA.localeCompare(valB, "es", { sensitivity: "base" });
+      return grillaSortDir === "asc" ? cmp : -cmp;
+    });
+    return copy;
+  }, [gRoster, grillaSortKey, grillaSortDir]);
+
+  function toggleGrillaSort(key: "cedula" | "name") {
+    if (grillaSortKey === key) {
+      setGrillaSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setGrillaSortKey(key);
+      setGrillaSortDir("asc");
+    }
+  }
 
   const [gradeDraft, setGradeDraft] = useState<Record<string, string>>({});
   const [savingOne, setSavingOne] = useState<Record<string, boolean>>({});
@@ -424,7 +450,7 @@ export default function AdminPage() {
   const upsertDynamicMinWidth = useMemo(() => {
     const cedulaW = 170;
     const alumnoW = 320;
-    const evalW = 220;
+    const evalW = 120;
     const actionW = 180;
 
     return cedulaW + alumnoW + actionW + gEvaluations.length * evalW;
@@ -534,6 +560,7 @@ export default function AdminPage() {
     setGridClassInfo(null);
     setGEvaluations([]);
     setGRoster([]);
+    setGGrades([]);
     setGradeDraft({});
     setEditingRow({});
     setRowSnapshot({});
@@ -544,6 +571,7 @@ export default function AdminPage() {
     setGridClassInfo(null);
     setGEvaluations([]);
     setGRoster([]);
+    setGGrades([]);
     setGradeDraft({});
     setEditingRow({});
     setRowSnapshot({});
@@ -858,6 +886,7 @@ export default function AdminPage() {
     setGridClassInfo(null);
     setGEvaluations([]);
     setGRoster([]);
+    setGGrades([]);
     setGradeDraft({});
     setEditingRow({});
     setRowSnapshot({});
@@ -876,6 +905,7 @@ export default function AdminPage() {
       setGridClassInfo(res?.class || null);
       setGEvaluations(evals);
       setGRoster(roster);
+      setGGrades(grades);
 
       const drafts: Record<string, string> = {};
       for (const g of grades) {
@@ -888,6 +918,7 @@ export default function AdminPage() {
       setGridClassInfo(null);
       setGEvaluations([]);
       setGRoster([]);
+      setGGrades([]);
       setGradeDraft({});
     } finally {
       setGLoadingRoster(false);
@@ -1013,6 +1044,40 @@ export default function AdminPage() {
     } finally {
       setSavingOne((prev) => ({ ...prev, [student.id]: false }));
     }
+  }
+
+  function downloadExcel() {
+    const materia = gridClassInfo?.name ?? selectedUpsertClass?.name ?? "Grilla";
+    const rows = sortedRoster.map((st) => {
+      const row: Record<string, string | number> = {
+        Cédula: st.cedula,
+        Alumno: st.name,
+      };
+      for (const ev of gEvaluations) {
+        const label = getEvaluationColumnLabel(ev);
+        if (!isEvaluationApplicableToStudent(st, ev)) {
+          row[label] = "N/A";
+          continue;
+        }
+        const gradeRecord = gGrades.find(
+          (g) => g.id_student === st.id && g.id_exam === ev.id
+        );
+        const attempts = gradeRecord?.attempts ?? 0;
+        if (attempts === 0) {
+          row[label] = "No Presentó";
+        } else {
+          const key = gradeCellKey(st.id, ev.id);
+          const val = gradeDraft[key];
+          row[label] = val === "" || val == null ? "" : Number(val);
+        }
+      }
+      return row;
+    });
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Notas");
+    XLSX.writeFile(wb, `${materia}.xlsx`);
   }
 
   async function saveAll() {
@@ -2077,7 +2142,7 @@ export default function AdminPage() {
                           <col style={{ width: `${CEDULA_COL_W}px` }} />
                           <col style={{ width: `${ALUMNO_COL_W}px` }} />
                           {gEvaluations.map((ev) => (
-                            <col key={ev.id} style={{ width: `${EVAL_COL_W}px` }} />
+                            <col key={`${ev.id}-grade`} style={{ width: `120px` }} />
                           ))}
                           <col style={{ width: `${ACTION_COL_W}px` }} />
                         </colgroup>
@@ -2085,6 +2150,7 @@ export default function AdminPage() {
                         <thead>
                           <tr>
                             <th
+                              onClick={() => toggleGrillaSort("cedula")}
                               style={{
                                 textAlign: "left",
                                 padding: "8px 10px",
@@ -2096,12 +2162,15 @@ export default function AdminPage() {
                                 zIndex: 6,
                                 whiteSpace: "nowrap",
                                 boxShadow: "none",
+                                cursor: "pointer",
+                                userSelect: "none",
                               }}
                             >
-                              Cédula
+                              Cédula {grillaSortKey === "cedula" ? (grillaSortDir === "asc" ? "▲" : "▼") : ""}
                             </th>
 
                             <th
+                              onClick={() => toggleGrillaSort("name")}
                               style={{
                                 textAlign: "left",
                                 padding: "8px 10px",
@@ -2112,14 +2181,16 @@ export default function AdminPage() {
                                 left: STICKY_ALUMNO_LEFT,
                                 zIndex: 6,
                                 boxShadow: "none",
+                                cursor: "pointer",
+                                userSelect: "none",
                               }}
                             >
-                              Alumno
+                              Alumno {grillaSortKey === "name" ? (grillaSortDir === "asc" ? "▲" : "▼") : ""}
                             </th>
 
                             {gEvaluations.map((ev) => (
                               <th
-                                key={ev.id}
+                                key={`${ev.id}-grade`}
                                 style={{
                                   textAlign: "left",
                                   padding: "8px 10px",
@@ -2192,7 +2263,7 @@ export default function AdminPage() {
                               </td>
                             </tr>
                           ) : (
-                            gRoster.map((st, rowIndex) => {
+                            sortedRoster.map((st, rowIndex) => {
                               const isEditing = !!editingRow[st.id];
                               const isBusy = !!savingOne[st.id] || savingAll;
 
@@ -2250,10 +2321,13 @@ export default function AdminPage() {
                                     const key = gradeCellKey(st.id, ev.id);
                                     const enabledForCourse = isEvaluationApplicableToStudent(st, ev);
                                     const editable = enabledForCourse && isEditing && !isBusy;
+                                    const gradeRecord = gGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
+                                    const attempts = gradeRecord?.attempts ?? 0;
+                                    const noPresentó = enabledForCourse && attempts === 0;
 
                                     return (
                                       <td
-                                        key={ev.id}
+                                        key={`${ev.id}-grade`}
                                         style={{
                                           padding: 0,
                                           borderBottom: GRILLA.rowBottomBorder,
@@ -2262,62 +2336,96 @@ export default function AdminPage() {
                                               ? editableCellBg
                                               : "transparent"
                                             : disabledCellBg,
+                                          position: "relative",
                                         }}
                                       >
-                                        <input
-                                          className="input"
-                                          inputMode="numeric"
-                                          value={gradeDraft[key] ?? ""}
-                                          readOnly={!editable}
-                                          disabled={!enabledForCourse || isBusy}
-                                          onChange={(e) => {
-                                            if (!editable) return;
-                                            const v = e.target.value;
-                                            if (v === "") {
-                                              return setGradeDraft((p) => ({
-                                                ...p,
-                                                [key]: "",
-                                              }));
-                                            }
-                                            if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
-                                            setGradeDraft((p) => ({ ...p, [key]: v }));
-                                          }}
-                                          placeholder={enabledForCourse ? "—" : "N/A"}
-                                          onFocus={(e) => {
-                                            if (editable) {
-                                              e.currentTarget.style.background = getGrillaFocusCellBg(isDarkTheme);
-                                              e.currentTarget.style.boxShadow =
-                                                "inset 0 0 0 1.5px #3b82f6";
-                                            }
-                                          }}
-                                          onBlur={(e) => {
-                                            e.currentTarget.style.background = editable
-                                              ? editableCellBg
-                                              : "transparent";
-                                            e.currentTarget.style.boxShadow = "none";
-                                          }}
-                                          style={{
-                                            width: "100%",
-                                            minWidth: 0,
-                                            height: 26,
-                                            border: "none",
-                                            borderRadius: 0,
-                                            outline: "none",
-                                            background: editable ? editableCellBg : "transparent",
-                                            boxShadow: "none",
-                                            padding: "0 10px",
-                                            fontSize: 13,
-                                            lineHeight: 1,
-                                            fontWeight: editable ? 700 : 500,
-                                            color: enabledForCourse
-                                              ? cellTextColor
-                                              : isDarkTheme
-                                                ? "var(--muted)"
-                                                : "#94a3b8",
-                                            cursor: editable ? "text" : "default",
-                                            opacity: enabledForCourse ? 1 : 0.6,
-                                          }}
-                                        />
+                                        {noPresentó && !isEditing ? (
+                                          <div
+                                            style={{
+                                              display: "flex",
+                                              alignItems: "center",
+                                              justifyContent: "left",
+                                              height: 26,
+                                              padding: "0 6px",
+                                            }}
+                                          >
+                                            <span
+                                              style={{
+                                                display: "inline-block",
+                                                padding: "2px 10px",
+                                                borderRadius: 4,
+                                                fontSize: 11,
+                                                fontWeight: 700,
+                                                letterSpacing: 0.3,
+                                                background: isDarkTheme
+                                                  ? "rgba(239,68,68,0.15)"
+                                                  : "rgba(239,68,68,0.1)",
+                                                color: isDarkTheme ? "#fca5a5" : "#dc2626",
+                                                border: isDarkTheme
+                                                  ? "1px solid rgba(239,68,68,0.3)"
+                                                  : "1px solid rgba(239,68,68,0.25)",
+                                                whiteSpace: "nowrap",
+                                              }}
+                                            >
+                                              No Presentó
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <input
+                                            className="input"
+                                            inputMode="numeric"
+                                            value={gradeDraft[key] ?? ""}
+                                            readOnly={!editable}
+                                            disabled={!enabledForCourse || isBusy}
+                                            onChange={(e) => {
+                                              if (!editable) return;
+                                              const v = e.target.value;
+                                              if (v === "") {
+                                                return setGradeDraft((p) => ({
+                                                  ...p,
+                                                  [key]: "",
+                                                }));
+                                              }
+                                              if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
+                                              setGradeDraft((p) => ({ ...p, [key]: v }));
+                                            }}
+                                            placeholder={enabledForCourse ? "—" : "N/A"}
+                                            onFocus={(e) => {
+                                              if (editable) {
+                                                e.currentTarget.style.background = getGrillaFocusCellBg(isDarkTheme);
+                                                e.currentTarget.style.boxShadow =
+                                                  "inset 0 0 0 1.5px #3b82f6";
+                                              }
+                                            }}
+                                            onBlur={(e) => {
+                                              e.currentTarget.style.background = editable
+                                                ? editableCellBg
+                                                : "transparent";
+                                              e.currentTarget.style.boxShadow = "none";
+                                            }}
+                                            style={{
+                                              width: "100%",
+                                              minWidth: 0,
+                                              height: 26,
+                                              border: "none",
+                                              borderRadius: 0,
+                                              outline: "none",
+                                              background: editable ? editableCellBg : "transparent",
+                                              boxShadow: "none",
+                                              padding: "0 10px",
+                                              fontSize: 13,
+                                              lineHeight: 1,
+                                              fontWeight: editable ? 700 : 500,
+                                              color: enabledForCourse
+                                                ? cellTextColor
+                                                : isDarkTheme
+                                                  ? "var(--muted)"
+                                                  : "#94a3b8",
+                                              cursor: editable ? "text" : "default",
+                                              opacity: enabledForCourse ? 1 : 0.6,
+                                            }}
+                                          />
+                                        )}
                                       </td>
                                     );
                                   })}
@@ -2412,14 +2520,27 @@ export default function AdminPage() {
                         <b>{gEvaluations.length}</b>
                       </div>
 
-                      <button
-                        type="button"
-                        className="btnLight"
-                        onClick={saveAll}
-                        disabled={savingAll}
-                      >
-                        {savingAll ? "Guardando..." : "Guardar toda la grilla"}
-                      </button>
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <button
+                          type="button"
+                          className="btnLight"
+                          onClick={downloadExcel}
+                          style={{
+                            background: "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)",
+                            border: "1px solid rgba(34,197,94,.8)",
+                          }}
+                        >
+                          Descargar en Excel
+                        </button>
+                        <button
+                          type="button"
+                          className="btnLight"
+                          onClick={saveAll}
+                          disabled={savingAll}
+                        >
+                          {savingAll ? "Guardando..." : "Guardar toda la grilla"}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
