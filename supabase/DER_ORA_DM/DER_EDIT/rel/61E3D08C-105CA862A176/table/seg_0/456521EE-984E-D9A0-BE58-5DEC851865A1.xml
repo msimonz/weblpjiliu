@@ -1,0 +1,116 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<Table class="oracle.dbtools.crest.model.design.relational.Table" directorySegmentName="seg_0" id="456521EE-984E-D9A0-BE58-5DEC851865A1" name="attendance">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-03-30 22:25:32 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<ordsAlias>table_14</ordsAlias>
+<allowColumnReorder>false</allowColumnReorder>
+<existDependencyGenerateInDDl>true</existDependencyGenerateInDDl>
+<parsed>true</parsed>
+<columns itemClass="oracle.dbtools.crest.model.design.relational.Column">
+<Column name="student_id" id="07AB0E9B-D7CA-8AB5-22C2-C462D19A20EB">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-03-30 22:29:56 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<associations>
+<colAssociation fkAssociation="939A1CCC-1BA0-E5C6-4189-6B25262D732E" referredColumn="F0D2332A-49B0-90A2-EE0C-6676714FD62D"/>
+</associations>
+</Column>
+<Column name="class_id" id="12FB6CFE-CD29-D181-601E-8A5A212A8501">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-03-30 22:29:56 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+<associations>
+<colAssociation fkAssociation="F1253505-CA17-F989-CA2A-367FAB6DEED0" referredColumn="120DDD22-601E-B927-929E-558C6D61D597"/>
+</associations>
+</Column>
+<Column name="date" id="23A2CA1D-E0E9-AF09-C60D-ECC2F1997E60">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-03-30 22:29:56 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<nullsAllowed>true</nullsAllowed>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT046</logicalDatatype>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+<Column name="observation" id="EDE35DDF-F07B-6883-2CF3-C3A0B4F4ACDD">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-03-30 22:29:56 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<nullsAllowed>true</nullsAllowed>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT025</logicalDatatype>
+<dataTypeSize>100</dataTypeSize>
+<ownDataTypeParameters>100,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+<Column name="id" id="5051D3E2-7E97-2213-F684-DE005B4CD0F7">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-03-30 22:29:56 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+</columns>
+<indexes itemClass="oracle.dbtools.crest.model.design.relational.Index">
+<ind_PK_UK id="1ED521E6-D378-4AE9-5C0C-813B1397A947" name="attendance_PK">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-03-30 22:29:56 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<pk>true</pk>
+<indexState>Primary Constraint</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="5051D3E2-7E97-2213-F684-DE005B4CD0F7"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="7C10BA1F-B802-F928-63BD-B420E4FD4F1D" name="attendance__UN">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-03-30 22:29:56 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Unique Constraint</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="07AB0E9B-D7CA-8AB5-22C2-C462D19A20EB"/>
+<colUsage columnID="12FB6CFE-CD29-D181-601E-8A5A212A8501"/>
+<colUsage columnID="23A2CA1D-E0E9-AF09-C60D-ECC2F1997E60"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="15BDBCDC-02C9-4BBB-B489-9703E0215215" name="TABLE_14_class_FK">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-03-30 22:29:56 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Foreign Key</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="12FB6CFE-CD29-D181-601E-8A5A212A8501"/>
+</indexColumnUsage>
+</ind_PK_UK>
+<ind_PK_UK id="C62CE641-124E-3F62-210E-F462336F8305" name="attendance_users_FK">
+<createdBy>msimonz</createdBy>
+<createdTime>2026-03-30 22:30:25 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<indexState>Foreign Key</indexState>
+<isSurrogateKey>false</isSurrogateKey>
+<indexColumnUsage>
+<colUsage columnID="07AB0E9B-D7CA-8AB5-22C2-C462D19A20EB"/>
+</indexColumnUsage>
+</ind_PK_UK>
+</indexes>
+</Table>

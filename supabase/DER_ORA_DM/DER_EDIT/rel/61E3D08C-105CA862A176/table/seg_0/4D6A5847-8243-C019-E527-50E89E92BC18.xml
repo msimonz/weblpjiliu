@@ -15,9 +15,9 @@
 <createdTime>2026-02-27 19:45:52 UTC</createdTime>
 <ownerDesignName>DER_EDIT</ownerDesignName>
 <importedID>C92A6B64-8623-1E83-5B88-2E83FD804D71</importedID>
-<use>0</use>
-<logicalDatatype>LogDes-4BABEC65-108B-2A3C-F7C4-84AC47D292B0@LOGDT10040</logicalDatatype>
-<domain>9C4F880E-5EFB-C67B-3912-BDB2F49E0182</domain>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
 <ownDataTypeParameters>,,</ownDataTypeParameters>
 <autoIncrementCycle>false</autoIncrementCycle>
 </Column>
