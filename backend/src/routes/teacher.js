@@ -146,7 +146,28 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
       }
 
       const students = await getStudentsByCourseIds(courseIds);
-      totalStudents = new Set((students || []).map((s) => s.id)).size;
+      const studentList = students || [];
+      totalStudents = new Set(studentList.map((s) => s.id)).size;
+
+      // Conteo de estudiantes por nivel
+      // Usamos String() para evitar problemas de tipo con bigint de Supabase
+      const courseIdToLevel = {};
+      for (const c of courses || []) {
+        courseIdToLevel[String(c.id)] = Number(c.level);
+      }
+
+      const studentSetByLevel = {};
+      for (const s of studentList) {
+        const lvl = courseIdToLevel[String(s.id_course)];
+        if (lvl != null) {
+          if (!studentSetByLevel[lvl]) studentSetByLevel[lvl] = new Set();
+          studentSetByLevel[lvl].add(s.id);
+        }
+      }
+
+      for (const group of groups) {
+        group.student_count = studentSetByLevel[group.level]?.size ?? 0;
+      }
     }
 
     return res.json({
@@ -643,12 +664,43 @@ teacherRouter.patch("/evaluations/:id", requireAuth, requireTeacher, async (req,
       .update({ percent })
       .eq("id", id)
       .select("id,percent")
-      .single();
+      .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
 
     return res.json({ item: data });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error actualizando porcentaje" });
+  }
+});
+
+/**
+ * DELETE /api/teacher/evaluations/:id
+ */
+teacherRouter.delete("/evaluations/:id", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacherId = req.auth.user.id;
+    const id = Number(req.params.id);
+
+    if (!id) return res.status(400).json({ error: "ID inválido" });
+
+    const { data: ev, error: evErr } = await supabaseAdmin
+      .from("evaluation")
+      .select("id,id_teacher")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (evErr) return res.status(500).json({ error: evErr.message });
+    if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
+    if (ev.id_teacher !== teacherId) {
+      return res.status(403).json({ error: "No puedes eliminar esta evaluación" });
+    }
+
+    const { error } = await supabaseAdmin.from("evaluation").delete().eq("id", id);
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error eliminando evaluación" });
   }
 });

@@ -38,7 +38,7 @@ authRouter.post("/profile", requireUser, async (req, res) => {
     .from("users")
     .upsert(payload, { onConflict: "id" })
     .select("id,name,cedula,code_jiliu,email,id_course,created_at")
-    .single();
+    .maybeSingle();
 
   if (error) return res.status(500).json({ error: error.message });
 

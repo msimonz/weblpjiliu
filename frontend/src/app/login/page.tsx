@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
 import { getRoles, roleLabelFromRole, type RoleCode } from "@/lib/roles";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
-import ChangePasswordButton from "@/components/ChangePasswordButton";
+
 
 export default function LoginPage() {
   const router = useRouter();
@@ -32,8 +32,6 @@ export default function LoginPage() {
   const [resetEmail, setResetEmail] = useState("");
   const [resetEmailError, setResetEmailError] = useState("");
   const [sendingReset, setSendingReset] = useState(false);
-  const changePwRef = useRef<HTMLDivElement | null>(null);
-
   const roleToRoute = (role: RoleCode) => {
     if (role === "A") return "/admin";
     if (role === "T") return "/teacher";
@@ -108,7 +106,7 @@ export default function LoginPage() {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
   }
 
-  function handleSendResetEmail() {
+  async function handleSendResetEmail() {
     setResetEmailError("");
     setError(null);
 
@@ -126,16 +124,16 @@ export default function LoginPage() {
 
     setSendingReset(true);
 
-    setTimeout(() => {
-      const btn = changePwRef.current?.querySelector("button");
-      if (btn) {
-        btn.click();
-        setShowForgotModal(false);
-      } else {
-        setResetEmailError("No fue posible iniciar la recuperación");
-      }
+    try {
+      const redirectTo = `${window.location.origin}/update-password`;
+      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+      if (resetErr) throw resetErr;
+      setShowForgotModal(false);
+    } catch (e: any) {
+      setResetEmailError(e?.message || "No fue posible enviar el correo de recuperación");
+    } finally {
       setSendingReset(false);
-    }, 0);
+    }
   }
 
   const HEADER_H = 82;
@@ -399,21 +397,6 @@ export default function LoginPage() {
               </button>
             </div>
 
-            <div
-              ref={changePwRef}
-              style={{
-                position: "absolute",
-                width: 0,
-                height: 0,
-                overflow: "hidden",
-                opacity: 0,
-                pointerEvents: "none",
-              }}
-            >
-              {resetEmail ? (
-                <ChangePasswordButton email={resetEmail} className="btn" />
-              ) : null}
-            </div>
           </div>
         </div>
       </main>

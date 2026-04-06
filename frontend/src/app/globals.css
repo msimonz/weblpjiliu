@@ -264,6 +264,10 @@ button{
   color: var(--text); /* ✅ asegura texto correcto en dark */
 }
 
+.select{
+  background: color-mix(in srgb, var(--field-bg) 78%, var(--stroke) 22%);
+}
+
 .input::placeholder{
   color: color-mix(in srgb, var(--muted) 75%, transparent);
 }

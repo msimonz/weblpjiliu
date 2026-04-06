@@ -346,7 +346,6 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
       grade: g ? Number(g.grade ?? 0) : null,
       finished_at: g?.finished_at ?? null,
       attempts: g?.attempts ?? null,
-      source: g?.source ?? null,
     };
   });
 

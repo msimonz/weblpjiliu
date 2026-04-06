@@ -323,7 +323,7 @@ async function ensureEvaluationByTitle({ courseId, classId, typeId, teacherId, t
       title: cleanTitle,
     })
     .select('id')
-    .single();
+    .maybeSingle();
 
   if (error) throw new Error(`ensureEvaluation insert: ${error.message}`);
   return data.id;

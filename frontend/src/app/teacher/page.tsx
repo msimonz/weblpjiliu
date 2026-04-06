@@ -53,6 +53,7 @@ type DashboardGroup = {
   level: number;
   level_label: string;
   items: TeacherClass[];
+  student_count?: number;
 };
 
 type TeacherDashboardResponse = {
@@ -202,6 +203,13 @@ export default function TeacherPage() {
   const [cPercent, setCPercent] = useState<number>(30);
   const [creating, setCreating] = useState(false);
 
+  // evaluaciones existentes de la materia seleccionada en CREATE
+  const [createClassEvals, setCreateClassEvals] = useState<EvalItem[]>([]);
+  const [loadingCreateClassEvals, setLoadingCreateClassEvals] = useState(false);
+  const [editPercents, setEditPercents] = useState<Record<number, string>>({});
+  const [savingEvalPercent, setSavingEvalPercent] = useState<Record<number, boolean>>({});
+  const [deletingEval, setDeletingEval] = useState<Record<number, boolean>>({});
+
   const [gridClassInfo, setGridClassInfo] = useState<{
     id: number;
     name: string;
@@ -218,6 +226,7 @@ export default function TeacherPage() {
 
   const [percentDraft, setPercentDraft] = useState<Record<number, string>>({});
   const [savingPercents, setSavingPercents] = useState(false);
+  const [savingEvalRow, setSavingEvalRow] = useState<Record<number, boolean>>({});
 
   const [editingRow, setEditingRow] = useState<Record<string, boolean>>({});
   const [rowSnapshot, setRowSnapshot] = useState<Record<string, Record<string, string>>>({});
@@ -417,14 +426,10 @@ export default function TeacherPage() {
   }, [evalLevelFilter, evalClassFilter, evalClassesFiltered]);
 
   useEffect(() => {
-    if (evalClassFilter === "all") {
-      setPercentDraft({});
-      return;
-    }
     const next: Record<number, string> = {};
-    for (const e of evalsInSelectedClass) next[e.id] = String(Number(e.percent ?? 0));
+    for (const e of evalItemsFiltered) next[e.id] = String(Number(e.percent ?? 0));
     setPercentDraft(next);
-  }, [evalClassFilter, evalsInSelectedClass]);
+  }, [evalItemsFiltered]);
 
   const percentDirty = useMemo(() => {
     if (evalClassFilter === "all") return false;
@@ -484,6 +489,27 @@ export default function TeacherPage() {
     }
   }
 
+  async function handleUpdateEvalRow(evalId: number) {
+    const val = Number(percentDraft[evalId]);
+    if (!Number.isFinite(val) || val <= 0 || val > 100) {
+      flash("Porcentaje inválido (1..100)", "err");
+      return;
+    }
+    setSavingEvalRow((p) => ({ ...p, [evalId]: true }));
+    try {
+      await apiFetch(`/api/teacher/evaluations/${evalId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ percent: val }),
+      });
+      flash("✅ Porcentaje actualizado", "ok");
+      await loadEvaluations();
+    } catch (e: any) {
+      flash(e?.message || "Error al actualizar", "err");
+    } finally {
+      setSavingEvalRow((p) => ({ ...p, [evalId]: false }));
+    }
+  }
+
   // =========================
   // CREATE FILTERS
   // =========================
@@ -503,7 +529,31 @@ export default function TeacherPage() {
     setTitlePick("");
     setTitleOther("");
     setCPercent(30);
+    setCreateClassEvals([]);
+    setEditPercents({});
   }, [cCourse]);
+
+  useEffect(() => {
+    if (createClassFilter === "all") {
+      setCreateClassEvals([]);
+      setEditPercents({});
+      return;
+    }
+    let cancelled = false;
+    setLoadingCreateClassEvals(true);
+    apiFetch(`/api/teacher/evaluations?class_id=${Number(createClassFilter)}`)
+      .then((res) => {
+        if (cancelled) return;
+        const evs: EvalItem[] = res?.items || [];
+        setCreateClassEvals(evs);
+        const initPercents: Record<number, string> = {};
+        evs.forEach((e) => { initPercents[e.id] = String(e.percent); });
+        setEditPercents(initPercents);
+      })
+      .catch(() => { if (!cancelled) setCreateClassEvals([]); })
+      .finally(() => { if (!cancelled) setLoadingCreateClassEvals(false); });
+    return () => { cancelled = true; };
+  }, [createClassFilter]);
 
   const createTitleOptions = useMemo(() => {
     if (createClassFilter === "all") return [];
@@ -520,6 +570,44 @@ export default function TeacherPage() {
     }
     return out;
   }, [items, createClassFilter]);
+
+  async function handleSaveCreateEvalPercent(evalId: number) {
+    const val = Number(editPercents[evalId]);
+    if (!Number.isFinite(val) || val <= 0 || val > 100) {
+      flash("Porcentaje inválido (1..100)", "err");
+      return;
+    }
+    setSavingEvalPercent((p) => ({ ...p, [evalId]: true }));
+    try {
+      await apiFetch(`/api/teacher/evaluations/${evalId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ percent: val }),
+      });
+      setCreateClassEvals((prev) =>
+        prev.map((e) => (e.id === evalId ? { ...e, percent: val } : e))
+      );
+      flash("Porcentaje actualizado", "ok");
+    } catch (e: any) {
+      flash(e?.message || "Error al guardar", "err");
+    } finally {
+      setSavingEvalPercent((p) => ({ ...p, [evalId]: false }));
+    }
+  }
+
+  async function handleDeleteCreateEval(evalId: number) {
+    setDeletingEval((p) => ({ ...p, [evalId]: true }));
+    try {
+      await apiFetch(`/api/teacher/evaluations/${evalId}`, { method: "DELETE" });
+      setCreateClassEvals((prev) => prev.filter((e) => e.id !== evalId));
+      setItems((prev) => prev.filter((e) => e.id !== evalId));
+      setEditPercents((p) => { const n = { ...p }; delete n[evalId]; return n; });
+      flash("Evaluación eliminada", "ok");
+    } catch (e: any) {
+      flash(e?.message || "Error al eliminar", "err");
+    } finally {
+      setDeletingEval((p) => ({ ...p, [evalId]: false }));
+    }
+  }
 
   async function handleCreate() {
     setMsg(null);
@@ -545,7 +633,14 @@ export default function TeacherPage() {
 
     const percent = Number(cPercent);
     if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
-      return setMsg("Percent inválido (1..100)");
+      return setMsg("Porcentaje inválido (1..100).");
+    }
+
+    const totalExisting = createClassEvals.reduce((s, e) => s + Number(e.percent), 0);
+    if (totalExisting + percent > 100) {
+      return setMsg(
+        `El porcentaje total superaría 100% (existente: ${totalExisting}%, nuevo: ${percent}%). Ajusta los porcentajes antes de continuar.`
+      );
     }
 
     setCreating(true);
@@ -866,6 +961,9 @@ export default function TeacherPage() {
         )
       );
 
+      setEditingRow({});
+      setRowSnapshot({});
+      await loadGradeGrid();
       flash("✅ Notas actualizadas para toda la materia", "ok");
     } catch (e: any) {
       setMsg(e?.message || "Error actualizando todas las notas");
@@ -1126,12 +1224,32 @@ export default function TeacherPage() {
               <select
                 className="select"
                 value={view}
-                onChange={(e) => setView(e.target.value as TeacherView)}
+                onChange={(e) => {
+                  const next = e.target.value as TeacherView;
+                  setView(next);
+                  setMsg(null);
+                  setToast(null);
+                  if (next === "DASHBOARD") loadDashboard();
+                  if (next === "EVALS") loadEvaluations();
+                  if (next === "CREATE") {
+                    loadTeacherCourses();
+                    loadTypes();
+                    setCCourse("");
+                    setCreateClassFilter("all");
+                    setCType("");
+                    setCTypeOther("");
+                    setTitlePick("");
+                    setTitleOther("");
+                    setCPercent(30);
+                    setCreateClassEvals([]);
+                    setEditPercents({});
+                  }
+                }}
               >
-                <option value="DASHBOARD">Ver mis Materias</option>
-                <option value="EVALS">Ver mis Evaluaciones</option>
-                <option value="CREATE">Crear una Evaluación</option>
-                <option value="UPSERT">Cambiar Nota a mis Estudiantes</option>
+                <option value="DASHBOARD">Ver Materias Asignadas</option>
+                <option value="EVALS">Ver/Actualizar Evaluaciones</option>
+                <option value="CREATE">Crear/Eliminar Evaluaciones</option>
+                <option value="UPSERT">Ver/Actualizar notas de Estudiantes</option>
               </select>
             </div>
           </div>
@@ -1147,120 +1265,6 @@ export default function TeacherPage() {
               ======================= */}
           {view === "DASHBOARD" && (
             <div style={{ marginTop: 18, display: "grid", gap: 18 }}>
-              {/* TABLA / GRID DE MATERIAS POR AÑO */}
-              <div className="card">
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 12,
-                    marginBottom: 16,
-                  }}
-                >
-                  <h2 style={{ margin: 0 }}>Mis materias por año</h2>
-
-                  <button
-                    type="button"
-                    onClick={loadDashboard}
-                    className="btnLight"
-                    style={{ fontWeight: 900 }}
-                  >
-                    {loadingDashboard ? "Cargando..." : "Refrescar"}
-                  </button>
-                </div>
-
-                {loadingDashboard ? (
-                  <div style={{ color: "var(--muted)" }}>Cargando dashboard...</div>
-                ) : !dashboard?.groups?.length ? (
-                  <div style={{ color: "var(--muted)" }}>
-                    No tienes materias asignadas actualmente.
-                  </div>
-                ) : (
-                  <div
-                    style={{
-                      overflowX: "auto",
-                      borderRadius: 18,
-                      border: "1px solid var(--stroke)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        minWidth: 900,
-                        display: "grid",
-                        gridTemplateColumns: "repeat(4, 1fr)",
-                      }}
-                    >
-                      {[1, 2, 3, 4].map((lvl, idx) => {
-                        const group = dashboard.groups.find((g) => Number(g.level) === lvl);
-                        const items = group?.items || [];
-
-                        return (
-                          <div
-                            key={lvl}
-                            style={{
-                              borderRight: idx < 3 ? "1px solid var(--stroke)" : "none",
-                              minHeight: 420,
-                              display: "flex",
-                              flexDirection: "column",
-                            }}
-                          >
-                            {/* encabezado columna */}
-                            <div
-                              style={{
-                                padding: "14px 16px",
-                                borderBottom: "1px solid var(--stroke)",
-                                background: "rgba(14,165,233,.06)",
-                                fontWeight: 700,
-                                letterSpacing: ".04em",
-                                fontSize: 15,
-                              }}
-                            >
-                              {levelLabel(lvl)}
-                            </div>
-
-                            {/* cuerpo columna */}
-                            <div
-                              style={{
-                                padding: 12,
-                                display: "grid",
-                                gap: 10,
-                                alignContent: "start",
-                                flex: 1,
-                              }}
-                            >
-                              {items.length === 0 ? (
-                                <div
-                                  style={{
-                                    fontSize: 14,
-                                    padding: "8px 4px",
-                                  }}
-                                >
-                                  Sin materias asignadas
-                                </div>
-                              ) : (
-                                items.map((item) => (
-                                  <div
-                                    key={item.id}
-                                    style={{
-                                      padding: "-2px",
-                                      fontWeight: 500,
-                                      lineHeight: 1.4,
-                                    }}
-                                  >
-                                    {item.name}
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-
               {/* RESUMEN HORIZONTAL */}
               <div className="card">
                 <h2 style={{ margin: 0, marginBottom: 16 }}>Resumen</h2>
@@ -1321,6 +1325,121 @@ export default function TeacherPage() {
                     </div>
                   </div>
                 </div>
+              </div>
+
+              {/* TABLA / GRID DE MATERIAS POR AÑO */}
+              <div className="card">
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 12,
+                    marginBottom: 16,
+                  }}
+                >
+                  <h2 style={{ margin: 0 }}>Mis materias por año</h2>
+
+                  <button
+                    type="button"
+                    onClick={loadDashboard}
+                    className="btnLight"
+                    style={{ fontWeight: 900 }}
+                  >
+                    {loadingDashboard ? "Cargando..." : "Refrescar"}
+                  </button>
+                </div>
+
+                {loadingDashboard ? (
+                  <div style={{ color: "var(--muted)" }}>Cargando dashboard...</div>
+                ) : !dashboard?.groups?.length ? (
+                  <div style={{ color: "var(--muted)" }}>
+                    No tienes materias asignadas actualmente.
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      overflowX: "auto",
+                      borderRadius: 18,
+                      border: "1px solid var(--stroke)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        minWidth: 900,
+                        display: "grid",
+                        gridTemplateColumns: "repeat(4, 1fr)",
+                      }}
+                    >
+                      {[1, 2, 3, 4].map((lvl, idx) => {
+                        const group = dashboard.groups.find((g) => Number(g.level) === lvl);
+                        const items = group?.items || [];
+                        const studentCount = group?.student_count ?? 0;
+
+                        return (
+                          <div
+                            key={lvl}
+                            style={{
+                              borderRight: idx < 3 ? "1px solid var(--stroke)" : "none",
+                              minHeight: 420,
+                              display: "flex",
+                              flexDirection: "column",
+                            }}
+                          >
+                            {/* encabezado columna */}
+                            <div
+                              style={{
+                                padding: "14px 16px",
+                                borderBottom: "1px solid var(--stroke)",
+                                background: "rgba(14,165,233,.06)",
+                                fontWeight: 700,
+                                letterSpacing: ".04em",
+                                fontSize: 15,
+                              }}
+                            >
+                              {levelLabel(lvl)}{group ? ` - ${studentCount} est.` : ""}
+                            </div>
+
+                            {/* cuerpo columna */}
+                            <div
+                              style={{
+                                padding: 12,
+                                display: "grid",
+                                gap: 10,
+                                alignContent: "start",
+                                flex: 1,
+                              }}
+                            >
+                              {items.length === 0 ? (
+                                <div
+                                  style={{
+                                    fontSize: 14,
+                                    padding: "8px 4px",
+                                  }}
+                                >
+                                  Sin materias asignadas
+                                </div>
+                              ) : (
+                                items.map((item) => (
+                                  <div
+                                    key={item.id}
+                                    style={{
+                                      padding: "-2px",
+                                      fontWeight: 500,
+                                      lineHeight: 1.4,
+                                    }}
+                                  >
+                                    {item.name}
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1393,12 +1512,6 @@ export default function TeacherPage() {
                 </div>
               )}
 
-              {evalClassFilter !== "all" && (
-                <div style={{ marginTop: 8, color: "var(--muted)", fontSize: 13 }}>
-                  Tip: puedes editar el <b>%</b> de esta materia y luego guardar al final.
-                </div>
-              )}
-
               <div
                 style={{
                   marginTop: 12,
@@ -1410,10 +1523,10 @@ export default function TeacherPage() {
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                      <th style={{ textAlign: "left", padding: 12 }}>Evaluación</th>
-                      <th style={{ textAlign: "left", padding: 12, width: 120 }}>%</th>
-                      <th style={{ textAlign: "left", padding: 12 }}>Materia</th>
-                      <th style={{ textAlign: "left", padding: 12 }}>Curso</th>
+                      <th style={{ textAlign: "left", padding: 12, color: "var(--label)" }}>Materia</th>
+                      <th style={{ textAlign: "left", padding: 12, color: "var(--label)" }}>Evaluación</th>
+                      <th style={{ textAlign: "left", padding: 12, width: 110, color: "var(--label)" }}>%</th>
+                      <th style={{ width: 120 }} />
                     </tr>
                   </thead>
                   <tbody>
@@ -1424,79 +1537,61 @@ export default function TeacherPage() {
                         </td>
                       </tr>
                     ) : (
-                      evalItemsFiltered.map((e) => {
-                        const editable =
-                          evalClassFilter !== "all" && e.id_class === Number(evalClassFilter);
-
-                        return (
-                          <tr key={e.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                            <td style={{ padding: 12 }}>
-                              <button
-                                type="button"
-                                onClick={() => goToUpsertFromEvaluation(e)}
-                                style={{
-                                  background: "transparent",
-                                  border: "none",
-                                  padding: 0,
-                                  margin: 0,
-                                  color: "var(--text)",
-                                  font: "inherit",
-                                  fontWeight: 500,
-                                  cursor: "pointer",
-                                  textAlign: "left",
-                                  textDecoration: "underline",
-                                  textUnderlineOffset: 3,
-                                }}
-                                title="Ir a cambiar nota de esta evaluación"
-                              >
-                                {getEvaluationListLabel(e)}
-                              </button>
-                            </td>
-
-                            <td style={{ padding: 12 }}>
-                              {editable ? (
-                                <input
-                                  className="input"
-                                  inputMode="numeric"
-                                  value={percentDraft[e.id] ?? String(e.percent)}
-                                  onChange={(ev) => {
-                                    const v = ev.target.value;
-                                    if (v === "") {
-                                      return setPercentDraft((p) => ({ ...p, [e.id]: "" }));
-                                    }
-                                    if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
-                                    setPercentDraft((p) => ({ ...p, [e.id]: v }));
-                                  }}
-                                  style={{ width: 90 }}
-                                  placeholder="0"
-                                />
-                              ) : (
-                                `${Number(e.percent).toFixed(0)}%`
-                              )}
-                            </td>
-
-                            <td style={{ padding: 12 }}>{e.class?.name ?? `ID ${e.id_class}`}</td>
-                            <td style={{ padding: 12 }}>{e.course?.name ?? `ID ${e.id_course}`}</td>
-                          </tr>
-                        );
-                      })
+                      evalItemsFiltered.map((e) => (
+                        <tr key={e.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
+                          <td style={{ padding: 12 }}>{e.class?.name ?? `ID ${e.id_class}`}</td>
+                          <td style={{ padding: 12 }}>
+                            <button
+                              type="button"
+                              onClick={() => goToUpsertFromEvaluation(e)}
+                              style={{
+                                background: "transparent",
+                                border: "none",
+                                padding: 0,
+                                margin: 0,
+                                color: "var(--text)",
+                                font: "inherit",
+                                fontWeight: 500,
+                                cursor: "pointer",
+                                textAlign: "left",
+                                textDecoration: "underline",
+                                textUnderlineOffset: 3,
+                              }}
+                              title="Ir a cambiar nota de esta evaluación"
+                            >
+                              {getEvaluationListLabel(e)}
+                            </button>
+                          </td>
+                          <td style={{ padding: "8px 12px" }}>
+                            <input
+                              type="number"
+                              min={1}
+                              max={100}
+                              className="input"
+                              style={{ textAlign: "center" }}
+                              value={percentDraft[e.id] ?? String(e.percent)}
+                              onChange={(ev) =>
+                                setPercentDraft((p) => ({ ...p, [e.id]: ev.target.value }))
+                              }
+                            />
+                          </td>
+                          <td style={{ padding: "8px 12px", textAlign: "center" }}>
+                            <button
+                              type="button"
+                              className="btnLight"
+                              style={{ fontSize: 12, padding: "4px 10px" }}
+                              disabled={savingEvalRow[e.id]}
+                              onClick={() => handleUpdateEvalRow(e.id)}
+                            >
+                              {savingEvalRow[e.id] ? "..." : "Actualizar %"}
+                            </button>
+                          </td>
+                        </tr>
+                      ))
                     )}
                   </tbody>
                 </table>
               </div>
-
-              {evalClassFilter !== "all" && (
-                <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 10 }}>
-                  <button
-                    className="btn"
-                    onClick={updatePercents}
-                    disabled={savingPercents || !percentDirty}
-                    style={{ width: 260 }}
-                  >
-                    {savingPercents ? "Actualizando..." : "Actualizar porcentajes"}
-                  </button>
-                </div>
-              )}
             </div>
           )}
 
@@ -1552,103 +1647,254 @@ export default function TeacherPage() {
                   </select>
                 </div>
 
+                {/* EVALUACIONES EXISTENTES DE LA MATERIA */}
+                {createClassFilter !== "all" && (
+                  <div style={{ gridColumn: "1 / span 2" }}>
+                    {loadingCreateClassEvals ? (
+                      <div style={{ color: "var(--muted)", fontSize: 13 }}>Cargando evaluaciones...</div>
+                    ) : createClassEvals.length === 0 ? (
+                      <div style={{ color: "var(--muted)", fontSize: 13 }}>
+                        Esta materia no tiene evaluaciones aún.
+                      </div>
+                    ) : (
+                      <div>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: 8,
+                          }}
+                        >
+                          <div className="label" style={{ margin: 0 }}>
+                            Evaluaciones existentes
+                          </div>
+                          <div style={{ fontSize: 13, color: "var(--muted)" }}>
+                            Total acumulado:{" "}
+                            <b>
+                              {createClassEvals.reduce((s, e) => s + Number(e.percent), 0)}%
+                            </b>
+                          </div>
+                        </div>
+                        <div
+                          style={{
+                            borderRadius: 14,
+                            border: "1px solid var(--stroke)",
+                            overflow: "hidden",
+                          }}
+                        >
+                          {/* encabezado */}
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 100px 80px 80px",
+                              padding: "8px 12px",
+                              background: "rgba(14,165,233,.06)",
+                              borderBottom: "1px solid var(--stroke)",
+                              fontWeight: 700,
+                              fontSize: 13,
+                            }}
+                          >
+                            <div style={{ color: "var(--label)" }}>Evaluación</div>
+                            <div style={{ textAlign: "center" }}>%</div>
+                            <div />
+                            <div />
+                          </div>
+                          {/* filas */}
+                          {createClassEvals.map((ev) => (
+                            <div
+                              key={ev.id}
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "1fr 100px 80px 80px",
+                                padding: "8px 12px",
+                                alignItems: "center",
+                                borderBottom: "1px solid var(--stroke)",
+                                fontSize: 14,
+                              }}
+                            >
+                              <div style={{ fontWeight: 500 }}>
+                                {ev.title}
+                                {ev.evaluation_type?.type && (
+                                  <span style={{ color: "var(--muted)", fontWeight: 400, marginLeft: 6 }}>
+                                    ({ev.evaluation_type.type})
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ textAlign: "center" }}>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={100}
+                                  className="input"
+                                  style={{ textAlign: "center", padding: "4px 6px", fontSize: 13 }}
+                                  value={editPercents[ev.id] ?? String(ev.percent)}
+                                  onChange={(e) =>
+                                    setEditPercents((p) => ({ ...p, [ev.id]: e.target.value }))
+                                  }
+                                />
+                              </div>
+                              <div style={{ textAlign: "center" }}>
+                                <button
+                                  type="button"
+                                  className="btnLight"
+                                  style={{ fontSize: 12, padding: "4px 10px" }}
+                                  disabled={savingEvalPercent[ev.id]}
+                                  onClick={() => handleSaveCreateEvalPercent(ev.id)}
+                                >
+                                  {savingEvalPercent[ev.id] ? "..." : "Guardar"}
+                                </button>
+                              </div>
+                              <div style={{ textAlign: "center" }}>
+                                <button
+                                  type="button"
+                                  className="btnLight"
+                                  style={{ fontSize: 12, padding: "4px 10px", background: "#ef4444", color: "#fff", borderColor: "#ef4444" }}
+                                  disabled={deletingEval[ev.id]}
+                                  onClick={() => handleDeleteCreateEval(ev.id)}
+                                >
+                                  {deletingEval[ev.id] ? "..." : "Eliminar"}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* NUEVA EVALUACIÓN */}
                 <div style={{ gridColumn: "1 / span 2" }}>
-                  <div className="label">Tipo</div>
-                  <select
-                    className="select"
-                    value={cType}
-                    onChange={(e) => {
-                      setCType(e.target.value);
-                      if (e.target.value !== "__other__") setCTypeOther("");
-                    }}
-                    disabled={loadingTypes}
-                  >
-                    <option value="">{loadingTypes ? "Cargando..." : "Selecciona..."}</option>
-                    {types.map((t) => (
-                      <option key={t.id} value={String(t.id)}>
-                        {t.type}
-                      </option>
-                    ))}
-                    <option value="__other__">Otro...</option>
-                  </select>
-
-                  {cType === "__other__" && (
-                    <div style={{ marginTop: 10 }}>
-                      <div className="label">Escribe el tipo</div>
-                      <input
-                        className="input"
-                        value={cTypeOther}
-                        onChange={(e) => setCTypeOther(e.target.value)}
-                        placeholder="Ej: Taller, Quiz, Exposición..."
-                      />
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ gridColumn: "1 / span 2" }}>
-                  <div className="label">Título</div>
-                  <select
-                    className="select"
-                    value={titlePick}
-                    onChange={(e) => {
-                      setTitlePick(e.target.value);
-                      if (e.target.value !== "__other__") setTitleOther("");
-                    }}
-                    disabled={createClassFilter === "all"}
-                  >
-                    <option value="">
-                      {createClassFilter === "all" ? "Selecciona una materia primero" : "Selecciona..."}
-                    </option>
-                    {createTitleOptions.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                    <option value="__other__">Otro...</option>
-                  </select>
-
-                  {titlePick === "__other__" && (
-                    <div style={{ marginTop: 10 }}>
-                      <input
-                        className="input"
-                        value={titleOther}
-                        onChange={(e) => setTitleOther(e.target.value)}
-                        placeholder="Escribe el título (ej: Evaluación final)"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ gridColumn: "1 / span 2", marginTop: 6 }}>
+                  <div className="label" style={{ marginBottom: 8 }}>Nueva evaluación</div>
                   <div
                     style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
+                      borderRadius: 14,
+                      border: "1px solid var(--stroke)",
+                      overflow: "hidden",
                     }}
                   >
-                    <div className="label">Porcentaje</div>
-                    <div style={{ fontWeight: 900, fontSize: 16 }}>{cPercent}%</div>
+                    {/* encabezado de columnas */}
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr 120px 100px",
+                        padding: "8px 12px",
+                        background: "rgba(14,165,233,.06)",
+                        borderBottom: "1px solid var(--stroke)",
+                        fontWeight: 700,
+                        fontSize: 13,
+                      }}
+                    >
+                      <div style={{ color: "var(--label)" }}>Tipo</div>
+                      <div style={{ color: "var(--label)" }}>Título</div>
+                      <div style={{ textAlign: "center" }}>%</div>
+                      <div />
+                    </div>
+
+                    {/* campos en fila */}
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr 120px 100px",
+                        gap: 12,
+                        padding: 12,
+                        alignItems: "start",
+                      }}
+                    >
+                      {/* Tipo */}
+                      <div>
+                        <select
+                          className="select"
+                          value={cType}
+                          onChange={(e) => {
+                            setCType(e.target.value);
+                            if (e.target.value !== "__other__") setCTypeOther("");
+                          }}
+                          disabled={loadingTypes}
+                        >
+                          <option value="">{loadingTypes ? "Cargando..." : "Selecciona..."}</option>
+                          {types.map((t) => (
+                            <option key={t.id} value={String(t.id)}>
+                              {t.type}
+                            </option>
+                          ))}
+                          <option value="__other__">Otro...</option>
+                        </select>
+                        {cType === "__other__" && (
+                          <div style={{ marginTop: 8 }}>
+                            <div className="label">Escribe el tipo</div>
+                            <input
+                              className="input"
+                              value={cTypeOther}
+                              onChange={(e) => setCTypeOther(e.target.value)}
+                              placeholder="Ej: Taller, Quiz..."
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Título */}
+                      <div>
+                        <select
+                          className="select"
+                          value={titlePick}
+                          onChange={(e) => {
+                            setTitlePick(e.target.value);
+                            if (e.target.value !== "__other__") setTitleOther("");
+                          }}
+                          disabled={createClassFilter === "all"}
+                        >
+                          <option value="">
+                            {createClassFilter === "all" ? "Selecciona una materia primero" : "Selecciona..."}
+                          </option>
+                          {createTitleOptions.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                          <option value="__other__">Otro...</option>
+                        </select>
+                        {titlePick === "__other__" && (
+                          <div style={{ marginTop: 8 }}>
+                            <input
+                              className="input"
+                              value={titleOther}
+                              onChange={(e) => setTitleOther(e.target.value)}
+                              placeholder="Escribe el título..."
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Porcentaje */}
+                      <div>
+                        <input
+                          type="number"
+                          min={1}
+                          max={100}
+                          className="input"
+                          style={{ textAlign: "center" }}
+                          value={cPercent}
+                          onChange={(e) => setCPercent(Number(e.target.value))}
+                        />
+                      </div>
+
+                      {/* Botón Crear */}
+                      <div style={{ display: "flex", alignItems: "flex-start" }}>
+                        <button
+                          className="btn"
+                          onClick={handleCreate}
+                          disabled={creating}
+                          style={{ width: "100%", padding: "12px 8px" }}
+                        >
+                          {creating ? "..." : "Crear"}
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <input
-                    type="range"
-                    min={1}
-                    max={100}
-                    value={cPercent}
-                    onChange={(e) => setCPercent(Number(e.target.value))}
-                    style={{ width: "100%", marginTop: 8 }}
-                  />
                 </div>
               </div>
-
-              <button
-                className="btn"
-                onClick={handleCreate}
-                disabled={creating}
-                style={{ marginTop: 12, width: "100%" }}
-              >
-                {creating ? "Creando..." : "Crear evaluación"}
-              </button>
             </div>
           )}
 
@@ -1667,10 +1913,7 @@ export default function TeacherPage() {
                 }}
               >
                 <div>
-                  <h2 style={{ margin: 0 }}>Subir nota manual</h2>
-                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                    Grilla de notas estilo hoja de cálculo.
-                  </div>
+                  <h2 style={{ margin: 0 }}>Actualizar nota manual</h2>
                 </div>
 
                 <button
@@ -2173,12 +2416,12 @@ export default function TeacherPage() {
                         disabled={savingAll}
                         style={{
                           width: 220,
-                          background: "linear-gradient(180deg, #0f172a 0%, #1e293b 100%)",
+                          background: "linear-gradient(180deg, #16a34a 0%, #15803d 100%)",
                           color: "#fff",
-                          border: "1px solid rgba(30,41,59,.85)",
+                          border: "1px solid #15803d",
                         }}
                       >
-                        {savingAll ? "Guardando..." : "Guardar toda la grilla"}
+                        {savingAll ? "Actualizando..." : "Actualizar todos"}
                       </button>
                     </div>
                   )}
