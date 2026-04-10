@@ -1,0 +1,8 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<OSDM_Design class="oracle.dbtools.crest.model.design.Design" name="db-webjiliu" id="9B101457-E7B2-172A-274C-45A919692F7A" version="3.5">
+<createdBy>Alexander Marquez</createdBy>
+<createdTime>2026-04-10 16:52:27 UTC</createdTime>
+<ownerDesignName>DB-WEBJILIU</ownerDesignName>
+<capitalNames>false</capitalNames>
+<designId>9B101457-E7B2-172A-274C-45A919692F7A</designId>
+</OSDM_Design>
