@@ -30,6 +30,16 @@
 <ownDataTypeParameters>50 CHAR,,</ownDataTypeParameters>
 <autoIncrementCycle>false</autoIncrementCycle>
 </Column>
+<Column name="id_module" id="BB001001-BB01-BB01-BB01-BB0100000001">
+<createdBy>Alexander Marquez</createdBy>
+<createdTime>2026-04-10 14:47:48 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
 </columns>
 <indexes itemClass="oracle.dbtools.crest.model.design.relational.Index">
 <ind_PK_UK id="CC4E64A8-957F-D394-3DB6-DD48F0E7046E" name="group_PK">

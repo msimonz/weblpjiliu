@@ -47,12 +47,6 @@
 <createdTime>2026-02-27 19:45:52 UTC</createdTime>
 <ownerDesignName>DER_EDIT</ownerDesignName>
 </ColumnProxy>
-<ColumnProxy name="source" id="FA14EFBA-08A8-C903-876E-1F24E80DFC35">
-<createdBy>msimonz</createdBy>
-<createdTime>2026-02-27 19:45:52 UTC</createdTime>
-<ownerDesignName>DER_EDIT</ownerDesignName>
-<defaultValue>&apos;manual&apos;</defaultValue>
-</ColumnProxy>
 </columnProxies>
 <foreignKeys>
 <ForeignKey class="oracle.dbtools.crest.model.design.storage.oracle.v10g.FKProxyOraclev10g" name="fk_grades_student" id="D6E42EFC-0AA8-0DED-AC83-07DB9FB6006B">

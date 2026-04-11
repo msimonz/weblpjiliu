@@ -8,7 +8,7 @@
 <existDependencyGenerateInDDl>true</existDependencyGenerateInDDl>
 <parsed>true</parsed>
 <columns itemClass="oracle.dbtools.crest.model.design.relational.Column">
-<Column name="student_id" id="07AB0E9B-D7CA-8AB5-22C2-C462D19A20EB">
+<Column name="id_student" id="07AB0E9B-D7CA-8AB5-22C2-C462D19A20EB">
 <createdBy>msimonz</createdBy>
 <createdTime>2026-03-30 22:29:56 UTC</createdTime>
 <ownerDesignName>DER_EDIT</ownerDesignName>
@@ -21,7 +21,7 @@
 <colAssociation fkAssociation="939A1CCC-1BA0-E5C6-4189-6B25262D732E" referredColumn="F0D2332A-49B0-90A2-EE0C-6676714FD62D"/>
 </associations>
 </Column>
-<Column name="class_id" id="12FB6CFE-CD29-D181-601E-8A5A212A8501">
+<Column name="id_class" id="12FB6CFE-CD29-D181-601E-8A5A212A8501">
 <createdBy>msimonz</createdBy>
 <createdTime>2026-03-30 22:29:56 UTC</createdTime>
 <ownerDesignName>DER_EDIT</ownerDesignName>

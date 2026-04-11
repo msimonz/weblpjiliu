@@ -76,19 +76,6 @@
 <ownDataTypeParameters>,,</ownDataTypeParameters>
 <autoIncrementCycle>false</autoIncrementCycle>
 </Column>
-<Column name="source" id="FA14EFBA-08A8-C903-876E-1F24E80DFC35">
-<sourceDDLFile>jiliu.sql</sourceDDLFile>
-<createdBy>msimonz</createdBy>
-<createdTime>2026-02-27 19:45:52 UTC</createdTime>
-<ownerDesignName>DER_EDIT</ownerDesignName>
-<importedID>F3B5B50B-E819-3C10-D5D6-E5B8FF23DA93</importedID>
-<use>0</use>
-<logicalDatatype>LOGDT024</logicalDatatype>
-<domain>DF40FBEE-66DF-62A8-EC65-160C49BAD2B1</domain>
-<defaultValue>&apos;manual&apos;</defaultValue>
-<ownDataTypeParameters>,,</ownDataTypeParameters>
-<autoIncrementCycle>false</autoIncrementCycle>
-</Column>
 <Column name="created_at" id="A0E39E4F-0C78-2575-8887-0D2376926318">
 <sourceDDLFile>jiliu.sql</sourceDDLFile>
 <createdBy>msimonz</createdBy>

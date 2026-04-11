@@ -19,6 +19,11 @@
 <createdTime>2026-03-01 03:51:09 UTC</createdTime>
 <ownerDesignName>DER_EDIT</ownerDesignName>
 </ColumnProxy>
+<ColumnProxy name="id_module" id="BB001001-BB01-BB01-BB01-BB0100000001">
+<createdBy>Alexander Marquez</createdBy>
+<createdTime>2026-04-10 14:47:48 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
 </columnProxies>
 <primaryKeys>
 <PrimaryKey class="oracle.dbtools.crest.model.design.storage.oracle.v10g.PKProxyOraclev10g" name="group_PK" id="CC4E64A8-957F-D394-3DB6-DD48F0E7046E">

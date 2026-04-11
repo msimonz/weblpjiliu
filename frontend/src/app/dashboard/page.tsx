@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
-import { primaryRole, roleLabelFromRole } from "@/lib/roles";
+import { roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
@@ -18,6 +18,7 @@ type GradeItem = {
   percent: number;
   grade: number | null;
   finished_at: string | null;
+  attempts: number | null;
 };
 
 type SummaryItem = {
@@ -368,7 +369,7 @@ export default function DashboardPage() {
           <div className="label" style={{ fontWeight: 500 }}>
             Rol
           </div>
-          <div style={{ fontWeight: 600 }}>{roleLabelFromRole(primaryRole(me))}</div>
+          <div style={{ fontWeight: 600 }}>{roleLabelFromRole(getActiveRole(me))}</div>
         </div>
 
         <div style={{ marginTop: 10, marginBottom: 20 }}>
@@ -787,10 +788,27 @@ export default function DashboardPage() {
                                     className="fit-td fit-num"
                                     style={{
                                       fontWeight: 700,
-                                      color: gradeTextColor(it.grade),
+                                      color: it.attempts === 0 ? "inherit" : gradeTextColor(it.grade),
                                     }}
                                   >
-                                    {it.grade === null ? "—" : Number(it.grade).toFixed(2)}
+                                    {it.attempts === 0 ? (
+                                      <span
+                                        style={{
+                                          display: "inline-block",
+                                          padding: "2px 4px",
+                                          borderRadius: 4,
+                                          fontSize: 10,
+                                          fontWeight: 700,
+                                          letterSpacing: 0.3,
+                                          background: "rgba(239,68,68,0.1)",
+                                          color: "#dc2626",
+                                          border: "1px solid rgba(239,68,68,0.25)",
+                                          whiteSpace: "nowrap",
+                                        }}
+                                      >
+                                        No Presentó
+                                      </span>
+                                    ) : it.grade === null ? "—" : Number(it.grade).toFixed(2)}
                                   </td>
 
                                   <td className="fit-td fit-date" style={{ color: "var(--text)" }}>

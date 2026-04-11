@@ -10,11 +10,12 @@ import Footer from "@/components/Footer";
 import * as XLSX from "xlsx";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 
-type Course = { id: number; name: string; level: number; year: string | null };
+type Course = { id: number; name: string; level: number; year: string | null; user_count?: number };
 
 type GroupMini = {
   id: number;
   name: string;
+  id_module?: number | null;
 };
 
 type ModuleItem = {
@@ -31,7 +32,8 @@ type ClassItem = {
   groups: GroupMini[];
 };
 
-type EvalType = { id: number; type: string };
+type EvalType = { id: number; type: string; eval_count?: number };
+type LevelItem = { id: number; name: string };
 
 type UserMini = {
   id: string;
@@ -47,11 +49,16 @@ type EvalItem = {
   percent: number;
   created_at: string;
   course?: { id: number; name: string; level: number; year: string };
-  class?: { id: number; name: string; level: number };
+  class?: { id: number; name: string; level: number; id_module?: number | null };
   evaluation_type?: { id: number; type: string };
+  teacher?: { id: string; name: string } | null;
+  module?: { id: number; name: string } | null;
+  group?: { id: number; name: string } | null;
   id_course: number;
   id_class: number;
   id_type: number;
+  id_module?: number | null;
+  id_group?: number | null;
 };
 
 type StudentRow = {
@@ -69,34 +76,35 @@ type GridGradeRow = {
   attempts?: number | null;
 };
 
+type AssignRow = { id_class: number; class_name: string; id_teacher: string | null; id_course: number; course_name: string };
+
 type GradeGridResponse = {
   class: { id: number; name: string; level: number } | null;
+  classes?: { id: number; name: string; level: number }[];
   evaluations: EvalItem[];
   students: StudentRow[];
   grades: GridGradeRow[];
 };
 
 const OTHER_OPTION = "__OTHER__";
-const LEVELS = [
-  { value: 1, label: "Primer año" },
-  { value: 2, label: "Segundo año" },
-  { value: 3, label: "Tercer año" },
-  { value: 4, label: "Cuarto año" },
-] as const;
 
 type AdminView =
+  | ""
   | "COURSES"
   | "CLASSES"
   | "TYPES"
   | "ASSIGN_TEACHER"
   | "USERS"
-  | "UPDATE_USER"
-  | "UPSERT";
+  | "UPSERT"
+  | "EVAL_CRUD";
+
+type EvalCrudMode = "class" | "module" | "group";
 
 const ROLE_OPTIONS = [
-  { value: "S", label: "Student (S)" },
-  { value: "T", label: "Teacher (T)" },
-  { value: "A", label: "Admin (A)" },
+  { value: "S", label: "Estudiante" },
+  { value: "M", label: "Monitor" },
+  { value: "T", label: "Profesor" },
+  { value: "A", label: "Admin" },
 ] as const;
 
 const TEMPLATE_PUBLIC_URL =
@@ -192,7 +200,7 @@ export default function AdminPage() {
   const [okMsg, setOkMsg] = useState<string | null>(null);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [view, setView] = useState<AdminView>("COURSES");
+  const [view, setView] = useState<AdminView>("");
 
   const [courses, setCourses] = useState<Course[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
@@ -201,6 +209,7 @@ export default function AdminPage() {
   const [students, setStudents] = useState<UserMini[]>([]);
   const [modules, setModules] = useState<ModuleItem[]>([]);
   const [groups, setGroups] = useState<GroupMini[]>([]);
+  const [levels, setLevels] = useState<LevelItem[]>([]);
   const [loadingData, setLoadingData] = useState(false);
 
   const [newCourseName, setNewCourseName] = useState("");
@@ -208,54 +217,54 @@ export default function AdminPage() {
   const [newCourseYear, setNewCourseYear] = useState<string>("");
 
   const [newClassName, setNewClassName] = useState("");
-  const [newClassLevel, setNewClassLevel] = useState<number>(1);
+  const [newClassLevel, setNewClassLevel] = useState<number>(0);
   const [newClassModuleId, setNewClassModuleId] = useState<string>("");
   const [newClassGroupId, setNewClassGroupId] = useState<string>("");
   const [newModuleName, setNewModuleName] = useState("");
   const [newGroupName, setNewGroupName] = useState("");
+  const [tblFilterLevel, setTblFilterLevel] = useState<string>("");
+  const [tblFilterModule, setTblFilterModule] = useState<string>("");
+  const [tblFilterGroup, setTblFilterGroup] = useState<string>("");
+  const [tblFilterName, setTblFilterName] = useState<string>("");
 
   const [newType, setNewType] = useState("");
 
   const [selAssignLevel, setSelAssignLevel] = useState<string>("");
   const [selTeacher, setSelTeacher] = useState<string>("");
   const [selClass, setSelClass] = useState<string>("");
+  const [selAssignCourse, setSelAssignCourse] = useState<string>("");
+  const [assignGrid, setAssignGrid] = useState<AssignRow[]>([]);
+  const [assignMatFilter, setAssignMatFilter] = useState<string>("ALL");
+  const [assignProfFilter, setAssignProfFilter] = useState<string>("ALL");
+  const [assignEdits, setAssignEdits] = useState<Record<string, string>>({}); // key: `${id_class}_${id_course}`
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [assignSaving, setAssignSaving] = useState(false);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [showMasivo, setShowMasivo] = useState(false);
   const [uploadReport, setUploadReport] = useState<any>(null);
+  const [uploadFileName, setUploadFileName] = useState<string>("");
+  const [templateLoading, setTemplateLoading] = useState(false);
 
   const [uEmail, setUEmail] = useState("");
   const [uName, setUName] = useState("");
   const [uCedula, setUCedula] = useState("");
   const [uCodeJiliu, setUCodeJiliu] = useState("");
   const [uCourseId, setUCourseId] = useState<string>("");
-  const [uRoles, setURoles] = useState<Record<"S" | "T" | "A", boolean>>({
-    S: true,
-    T: false,
-    A: false,
+  const [uLevelId, setULevelId] = useState<string>("");
+  const [uRoles, setURoles] = useState<Record<"S" | "T" | "A" | "M", boolean>>({
+    S: false, T: false, A: false, M: false,
   });
+  const [uSearching, setUSearching] = useState(false);
+  const [uFoundUser, setUFoundUser] = useState(false);
+  const [uNotFound, setUNotFound] = useState(false);
   const [creatingUser, setCreatingUser] = useState(false);
 
-  const [upCedula, setUpCedula] = useState("");
-  const [upEmail, setUpEmail] = useState("");
-  const [upName, setUpName] = useState("");
-  const [upCodeJiliu, setUpCodeJiliu] = useState("");
-  const [upCourseId, setUpCourseId] = useState<string>("");
-  const [upRoles, setUpRoles] = useState<Record<"S" | "T" | "A", boolean>>({
-    S: true,
-    T: false,
-    A: false,
-  });
-
-  const [upLoading, setUpLoading] = useState(false);
-  const [upSearching, setUpSearching] = useState(false);
-  const lastCedulaFetchedRef = useRef<string>("");
-  const searchSeqRef = useRef<number>(0);
-
-  const [templateLoading, setTemplateLoading] = useState(false);
 
   // ===== UPSERT / CAMBIO DE NOTAS =====
   const [upsertLevelFilter, setUpsertLevelFilter] = useState<number | "">("");
+  const [upsertCourseFilter, setUpsertCourseFilter] = useState<number | "all">("all");
   const [upsertClassFilter, setUpsertClassFilter] = useState<number | "all">("all");
 
   const [gridClassInfo, setGridClassInfo] = useState<{
@@ -270,6 +279,8 @@ export default function AdminPage() {
 
   const [grillaSortKey, setGrillaSortKey] = useState<"cedula" | "name">("name");
   const [grillaSortDir, setGrillaSortDir] = useState<"asc" | "desc">("asc");
+  const [gFilterCedula, setGFilterCedula] = useState<string>("all");
+  const [gFilterName, setGFilterName] = useState<string>("all");
 
   const sortedRoster = useMemo(() => {
     const copy = [...gRoster];
@@ -281,6 +292,14 @@ export default function AdminPage() {
     });
     return copy;
   }, [gRoster, grillaSortKey, grillaSortDir]);
+
+  const filteredRoster = useMemo(() => {
+    return sortedRoster.filter((st) => {
+      if (gFilterCedula !== "all" && st.cedula !== gFilterCedula) return false;
+      if (gFilterName !== "all" && st.id !== gFilterName) return false;
+      return true;
+    });
+  }, [sortedRoster, gFilterCedula, gFilterName]);
 
   function toggleGrillaSort(key: "cedula" | "name") {
     if (grillaSortKey === key) {
@@ -301,6 +320,28 @@ export default function AdminPage() {
   const [toast, setToast] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
   const toastTimer = useRef<number | null>(null);
 
+  // ===== EVAL_CRUD =====
+  const [ecMode, setEcMode] = useState<EvalCrudMode>("class");
+  const [ecLevel, setEcLevel] = useState<number>(0);
+  const [ecModuleId, setEcModuleId] = useState<string>("");
+  const [ecGroupId, setEcGroupId] = useState<string>("");
+  const [ecClassId, setEcClassId] = useState<string>("");
+  const [ecCourseId, setEcCourseId] = useState<string>("");
+  const [ecTeacherId, setEcTeacherId] = useState<string>("");
+  const [ecTeachers, setEcTeachers] = useState<UserMini[]>([]);
+  const [ecRowTeachers, setEcRowTeachers] = useState<UserMini[]>([]);
+  const [ecType, setEcType] = useState<string>("");
+  const [ecTypeOther, setEcTypeOther] = useState<string>("");
+  const [ecTitle, setEcTitle] = useState<string>("");
+  const [ecPercent, setEcPercent] = useState<number>(30);
+  const [ecExisting, setEcExisting] = useState<EvalItem[]>([]);
+  const [ecLoadingExisting, setEcLoadingExisting] = useState(false);
+  const [ecEditPercents, setEcEditPercents] = useState<Record<number, string>>({});
+  const [ecEditTeachers, setEcEditTeachers] = useState<Record<number, string>>({});
+  const [ecSavingPercent, setEcSavingPercent] = useState<Record<number, boolean>>({});
+  const [ecDeleting, setEcDeleting] = useState<Record<number, boolean>>({});
+  const [ecCreating, setEcCreating] = useState(false);
+
   const CEDULA_COL_W = 150;
   const ALUMNO_COL_W = 260;
   const EVAL_COL_W = 170;
@@ -310,7 +351,7 @@ export default function AdminPage() {
   function showOk(text: string) {
     setMsg(null);
     setOkMsg(text);
-    setTimeout(() => setOkMsg(null), 4500);
+    setTimeout(() => setOkMsg(null), 1500);
   }
 
   function showErr(text: string) {
@@ -349,7 +390,7 @@ export default function AdminPage() {
     setOkMsg(null);
     setLoadingData(true);
     try {
-      const [c1, c2, c3, t1, s1, m1, g1] = await Promise.all([
+      const [c1, c2, c3, t1, s1, m1, g1, l1] = await Promise.all([
         apiFetch("/api/admin/courses"),
         apiFetch("/api/admin/classes"),
         apiFetch("/api/admin/evaluation-types"),
@@ -357,6 +398,7 @@ export default function AdminPage() {
         apiFetch("/api/admin/students"),
         apiFetch("/api/admin/modules"),
         apiFetch("/api/admin/groups"),
+        apiFetch("/api/admin/levels"),
       ]);
 
       setCourses(c1?.items || []);
@@ -366,6 +408,7 @@ export default function AdminPage() {
       setStudents(s1?.items || []);
       setModules(m1?.items || []);
       setGroups(g1?.items || []);
+      setLevels(l1?.items || []);
     } catch (e: any) {
       showErr(e?.message || "Error cargando datos del admin");
     } finally {
@@ -377,57 +420,128 @@ export default function AdminPage() {
     if (!loadingMe) loadAll();
   }, [loadingMe]);
 
-  const classesForAssign = useMemo(() => {
+  const coursesForLevel = useMemo(() => {
     if (!selAssignLevel) return [];
-    return classes.filter((c) => Number(c.level) === Number(selAssignLevel));
-  }, [classes, selAssignLevel]);
+    return courses.filter((c) => Number(c.level) === Number(selAssignLevel));
+  }, [courses, selAssignLevel]);
+
+  const coursesForULevel = useMemo(() => {
+    if (!uLevelId) return [];
+    return courses.filter((c) => Number(c.level) === Number(uLevelId));
+  }, [courses, uLevelId]);
+
+  const assignVisibleRows = useMemo(() => {
+    let rows = assignGrid;
+    if (assignMatFilter === "WITH") rows = rows.filter((r) => r.id_teacher != null);
+    else if (assignMatFilter === "WITHOUT") rows = rows.filter((r) => r.id_teacher == null);
+    else if (assignMatFilter !== "ALL") rows = rows.filter((r) => String(r.id_class) === assignMatFilter);
+    if (assignProfFilter === "WITH") rows = rows.filter((r) => r.id_teacher != null);
+    else if (assignProfFilter === "WITHOUT") rows = [];
+    else if (assignProfFilter !== "ALL") rows = rows.filter((r) => r.id_teacher === assignProfFilter);
+    return rows;
+  }, [assignGrid, assignMatFilter, assignProfFilter]);
+
+  const assignMultiCourse = useMemo(
+    () => new Set(assignGrid.map((r) => r.id_course)).size > 1,
+    [assignGrid]
+  );
+
+  const assignOrphanTeachers = useMemo(() => {
+    const assignedIds = new Set(assignGrid.map((r) => r.id_teacher).filter(Boolean));
+    const orphans = teachers.filter((t) => !assignedIds.has(t.id));
+    const showOrphans =
+      (assignProfFilter === "ALL" || assignProfFilter === "WITHOUT") &&
+      assignMatFilter === "ALL";
+    return showOrphans ? orphans : [];
+  }, [assignGrid, assignProfFilter, assignMatFilter, teachers]);
 
   const availableModulesForCreate = useMemo(() => {
-    const ids = Array.from(
-      new Set(
-        classes
-          .filter((c) => Number(c.level) === Number(newClassLevel))
-          .map((c) => Number(c.id_module))
-          .filter((x) => Number.isFinite(x) && x > 0)
-      )
-    );
-
-    return modules.filter((m) => ids.includes(m.id));
-  }, [classes, modules, newClassLevel]);
+    return [...modules].sort((a, b) => a.name.localeCompare(b.name, "es"));
+  }, [modules]);
 
   const classesByLevelAndModule = useMemo(() => {
     return classes.filter((c) => {
       if (Number(c.level) !== Number(newClassLevel)) return false;
-      if (newClassModuleId && Number(c.id_module) !== Number(newClassModuleId)) return false;
+      if (newClassModuleId && newClassModuleId !== OTHER_OPTION && Number(c.id_module) !== Number(newClassModuleId)) return false;
       return true;
     });
   }, [classes, newClassLevel, newClassModuleId]);
 
   const availableGroupsForCreate = useMemo(() => {
-    const map = new Map<number, GroupMini>();
-
-    for (const cls of classesByLevelAndModule) {
-      for (const grp of cls.groups || []) {
-        if (!map.has(grp.id)) {
-          map.set(grp.id, grp);
-        }
-      }
+    if (!newClassModuleId || newClassModuleId === OTHER_OPTION) return [];
+    const filtered = groups
+      .filter((g) => Number(g.id_module) === Number(newClassModuleId))
+      .sort((a, b) => a.name.localeCompare(b.name, "es"));
+    if (filtered.length === 0) {
+      // Module has no groups — use the module itself as the only option (id=0 sentinel)
+      const mod = modules.find((m) => String(m.id) === newClassModuleId);
+      if (mod) return [{ id: 0, name: mod.name }];
     }
+    return filtered;
+  }, [groups, newClassModuleId, modules]);
 
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [classesByLevelAndModule]);
+  // ── Tabla filtros en cascada ──
+  const tblLevelOptions = useMemo(() => {
+    const ids = [...new Set(classes.map((c) => Number(c.level)))].sort((a, b) => a - b);
+    return ids.map((id) => ({ id: String(id), name: levels.find((l) => l.id === id)?.name ?? String(id) }));
+  }, [classes, levels]);
 
-  const classesForCreate = useMemo(() => {
-    return classes.filter((c) => {
-      if (Number(c.level) !== Number(newClassLevel)) return false;
-      if (newClassModuleId && Number(c.id_module) !== Number(newClassModuleId)) return false;
-      if (newClassGroupId) {
-        const hasGroup = (c.groups || []).some((g) => Number(g.id) === Number(newClassGroupId));
-        if (!hasGroup) return false;
+  const tblModuleOptions = useMemo(() => {
+    const base = tblFilterLevel ? classes.filter((c) => String(c.level) === tblFilterLevel) : classes;
+    const names = [...new Set(base.map((c) => c.module_name ?? "—"))].sort((a, b) => a.localeCompare(b, "es"));
+    return names;
+  }, [classes, tblFilterLevel]);
+
+  const tblGroupOptions = useMemo(() => {
+    const base = classes.filter((c) => {
+      if (tblFilterLevel && String(c.level) !== tblFilterLevel) return false;
+      if (tblFilterModule && (c.module_name ?? "—") !== tblFilterModule) return false;
+      return true;
+    });
+    const moduleIds = new Set(base.map((c) => Number(c.id_module)).filter(Boolean));
+    const names = groups
+      .filter((g) => g.id_module != null && moduleIds.has(Number(g.id_module)))
+      .map((g) => g.name);
+    return [...new Set(names)].sort((a, b) => a.localeCompare(b, "es"));
+  }, [classes, groups, tblFilterLevel, tblFilterModule]);
+
+  const tblNameOptions = useMemo(() => {
+    const base = classes.filter((c) => {
+      if (tblFilterLevel && String(c.level) !== tblFilterLevel) return false;
+      if (tblFilterModule && (c.module_name ?? "—") !== tblFilterModule) return false;
+      if (tblFilterGroup) {
+        const grpNames = c.groups?.length ? c.groups.map((g) => g.name) : ["—"];
+        if (!grpNames.includes(tblFilterGroup)) return false;
       }
       return true;
     });
-  }, [classes, newClassLevel, newClassModuleId, newClassGroupId]);
+    return [...new Set(base.map((c) => c.name))].sort((a, b) => a.localeCompare(b, "es"));
+  }, [classes, tblFilterLevel, tblFilterModule, tblFilterGroup]);
+
+  const classesFiltered = useMemo(() => {
+    return classes.filter((c) => {
+      if (tblFilterLevel && String(c.level) !== tblFilterLevel) return false;
+      if (tblFilterModule && (c.module_name ?? "—") !== tblFilterModule) return false;
+      if (tblFilterGroup) {
+        const grpNames = c.groups?.length ? c.groups.map((g) => g.name) : ["—"];
+        if (!grpNames.includes(tblFilterGroup)) return false;
+      }
+      if (tblFilterName && c.name !== tblFilterName) return false;
+      return true;
+    });
+  }, [classes, tblFilterLevel, tblFilterModule, tblFilterGroup, tblFilterName]);
+
+  const availableCourseOptions = useMemo(() => {
+    if (!newCourseLevel) return [];
+    const taken = new Set(
+      courses
+        .filter((c) => Number(c.level) === newCourseLevel && String(c.year) === newCourseYear)
+        .map((c) => String(c.name).trim())
+    );
+    return [1, 2, 3, 4]
+      .map((n) => String(newCourseLevel * 100 + n))
+      .filter((opt) => !taken.has(opt));
+  }, [courses, newCourseLevel, newCourseYear]);
 
   const availableLevels = useMemo(() => {
     const set = new Set<number>();
@@ -437,8 +551,13 @@ export default function AdminPage() {
     return [...set].sort((a, b) => a - b);
   }, [classes]);
 
+  const upsertCoursesFiltered = useMemo(() => {
+    if (upsertLevelFilter === "" || upsertLevelFilter === 0) return courses;
+    return courses.filter((c) => Number(c.level) === Number(upsertLevelFilter));
+  }, [courses, upsertLevelFilter]);
+
   const upsertClassesFiltered = useMemo(() => {
-    if (upsertLevelFilter === "") return [];
+    if (upsertLevelFilter === "" || upsertLevelFilter === 0) return classes;
     return classes.filter((c) => Number(c.level) === Number(upsertLevelFilter));
   }, [classes, upsertLevelFilter]);
 
@@ -452,9 +571,120 @@ export default function AdminPage() {
     const alumnoW = 320;
     const evalW = 120;
     const actionW = 180;
-
     return cedulaW + alumnoW + actionW + gEvaluations.length * evalW;
   }, [gEvaluations.length]);
+
+  // ===== EVAL_CRUD memos =====
+  // ecLevel: 0 = sin selección, -1 = Todos, >0 = año específico
+  // ecEffectiveLevel: nivel real a usar en filtros — si hay curso seleccionado usa su nivel
+  const ecEffectiveLevel = useMemo(() => {
+    if (!ecLevel) return 0;
+    if (ecCourseId) {
+      const found = courses.find((c) => String(c.id) === ecCourseId);
+      if (found) return Number(found.level);
+    }
+    return ecLevel;
+  }, [ecLevel, ecCourseId, courses]);
+
+  const ecModules = useMemo(() => {
+    if (!ecEffectiveLevel) return [];
+    if (ecEffectiveLevel === -1) return [...modules].sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? "")));
+    const ids = new Set(
+      classes
+        .filter((c) => Number(c.level) === ecEffectiveLevel)
+        .map((c) => c.id_module)
+        .filter((x): x is number => x !== null && Number.isFinite(x) && x > 0)
+    );
+    return modules.filter((m) => ids.has(m.id));
+  }, [classes, modules, ecEffectiveLevel]);
+
+  const ecGroups = useMemo(() => {
+    if (!ecEffectiveLevel) return [];
+    const sortFn = (a: GroupMini, b: GroupMini) => String(a.name ?? "").localeCompare(String(b.name ?? ""));
+    if (ecModuleId) {
+      const direct = groups.filter((g) => Number(g.id_module) === Number(ecModuleId));
+      if (direct.length > 0) return direct.sort(sortFn);
+      const map = new Map<number, GroupMini>();
+      classes
+        .filter((c) => Number(c.id_module) === Number(ecModuleId))
+        .forEach((c) => (c.groups || []).forEach((g) => { if (!map.has(g.id)) map.set(g.id, g); }));
+      return Array.from(map.values()).sort(sortFn);
+    }
+    if (ecEffectiveLevel === -1) return [...groups].sort(sortFn);
+    const moduleIds = new Set(
+      classes
+        .filter((c) => Number(c.level) === ecEffectiveLevel)
+        .map((c) => c.id_module)
+        .filter((x): x is number => x !== null && Number.isFinite(x) && x > 0)
+    );
+    return groups
+      .filter((g) => g.id_module != null && moduleIds.has(g.id_module))
+      .sort(sortFn);
+  }, [groups, classes, ecModuleId, ecEffectiveLevel]);
+
+  const ecClasses = useMemo(() => {
+    if (!ecEffectiveLevel) return [];
+    let filtered = classes;
+    if (ecEffectiveLevel > 0) filtered = filtered.filter((c) => Number(c.level) === ecEffectiveLevel);
+    if (ecModuleId) {
+      const groupIdsOfModule = new Set(
+        groups.filter((g) => Number(g.id_module) === Number(ecModuleId)).map((g) => g.id)
+      );
+      filtered = filtered.filter((c) =>
+        Number(c.id_module) === Number(ecModuleId) ||
+        (c.groups || []).some((g) => groupIdsOfModule.has(Number(g.id)))
+      );
+    }
+    if (ecGroupId) filtered = filtered.filter((c) => (c.groups || []).some((g) => Number(g.id) === Number(ecGroupId)));
+    return filtered;
+  }, [classes, groups, ecEffectiveLevel, ecModuleId, ecGroupId]);
+
+  const ecCourses = useMemo(() => {
+    if (!ecLevel) return [];
+    if (ecLevel === -1) return [...courses].sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? "")));
+    return courses.filter((c) => Number(c.level) === ecLevel);
+  }, [courses, ecLevel]);
+
+  const ecExistingFiltered = useMemo(() => {
+    let items = ecExisting;
+    if (ecModuleId) {
+      items = items.filter((ev) =>
+        String(ev.id_module) === ecModuleId ||
+        String(ev.class?.id_module) === ecModuleId
+      );
+    }
+    if (ecGroupId) {
+      items = items.filter((ev) => String(ev.id_group) === ecGroupId);
+    }
+    if (ecClassId) {
+      items = items.filter((ev) => String(ev.id_class) === ecClassId);
+    }
+    if (ecType && ecType !== "__other__") {
+      items = items.filter((ev) => String(ev.id_type) === ecType);
+    }
+    return items;
+  }, [ecExisting, ecModuleId, ecGroupId, ecClassId, ecType]);
+
+  const ecLevelLabel = useMemo(() => {
+    return levels.find((l) => l.id === ecLevel)?.name ?? `Nivel ${ecLevel}`;
+  }, [ecLevel, levels]);
+
+  const ecScopeBreadcrumb = useMemo(() => {
+    const parts: string[] = [ecLevelLabel];
+    if (ecModuleId) {
+      const m = modules.find((x) => x.id === Number(ecModuleId));
+      if (m) parts.push(m.name);
+    }
+    if (ecGroupId) {
+      const g = groups.find((x) => x.id === Number(ecGroupId));
+      if (g) parts.push(`Grupo: ${g.name}`);
+    }
+    if (ecMode === "class" && ecClassId) {
+      const c = classes.find((x) => x.id === Number(ecClassId));
+      if (c) parts.push(c.name);
+    }
+    return parts.join(" › ");
+  }, [ecLevelLabel, ecModuleId, ecGroupId, ecMode, ecClassId, modules, groups, classes]);
 
   const evaluationTypeCounts = useMemo(() => {
     const map = new Map<string, number>();
@@ -483,78 +713,115 @@ export default function AdminPage() {
     setNewGroupName("");
   }, [newClassModuleId]);
 
+  // Tabla materias: reset en cascada
+  useEffect(() => { setTblFilterModule(""); setTblFilterGroup(""); setTblFilterName(""); }, [tblFilterLevel]);
+  useEffect(() => { setTblFilterGroup(""); setTblFilterName(""); }, [tblFilterModule]);
+  useEffect(() => { setTblFilterName(""); }, [tblFilterGroup]);
+
+  // EVAL_CRUD: limpiar filtros de nivel inferior al cambiar nivel
   useEffect(() => {
-    if (view !== "UPDATE_USER") return;
+    setEcModuleId("");
+    setEcGroupId("");
+    setEcClassId("");
+    setEcCourseId("");
+  }, [ecLevel]);
 
-    const ced = upCedula.trim();
+  // Helper: construir params de profesores según cascada
+  function buildTeacherParams(opts: { withMode?: boolean } = {}) {
+    const params = new URLSearchParams();
+    if (ecClassId)       params.set("class_id",  ecClassId);
+    else if (ecGroupId)  params.set("group_id",  ecGroupId);
+    else if (ecModuleId) params.set("module_id", ecModuleId);
+    else if (ecCourseId) params.set("course_id", ecCourseId);
+    else if (ecEffectiveLevel > 0) params.set("level", String(ecEffectiveLevel));
+    return params;
+  }
 
-    if (!ced) {
-      lastCedulaFetchedRef.current = "";
-      setUpSearching(false);
-      setUpEmail("");
-      setUpName("");
-      setUpCodeJiliu("");
-      setUpCourseId("");
-      setUpRoles({ S: true, T: false, A: false });
+  // EVAL_CRUD: profesores para filas de evaluaciones existentes
+  useEffect(() => {
+    if (view !== "EVAL_CRUD" || !ecEffectiveLevel) { setEcRowTeachers([]); return; }
+    const params = buildTeacherParams();
+    apiFetch(`/api/admin/teachers?${params.toString()}`)
+      .then((res) => setEcRowTeachers(res?.items || []))
+      .catch(() => setEcRowTeachers([]));
+  }, [view, ecEffectiveLevel, ecCourseId, ecModuleId, ecGroupId, ecClassId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // EVAL_CRUD: profesores para formulario de creación (solo módulo/grupo)
+  useEffect(() => {
+    if (view !== "EVAL_CRUD") return;
+    if (ecMode === "class") { setEcTeachers([]); setEcTeacherId(""); return; }
+    setEcTeacherId("");
+    const params = buildTeacherParams();
+    apiFetch(`/api/admin/teachers?${params.toString()}`)
+      .then((res) => setEcTeachers(res?.items || []))
+      .catch(() => setEcTeachers([]));
+  }, [view, ecMode, ecEffectiveLevel, ecCourseId, ecModuleId, ecGroupId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setEcGroupId("");
+    setEcClassId("");
+  }, [ecModuleId]);
+
+  useEffect(() => {
+    setEcClassId("");
+  }, [ecGroupId]);
+
+  // EVAL_CRUD: limpiar mensajes al cambiar cualquier filtro o modo
+  useEffect(() => { setMsg(null); setOkMsg(null); },
+    [ecLevel, ecCourseId, ecModuleId, ecGroupId, ecClassId, ecType, ecMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // EVAL_CRUD: reset completo al cambiar modo
+  useEffect(() => {
+    setEcModuleId("");
+    setEcGroupId("");
+    setEcClassId("");
+    setEcCourseId("");
+    setEcTeacherId("");
+    setEcType("");
+    setEcTypeOther("");
+    setEcTitle("");
+    setEcPercent(30);
+    setEcExisting([]);
+    setEcEditPercents({});
+  }, [ecMode]);
+
+  // EVAL_CRUD: cargar evaluaciones existentes dinámicamente por nivel + filtros opcionales
+  useEffect(() => {
+    if (view !== "EVAL_CRUD") return;
+
+    if (ecLevel === 0) {
+      setEcExisting([]);
+      setEcEditPercents({});
+      setEcEditTeachers({});
       return;
     }
 
-    if (ced.length < 5) return;
+    const params = new URLSearchParams();
+    if (ecLevel > 0) params.set("level", String(ecLevel)); // -1 = Todos → no filtrar por nivel
+    if (ecCourseId) params.set("course_id", ecCourseId);
 
-    const seq = ++searchSeqRef.current;
+    let cancelled = false;
+    setEcLoadingExisting(true);
 
-    const t = setTimeout(async () => {
-      if (lastCedulaFetchedRef.current === ced) return;
-
-      setUpSearching(true);
-      try {
-        const res = await apiFetch(
-          `/api/admin/user-by-cedula?cedula=${encodeURIComponent(ced)}`
-        );
-
-        if (seq !== searchSeqRef.current) return;
-
-        const item = res?.item;
-        if (!item?.id) throw new Error("Usuario no encontrado");
-
-        lastCedulaFetchedRef.current = ced;
-
-        setUpEmail(item.email || "");
-        setUpName(item.name || "");
-        setUpCodeJiliu(item.code_jiliu || "");
-        setUpCourseId(item.id_course ? String(item.id_course) : "");
-
-        const roleSet = new Set(
-          (item.roles || []).map((x: string) => String(x).toUpperCase())
-        );
-        setUpRoles({
-          S: roleSet.has("S"),
-          T: roleSet.has("T"),
-          A: roleSet.has("A"),
+    apiFetch(`/api/admin/evaluations?${params.toString()}`)
+      .then((res) => {
+        if (cancelled) return;
+        const evs: EvalItem[] = res?.items || [];
+        setEcExisting(evs);
+        const initP: Record<number, string> = {};
+        const initT: Record<number, string> = {};
+        evs.forEach((e) => {
+          initP[e.id] = String(e.percent);
+          initT[e.id] = e.teacher?.id ?? "";
         });
+        setEcEditPercents(initP);
+        setEcEditTeachers(initT);
+      })
+      .catch((e: any) => { if (!cancelled) { setEcExisting([]); setMsg(e?.message || "Error cargando evaluaciones"); } })
+      .finally(() => { if (!cancelled) setEcLoadingExisting(false); });
 
-        setMsg(null);
-        setOkMsg("✅ Usuario cargado. Ya puedes editar.");
-        setTimeout(() => setOkMsg(null), 2500);
-      } catch (e: any) {
-        if (seq !== searchSeqRef.current) return;
-
-        lastCedulaFetchedRef.current = "";
-        setUpEmail("");
-        setUpName("");
-        setUpCodeJiliu("");
-        setUpCourseId("");
-        setUpRoles({ S: true, T: false, A: false });
-
-        setOkMsg(null);
-        setMsg(e?.message || "No se pudo cargar el usuario");
-      } finally {
-        if (seq === searchSeqRef.current) setUpSearching(false);
-      }
-    }, 450);
-
-    return () => clearTimeout(t);
-  }, [upCedula, view]);
+    return () => { cancelled = true; };
+  }, [view, ecLevel, ecCourseId]);
 
   useEffect(() => {
     setGridClassInfo(null);
@@ -564,22 +831,19 @@ export default function AdminPage() {
     setGradeDraft({});
     setEditingRow({});
     setRowSnapshot({});
-    setUpsertClassFilter("all");
-  }, [upsertLevelFilter]);
+    setGFilterCedula("all");
+    setGFilterName("all");
 
-  useEffect(() => {
-    setGridClassInfo(null);
-    setGEvaluations([]);
-    setGRoster([]);
-    setGGrades([]);
-    setGradeDraft({});
-    setEditingRow({});
-    setRowSnapshot({});
-  }, [upsertClassFilter]);
+    if (upsertLevelFilter === "") return;
+
+    loadGradeGridWith(upsertLevelFilter, upsertCourseFilter, upsertClassFilter);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upsertLevelFilter, upsertCourseFilter, upsertClassFilter]);
 
   async function createCourse() {
+    if (!newCourseLevel) return showErr("Selecciona un nivel.");
     const name = newCourseName.trim();
-    if (!name) return showErr("Nombre del course requerido.");
+    if (!name) return showErr("Selecciona un curso.");
 
     try {
       await apiFetch("/api/admin/courses", {
@@ -587,43 +851,43 @@ export default function AdminPage() {
         body: JSON.stringify({
           name,
           level: newCourseLevel,
-          year: newCourseYear ? newCourseYear : null,
+          year: newCourseYear || null,
         }),
       });
       setNewCourseName("");
-      setNewCourseYear("");
-      showOk("✅ Course creado");
+      showOk("✅ Curso creado");
       await loadAll();
     } catch (e: any) {
-      showErr(e?.message || "Error creando course");
+      showErr(e?.message || "Error creando curso");
+    }
+  }
+
+  async function deleteCourse(id: number) {
+    try {
+      await apiFetch(`/api/admin/courses/${id}`, { method: "DELETE" });
+      flash("✅ Curso eliminado", "ok");
+      await loadAll();
+    } catch (e: any) {
+      flash(e?.message || "Error eliminando curso", "err");
     }
   }
 
   async function createClass() {
-    const name = newClassName.trim();
+    if (!newClassLevel) return flash("Selecciona un Nivel.", "err");
 
     const isOtherModule = newClassModuleId === OTHER_OPTION;
-    const isOtherGroup = newClassGroupId === OTHER_OPTION;
+    if (!newClassModuleId) return flash("Selecciona un Módulo.", "err");
+    if (isOtherModule && !newModuleName.trim()) return flash("Escribe el nombre del nuevo módulo.", "err");
+    if (!newClassGroupId) return flash("Selecciona un Grupo.", "err");
 
+    const name = newClassName.trim();
+    if (!name) return flash("Escribe el nombre de la materia.", "err");
+
+    const isModuleAsGroup = newClassGroupId === "0"; // sentinel: module has no groups
     const id_module = !isOtherModule ? Number(newClassModuleId || "0") : 0;
-    const id_group = !isOtherGroup ? Number(newClassGroupId || "0") : 0;
-
+    const id_group = !isModuleAsGroup ? Number(newClassGroupId || "0") : 0;
     const new_module_name = isOtherModule ? newModuleName.trim() : "";
-    const new_group_name = isOtherGroup ? newGroupName.trim() : "";
-
-    if (!name) return showErr("Nombre de la materia requerido.");
-
-    if (!newClassModuleId) {
-      return showErr("Debes seleccionar un módulo.");
-    }
-
-    if (isOtherModule && !new_module_name) {
-      return showErr("Debes escribir el nombre del nuevo módulo.");
-    }
-
-    if (isOtherGroup && !new_group_name) {
-      return showErr("Debes escribir el nombre del nuevo grupo.");
-    }
+    const new_group_name = "";
 
     try {
       await apiFetch("/api/admin/classes", {
@@ -644,10 +908,10 @@ export default function AdminPage() {
       setNewModuleName("");
       setNewGroupName("");
 
-      showOk("✅ Materia creada");
+      flash("✅ Materia creada", "ok");
       await loadAll();
     } catch (e: any) {
-      showErr(e?.message || "Error creando materia");
+      flash(e?.message || "Error creando materia", "err");
     }
   }
 
@@ -665,6 +929,16 @@ export default function AdminPage() {
       await loadAll();
     } catch (e: any) {
       showErr(e?.message || "Error creando tipo");
+    }
+  }
+
+  async function deleteEvalType(id: number) {
+    try {
+      await apiFetch(`/api/admin/evaluation-types/${id}`, { method: "DELETE" });
+      flash("✅ Tipo eliminado", "ok");
+      await loadAll();
+    } catch (e: any) {
+      flash(e?.message || "Error eliminando tipo", "err");
     }
   }
 
@@ -689,10 +963,221 @@ export default function AdminPage() {
     }
   }
 
-  function rolesFromState(state: Record<"S" | "T" | "A", boolean>) {
-    return (Object.entries(state) as Array<[string, boolean]>)
-      .filter(([, v]) => v)
-      .map(([k]) => k) as Array<"S" | "T" | "A">;
+  async function loadAssignmentGrid(courseVal: string, levelVal: string) {
+    const params = new URLSearchParams();
+    if (courseVal !== "ALL") params.set("id_course", courseVal);
+    else if (levelVal !== "ALL") params.set("id_level", levelVal);
+    setAssignLoading(true);
+    try {
+      const data = await apiFetch(`/api/admin/assignment-grid?${params}`);
+      setAssignGrid(data.rows || []);
+      setAssignEdits({});
+      setAssignMatFilter("ALL");
+      setAssignProfFilter("ALL");
+    } catch (e: any) {
+      showErr(e?.message || "Error cargando asignaciones");
+    } finally {
+      setAssignLoading(false);
+    }
+  }
+
+  async function saveAssignmentGrid() {
+    if (assignGrid.length === 0) return showErr("Carga el grid primero.");
+    if (Object.keys(assignEdits).length === 0) return showOk("Sin cambios para guardar.");
+
+    // Solo las filas que el usuario realmente editó
+    const rows = Object.entries(assignEdits).map(([key, id_teacher]) => {
+      const [id_class_s, id_course_s] = key.split("_");
+      return {
+        id_class:   Number(id_class_s),
+        id_course:  Number(id_course_s),
+        id_teacher: id_teacher || null,
+      };
+    });
+    setAssignSaving(true);
+    try {
+      await apiFetch("/api/admin/save-assignment-grid", {
+        method: "POST",
+        body: JSON.stringify({ rows }),
+      });
+      showOk("✅ Asignaciones guardadas");
+      await loadAssignmentGrid(selAssignCourse, selAssignLevel);
+    } catch (e: any) {
+      showErr(e?.message || "Error guardando asignaciones");
+    } finally {
+      setAssignSaving(false);
+    }
+  }
+
+  function resetAssignView() {
+    setSelAssignLevel("");
+    setSelAssignCourse("ALL");
+    setAssignGrid([]);
+    setAssignEdits({});
+    setAssignMatFilter("ALL");
+    setAssignProfFilter("ALL");
+  }
+
+  async function ecHandleSavePercent(evalId: number) {
+    const val = Number(ecEditPercents[evalId]);
+    if (!Number.isFinite(val) || val <= 0 || val > 100) {
+      flash("Porcentaje inválido (1..100)", "err");
+      return;
+    }
+    const newTeacherId = ecEditTeachers[evalId] ?? "";
+    setEcSavingPercent((p) => ({ ...p, [evalId]: true }));
+    try {
+      const body: Record<string, unknown> = { percent: val };
+      if (newTeacherId) body.id_teacher = newTeacherId;
+      await apiFetch(`/api/admin/evaluations/${evalId}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+      setEcExisting((prev) =>
+        prev.map((e) => {
+          if (e.id !== evalId) return e;
+          const updatedTeacher = newTeacherId
+            ? (ecTeachers.find((t) => t.id === newTeacherId) ?? e.teacher)
+            : e.teacher;
+          return { ...e, percent: val, teacher: updatedTeacher ? { id: updatedTeacher.id, name: updatedTeacher.name } : e.teacher };
+        })
+      );
+      showOk("✅ Evaluación actualizada");
+    } catch (e: any) {
+      showErr(e?.message || "Error al actualizar");
+    } finally {
+      setEcSavingPercent((p) => ({ ...p, [evalId]: false }));
+    }
+  }
+
+  async function ecHandleDelete(evalId: number) {
+    setEcDeleting((p) => ({ ...p, [evalId]: true }));
+    try {
+      await apiFetch(`/api/admin/evaluations/${evalId}`, { method: "DELETE" });
+      setEcExisting((prev) => prev.filter((e) => e.id !== evalId));
+      setEcEditPercents((p) => { const n = { ...p }; delete n[evalId]; return n; });
+      showOk("✅ Evaluación eliminada");
+    } catch (e: any) {
+      showErr(e?.message || "Error al eliminar");
+    } finally {
+      setEcDeleting((p) => ({ ...p, [evalId]: false }));
+    }
+  }
+
+  async function ecHandleCreate() {
+    setMsg(null);
+    setOkMsg(null);
+
+    const id_course = Number(ecCourseId);
+    if (!id_course) return showErr("Selecciona un curso.");
+
+    const id_teacher = ecTeacherId;
+    if (ecMode !== "class" && !id_teacher) return showErr("Selecciona un profesor.");
+
+    let id_type = Number(ecType);
+    const isOtherType = ecType === "__other__";
+    const type_text = isOtherType ? ecTypeOther.trim() : "";
+
+    if (!id_type && !isOtherType) return showErr("Selecciona un tipo de evaluación.");
+    if (isOtherType && !type_text) return showErr("Escribe el tipo (Otro).");
+
+    const title = ecTitle.trim();
+    if (!title) return showErr("Escribe un título para la evaluación.");
+
+    const percent = Number(ecPercent);
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+      return showErr("Porcentaje inválido (1..100).");
+    }
+
+    const relevantExisting = ecExisting.filter((ev) => {
+      if (Number(ev.id_course) !== id_course) return false;
+      if (ecMode === "class")  return Number(ev.id_class)  === Number(ecClassId);
+      if (ecMode === "module") return String(ev.id_module) === ecModuleId;
+      if (ecMode === "group")  return String(ev.id_group)  === ecGroupId;
+      return false;
+    });
+    const totalExisting = relevantExisting.reduce((s, e) => s + Number(e.percent), 0);
+    if (totalExisting + percent > 100) {
+      return showErr(
+        `El porcentaje total superaría 100% (existente: ${totalExisting}%, nuevo: ${percent}%). Ajusta los porcentajes existentes antes de continuar.`
+      );
+    }
+
+    setEcCreating(true);
+    try {
+      if (ecMode === "class") {
+        const id_class = Number(ecClassId);
+        if (!id_class) { setEcCreating(false); return showErr("Selecciona una materia."); }
+
+        await apiFetch("/api/admin/evaluations", {
+          method: "POST",
+          body: JSON.stringify({ id_course, id_class, id_teacher, percent, title,
+            id_type: id_type || undefined, type_text: isOtherType ? type_text : undefined }),
+        });
+      } else {
+        const scope = ecMode;
+        const id_module = Number(ecModuleId) || undefined;
+        const id_group = ecMode === "group" ? Number(ecGroupId) : undefined;
+
+        if (scope === "module" && !id_module) {
+          setEcCreating(false); return showErr("Selecciona un módulo.");
+        }
+        if (scope === "group" && !id_group) {
+          setEcCreating(false); return showErr("Selecciona un grupo.");
+        }
+
+        await apiFetch("/api/admin/evaluations/bulk", {
+          method: "POST",
+          body: JSON.stringify({ scope, id_module, id_group, id_course, id_teacher, percent, title,
+            id_type: id_type || undefined, type_text: isOtherType ? type_text : undefined }),
+        });
+      }
+
+      setEcType("");
+      setEcTypeOther("");
+      setEcTitle("");
+      setEcPercent(30);
+      setTimeout(() => showOk("✅ Evaluación(es) creada(s)"), 100);
+
+      // recargar listado completo (mismos params que la carga principal)
+      const reloadParams = new URLSearchParams();
+      if (ecLevel > 0) reloadParams.set("level", String(ecLevel));
+      if (ecCourseId) reloadParams.set("course_id", ecCourseId);
+      const res = await apiFetch(`/api/admin/evaluations?${reloadParams.toString()}`);
+      const evs: EvalItem[] = res?.items || [];
+      setEcExisting(evs);
+      const initP: Record<number, string> = {};
+      const initT: Record<number, string> = {};
+      evs.forEach((e) => { initP[e.id] = String(e.percent); initT[e.id] = e.teacher?.id ?? ""; });
+      setEcEditPercents(initP);
+      setEcEditTeachers(initT);
+    } catch (e: any) {
+      showErr(e?.message || "Error creando evaluación");
+    } finally {
+      setEcCreating(false);
+    }
+  }
+
+  function ecHandleCancel() {
+    setMsg(null);
+    setOkMsg(null);
+    setEcMode("class");
+    setEcLevel(1);
+    setEcModuleId("");
+    setEcGroupId("");
+    setEcClassId("");
+    setEcCourseId("");
+    setEcTeacherId("");
+    setEcType("");
+    setEcTypeOther("");
+    setEcTitle("");
+    setEcPercent(30);
+    setEcExisting([]);
+    setEcEditPercents({});
+  }
+
+  function rolesFromState(state: Record<string, boolean>) {
+    return Object.entries(state).filter(([, v]) => v).map(([k]) => k);
   }
 
   function resetManualUserForm() {
@@ -701,61 +1186,127 @@ export default function AdminPage() {
     setUCedula("");
     setUCodeJiliu("");
     setUCourseId("");
-    setURoles({ S: true, T: false, A: false });
+    setULevelId("");
+    setURoles({ S: false, T: false, A: false, M: false });
+    setUFoundUser(false);
+    setUNotFound(false);
+    setUSearching(false);
   }
 
-  function resetUpdateUserForm() {
-    lastCedulaFetchedRef.current = "";
-    searchSeqRef.current++;
-    setUpCedula("");
-    setUpEmail("");
-    setUpName("");
-    setUpCodeJiliu("");
-    setUpCourseId("");
-    setUpRoles({ S: true, T: false, A: false });
-    setUpSearching(false);
+  async function deleteUser() {
+    if (!window.confirm(`¿Estás seguro de que deseas eliminar a "${uName}" (cédula ${uCedula})? Esta acción no se puede deshacer.`)) return;
+    try {
+      await apiFetch(`/api/admin/delete-user?cedula=${encodeURIComponent(uCedula)}`, { method: "DELETE" });
+      showOk("✅ Persona eliminada");
+      resetManualUserForm();
+      await loadAll();
+    } catch (e: any) {
+      showErr(e?.message || "Error eliminando persona");
+    }
+  }
+
+  async function searchUserByCedula() {
+    const cedula = uCedula.trim();
+    if (!cedula) return showErr("Ingresa una cédula para buscar.");
+    setUSearching(true);
+    setUFoundUser(false);
+    setUNotFound(false);
+    try {
+      const data = await apiFetch(`/api/admin/user-by-cedula?cedula=${encodeURIComponent(cedula)}`);
+      const u = data.user;
+      setUName(u.name || "");
+      setUEmail(u.email || "");
+      setUCodeJiliu(u.code_jiliu || "");
+      if (u.id_course) {
+        const course = courses.find((c) => c.id === u.id_course);
+        if (course) {
+          setULevelId(String(course.level));
+          setUCourseId(String(u.id_course));
+        }
+      } else {
+        setULevelId("");
+        setUCourseId("");
+      }
+      const roleMap: Record<string, boolean> = { S: false, T: false, A: false, M: false };
+      (u.roles || []).forEach((r: string) => { if (r in roleMap) roleMap[r] = true; });
+      setURoles(roleMap as Record<"S" | "T" | "A" | "M", boolean>);
+      setUFoundUser(true);
+    } catch (e: any) {
+      if (e?.message?.includes("404") || e?.message?.includes("No encontrado")) {
+        setUFoundUser(false);
+        setUNotFound(true);
+        setUName(""); setUEmail(""); setUCodeJiliu(""); setUCourseId(""); setULevelId("");
+        setURoles({ S: false, T: false, A: false, M: false });
+        showErr("Persona no encontrada");
+      } else {
+        showErr(e?.message || "Error buscando persona");
+      }
+    } finally {
+      setUSearching(false);
+    }
   }
 
   async function createUserManual() {
     setUploadReport(null);
-    const email = uEmail.trim().toLowerCase();
-    const name = uName.trim();
-    const cedula = uCedula.trim();
-    const code_jiliu = uCodeJiliu.trim();
-    const id_course = Number(uCourseId || "0");
-    const roles = rolesFromState(uRoles);
+    const email     = uEmail.trim().toLowerCase();
+    const name      = uName.trim();
+    const cedula    = uCedula.trim();
+    const roles     = rolesFromState(uRoles);
+    const needsStudentFields = uRoles.S || uRoles.M;
 
-    if (!email || !email.includes("@")) return showErr("Email inválido.");
-    if (!name) return showErr("Nombre requerido.");
-    if (!cedula) return showErr("Cédula requerida.");
-    if (roles.length === 0) return showErr("Selecciona al menos 1 rol (S/T/A).");
-    if (roles.includes("S") && !code_jiliu) {
-      return showErr("Debes seleccionar un course.");
-    } else if (roles.includes("S") && !id_course) {
-      return showErr("code_jiliu requerido.");
+    if (!name)                                        return showErr("Nombre requerido.");
+    if (!cedula)                                      return showErr("Cédula requerida.");
+    if (!email || !email.includes("@"))               return showErr("Email inválido.");
+    if (roles.length === 0)                           return showErr("Selecciona al menos 1 rol.");
+    if (needsStudentFields && !uCodeJiliu.trim())     return showErr("Código Jiliu requerido para Estudiante/Monitor.");
+    if (needsStudentFields && !uCourseId)             return showErr("Curso requerido para Estudiante/Monitor.");
+
+    const payload: any = { email, name, cedula, roles };
+    if (needsStudentFields) {
+      payload.code_jiliu = uCodeJiliu.trim();
+      payload.id_course  = Number(uCourseId);
     }
 
     setCreatingUser(true);
     try {
-      await apiFetch("/api/admin/create-user", {
+      const endpoint = uFoundUser
+        ? "/api/admin/update-user-by-cedula"
+        : "/api/admin/create-user";
+      await apiFetch(endpoint, {
         method: "POST",
-        body: JSON.stringify({
-          email,
-          name,
-          roles,
-          cedula,
-          code_jiliu,
-          id_course,
-        }),
+        body: JSON.stringify(payload),
       });
-
-      showOk("✅ Usuario creado/actualizado");
+      showOk(uFoundUser ? "✅ Persona actualizada" : "✅ Persona creada");
       resetManualUserForm();
       await loadAll();
     } catch (e: any) {
-      showErr(e?.message || "Error creando usuario");
+      showErr(e?.message || "Error guardando persona");
     } finally {
       setCreatingUser(false);
+    }
+  }
+
+  async function downloadTemplate() {
+    setTemplateLoading(true);
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess.session?.access_token;
+      const resp = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE_URL || ""}/api/admin/download-template`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      if (!resp.ok) throw new Error("Error generando plantilla");
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "plantilla_personas.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      showErr(e?.message || "Error descargando plantilla");
+    } finally {
+      setTemplateLoading(false);
     }
   }
 
@@ -798,85 +1349,40 @@ export default function AdminPage() {
     }
   }
 
-  async function updateUserByCedula() {
-    const cedula = upCedula.trim();
-    const email = upEmail.trim().toLowerCase();
-    const name = upName.trim();
-    const code_jiliu = upCodeJiliu.trim();
-    const id_course = Number(upCourseId || "0");
-    const roles = rolesFromState(upRoles);
-
-    if (!cedula) return showErr("Cédula requerida para buscar el usuario.");
-    if (!email || !email.includes("@")) return showErr("Email inválido.");
-    if (!name) return showErr("Nombre requerido.");
-    if (roles.length === 0) return showErr("Selecciona al menos 1 rol (S/T/A).");
-    if (roles.includes("S") && !code_jiliu) {
-      return showErr("Debes seleccionar un course.");
-    } else if (roles.includes("S") && !id_course) {
-      return showErr("code_jiliu requerido.");
-    }
-
-    setUpLoading(true);
-    try {
-      const res = await apiFetch("/api/admin/update-user-by-cedula", {
-        method: "POST",
-        body: JSON.stringify({
-          cedula,
-          email,
-          name,
-          code_jiliu,
-          id_course,
-          roles,
-        }),
-      });
-
-      if (res?.warn) {
-        showOk("✅ Usuario actualizado (con advertencia)");
-        setMsg(`⚠️ ${res.warn}`);
-      } else {
-        showOk("✅ Usuario actualizado por cédula");
-      }
-
-      resetUpdateUserForm();
-      await loadAll();
-    } catch (e: any) {
-      showErr(e?.message || "Error actualizando usuario");
-    } finally {
-      setUpLoading(false);
-    }
-  }
-
-  async function downloadTemplate() {
+  async function loadGradeGridWith(
+    level: number | "",
+    courseFilter: number | "all",
+    classFilter: number | "all"
+  ) {
     setMsg(null);
-    setOkMsg(null);
-
-    const hasPublic = TEMPLATE_PUBLIC_URL && !TEMPLATE_PUBLIC_URL.includes("REEMPLAZA_AQUI");
-    if (hasPublic) {
-      window.open(TEMPLATE_PUBLIC_URL, "_blank", "noopener,noreferrer");
-      return;
-    }
-
-    if (!TEMPLATE_BUCKET || !TEMPLATE_PATH) {
-      return showErr(
-        "Falta configurar NEXT_PUBLIC_USERS_TEMPLATE_URL (pública) o bucket/path para signed URL."
-      );
-    }
-
-    setTemplateLoading(true);
+    setGLoadingRoster(true);
     try {
-      const { data, error } = await supabase.storage
-        .from(TEMPLATE_BUCKET)
-        .createSignedUrl(TEMPLATE_PATH, 120);
+      const params = new URLSearchParams();
+      if (level !== "" && Number(level) > 0) params.set("level", String(level));
+      if (courseFilter !== "all") params.set("course_id", String(courseFilter));
+      if (classFilter !== "all") params.set("class_id", String(classFilter));
 
-      if (error || !data?.signedUrl) {
-        throw new Error(error?.message || "No se pudo generar signed URL");
+      const res: GradeGridResponse = await apiFetch(`/api/admin/grade-grid?${params.toString()}`);
+
+      const evals = res?.evaluations || [];
+      const roster = res?.students || [];
+      const grades = res?.grades || [];
+
+      setGridClassInfo(res?.class || null);
+      setGEvaluations(evals);
+      setGRoster(roster);
+      setGGrades(grades);
+
+      const drafts: Record<string, string> = {};
+      for (const g of grades) {
+        drafts[gradeCellKey(g.id_student, g.id_exam)] =
+          g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
       }
-
-      window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+      setGradeDraft(drafts);
     } catch (e: any) {
-      showErr(e?.message || "Error descargando plantilla");
+      showErr(e?.message || "Error cargando notas");
     } finally {
-      setTemplateLoading(false);
+      setGLoadingRoster(false);
     }
   }
 
@@ -894,8 +1400,9 @@ export default function AdminPage() {
     try {
       if (upsertClassFilter === "all") return;
 
+      const courseParam = upsertCourseFilter !== "all" ? `&course_id=${Number(upsertCourseFilter)}` : "";
       const res: GradeGridResponse = await apiFetch(
-        `/api/admin/class-grade-grid?class_id=${Number(upsertClassFilter)}`
+        `/api/admin/class-grade-grid?class_id=${Number(upsertClassFilter)}${courseParam}`
       );
 
       const evals = res?.evaluations || [];
@@ -1056,7 +1563,7 @@ export default function AdminPage() {
       for (const ev of gEvaluations) {
         const label = getEvaluationColumnLabel(ev);
         if (!isEvaluationApplicableToStudent(st, ev)) {
-          row[label] = "N/A";
+          row[label] = "-";
           continue;
         }
         const gradeRecord = gGrades.find(
@@ -1381,99 +1888,166 @@ export default function AdminPage() {
               <select
                 className="select"
                 value={view}
-                onChange={(e) => setView(e.target.value as AdminView)}
+                onChange={(e) => { setView(e.target.value as AdminView); loadAll(); }}
               >
+                <option value="" disabled>¿Qué quieres hacer?...</option>
                 <option value="COURSES">Crear un Curso</option>
                 <option value="CLASSES">Crear una Materia</option>
                 <option value="TYPES">Crear un tipo de Evaluación</option>
                 <option value="ASSIGN_TEACHER">Asignar Materias a un Profesor</option>
-                <option value="USERS">Crear Persona</option>
-                <option value="UPDATE_USER">Actualizar Persona</option>
-                <option value="UPSERT">Gestionar Notas de Estudiantes</option>
+                <option value="USERS">Crear/Actualizar Persona</option>
+                <option value="UPSERT">Gestionar Notas</option>
+                <option value="EVAL_CRUD">Gestionar Evaluaciones</option>
               </select>
             </div>
           </div>
 
-          {msg && <div className="msgError" style={{ marginTop: 12 }}>{msg}</div>}
-          {okMsg && <div className="msgOk" style={{ marginTop: 12 }}>{okMsg}</div>}
+          {view !== "EVAL_CRUD" && msg   && <div className="msgError" style={{ marginTop: 12 }}>{msg}</div>}
+          {view !== "EVAL_CRUD" && okMsg && <div className="msgOk"    style={{ marginTop: 12 }}>{okMsg}</div>}
 
           {view === "COURSES" && (
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Crear un Curso</h2>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 180px", gap: 12 }}>
-                <div>
-                  <div className="label">Nombre</div>
-                  <input
-                    className="input"
-                    value={newCourseName}
-                    onChange={(e) => setNewCourseName(e.target.value)}
-                    placeholder="Ej: Primer año - Curso1"
-                  />
-                </div>
-
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto auto", gap: 12, alignItems: "flex-end" }}>
                 <div>
                   <div className="label">Nivel</div>
                   <select
                     className="select"
                     value={newCourseLevel}
-                    onChange={(e) => setNewCourseLevel(Number(e.target.value))}
+                    onChange={(e) => {
+                      setNewCourseLevel(Number(e.target.value));
+                      setNewCourseYear("");
+                      setNewCourseName("");
+                    }}
                   >
-                    {LEVELS.map((x) => (
-                      <option key={x.value} value={x.value}>
-                        {x.label}
-                      </option>
+                    <option value={0} disabled>Selecciona...</option>
+                    {levels.map((x) => (
+                      <option key={x.id} value={x.id}>{x.name}</option>
                     ))}
                   </select>
                 </div>
 
-                <div style={{ gridColumn: "1 / span 2" }}>
-                  <div className="label">Year (opcional)</div>
-                  <input
-                    className="input"
-                    type="date"
+                <div>
+                  <div className="label">Año</div>
+                  <select
+                    className="select"
                     value={newCourseYear}
-                    onChange={(e) => setNewCourseYear(e.target.value)}
-                  />
+                    onChange={(e) => {
+                      setNewCourseYear(e.target.value);
+                      setNewCourseName("");
+                    }}
+                    disabled={!newCourseLevel}
+                  >
+                    <option value="">Selecciona...</option>
+                    {[0, 1, 2].map((offset) => {
+                      const y = new Date().getFullYear() + offset;
+                      return <option key={y} value={String(y)}>{y}</option>;
+                    })}
+                  </select>
                 </div>
+
+                <div>
+                  <div className="label">Curso</div>
+                  <select
+                    className="select"
+                    value={newCourseName}
+                    onChange={(e) => setNewCourseName(e.target.value)}
+                    disabled={!newCourseYear}
+                  >
+                    <option value="">Selecciona...</option>
+                    {availableCourseOptions.map((opt) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  className="btn"
+                  onClick={createCourse}
+                  style={{ padding: "10px 16px", whiteSpace: "nowrap" }}
+                >
+                  Crear
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ padding: "10px 16px", whiteSpace: "nowrap", background: "#4b5563", borderColor: "#4b5563" }}
+                  onClick={() => { setNewCourseLevel(0); setNewCourseYear(""); setNewCourseName(""); }}
+                >
+                  Cancelar
+                </button>
               </div>
 
-              <button className="btn" onClick={createCourse} style={{ marginTop: 12, width: "100%" }}>
-                Crear course
-              </button>
-
-              <div
-                style={{
-                  marginTop: 12,
-                  overflow: "hidden",
-                  borderRadius: 18,
-                  border: "1px solid var(--stroke)",
-                }}
-              >
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                      <th style={{ textAlign: "left", padding: 12 }}>Course</th>
-                      <th style={{ textAlign: "left", padding: 12, width: 110 }}>Nivel</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {courses.length === 0 ? (
-                      <tr>
-                        <td colSpan={2} style={{ padding: 12, color: "var(--muted)" }}>
-                          {loadingData ? "Cargando..." : "Sin courses"}
-                        </td>
+              <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
+                <div
+                  style={{
+                    overflow: "hidden",
+                    borderRadius: 18,
+                    border: "1px solid var(--stroke)",
+                    width: "100%",
+                    maxWidth: 560,
+                  }}
+                >
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ background: "rgba(14,165,233,.08)" }}>
+                        <th style={{ textAlign: "center", padding: 12 }}>Nivel</th>
+                        <th style={{ textAlign: "center", padding: 12 }}>Año</th>
+                        <th style={{ textAlign: "center", padding: 12 }}>Curso</th>
+                        <th style={{ textAlign: "center", padding: 12 }}></th>
                       </tr>
-                    ) : (
-                      courses.map((c) => (
-                        <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                          <td style={{ padding: 12, fontWeight: 500 }}>{c.name}</td>
-                          <td style={{ padding: 12 }}>{c.level}</td>
+                    </thead>
+                    <tbody>
+                      {!newCourseYear ? (
+                        <tr>
+                          <td colSpan={4} style={{ padding: 12, color: "var(--muted)", textAlign: "center" }}>
+                            Selecciona un año para ver los cursos existentes
+                          </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : courses.filter((c) => String(c.year) === newCourseYear).length === 0 ? (
+                        <tr>
+                          <td colSpan={4} style={{ padding: 12, color: "var(--muted)", textAlign: "center" }}>
+                            No hay cursos para el año {newCourseYear}
+                          </td>
+                        </tr>
+                      ) : (
+                        courses
+                          .filter((c) => String(c.year) === newCourseYear)
+                          .map((c) => {
+                            const hasUsers = (c.user_count ?? 0) > 0;
+                            return (
+                              <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
+                                <td style={{ padding: 12, textAlign: "center" }}>{levels.find((l) => l.id === Number(c.level))?.name ?? c.level}</td>
+                                <td style={{ padding: 12, textAlign: "center" }}>{c.year ?? "—"}</td>
+                                <td style={{ padding: 12, textAlign: "center", fontWeight: 500 }}>{c.name}</td>
+                                <td style={{ padding: "8px 12px", textAlign: "center" }}>
+                                  <button
+                                    disabled={hasUsers}
+                                    title={hasUsers ? "No se puede eliminar: tiene estudiantes asignados" : "Eliminar curso"}
+                                    onClick={() => deleteCourse(c.id)}
+                                    style={{
+                                      padding: "4px 12px",
+                                      borderRadius: 8,
+                                      border: "none",
+                                      background: hasUsers ? "var(--muted)" : "#ef4444",
+                                      color: "#fff",
+                                      cursor: hasUsers ? "not-allowed" : "pointer",
+                                      opacity: hasUsers ? 0.45 : 1,
+                                      fontSize: 13,
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    Eliminar
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -1482,7 +2056,8 @@ export default function AdminPage() {
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Crear una Materia</h2>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              {/* ── Fila principal: Nivel | Módulo | Grupo | Nombre | Guardar | Cancelar ── */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto auto", gap: 12, alignItems: "flex-end" }}>
                 <div>
                   <div className="label">Nivel</div>
                   <select
@@ -1490,10 +2065,9 @@ export default function AdminPage() {
                     value={newClassLevel}
                     onChange={(e) => setNewClassLevel(Number(e.target.value))}
                   >
-                    {LEVELS.map((x) => (
-                      <option key={x.value} value={x.value}>
-                        {x.label}
-                      </option>
+                    <option value={0} disabled>Selecciona...</option>
+                    {levels.map((x) => (
+                      <option key={x.id} value={x.id}>{x.name}</option>
                     ))}
                   </select>
                 </div>
@@ -1504,26 +2078,29 @@ export default function AdminPage() {
                     className="select"
                     value={newClassModuleId}
                     onChange={(e) => setNewClassModuleId(e.target.value)}
+                    disabled={!newClassLevel}
                   >
-                    <option value="">Selecciona...</option>
+                    <option value="">{!newClassLevel ? "Selecciona un nivel primero" : "Selecciona..."}</option>
                     {availableModulesForCreate.map((m) => (
-                      <option key={m.id} value={String(m.id)}>
-                        {m.name}
-                      </option>
+                      <option key={m.id} value={String(m.id)}>{m.name}</option>
                     ))}
                     <option value={OTHER_OPTION}>Otro...</option>
                   </select>
+                </div>
 
-                  {newClassModuleId === OTHER_OPTION && (
-                    <div style={{ marginTop: 8 }}>
-                      <input
-                        className="input"
-                        value={newModuleName}
-                        onChange={(e) => setNewModuleName(e.target.value)}
-                        placeholder="Nombre del nuevo módulo"
-                      />
-                    </div>
-                  )}
+                <div>
+                  <div className="label">Grupo</div>
+                  <select
+                    className="select"
+                    value={newClassGroupId}
+                    onChange={(e) => setNewClassGroupId(e.target.value)}
+                    disabled={!newClassModuleId}
+                  >
+                    <option value="">{!newClassModuleId ? "Selecciona un módulo primero" : "Selecciona..."}</option>
+                    {availableGroupsForCreate.map((g) => (
+                      <option key={g.id} value={String(g.id)}>{g.name}</option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
@@ -1532,49 +2109,57 @@ export default function AdminPage() {
                     className="input"
                     value={newClassName}
                     onChange={(e) => setNewClassName(e.target.value)}
-                    placeholder="Ej: ETM - Nivel 1"
+                    placeholder="Ej: La Oración"
+                    disabled={!newClassGroupId}
                   />
                 </div>
 
-                <div>
-                  <div className="label">Grupo (opcional)</div>
-                  <select
-                    className="select"
-                    value={newClassGroupId}
-                    onChange={(e) => setNewClassGroupId(e.target.value)}
-                    disabled={!newClassModuleId}
-                  >
-                    <option value="">
-                      {!newClassModuleId ? "Selecciona un módulo primero" : "Sin grupo"}
-                    </option>
-                    {availableGroupsForCreate.map((g) => (
-                      <option key={g.id} value={String(g.id)}>
-                        {g.name}
-                      </option>
-                    ))}
-                    <option value={OTHER_OPTION}>Otro...</option>
-                  </select>
-
-                  {newClassGroupId === OTHER_OPTION && (
-                    <div style={{ marginTop: 8 }}>
-                      <input
-                        className="input"
-                        value={newGroupName}
-                        onChange={(e) => setNewGroupName(e.target.value)}
-                        placeholder="Nombre del nuevo grupo"
-                      />
-                    </div>
-                  )}
-                </div>
+                <button
+                  className="btn"
+                  onClick={createClass}
+                  style={{ padding: "10px 16px", whiteSpace: "nowrap" }}
+                >
+                  Guardar
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ padding: "10px 16px", whiteSpace: "nowrap", background: "#4b5563", borderColor: "#4b5563" }}
+                  onClick={() => {
+                    setNewClassLevel(0);
+                    setNewClassModuleId("");
+                    setNewClassGroupId("");
+                    setNewClassName("");
+                    setNewModuleName("");
+                    setNewGroupName("");
+                    setTblFilterLevel("");
+                    setTblFilterModule("");
+                    setTblFilterGroup("");
+                    setTblFilterName("");
+                    loadAll();
+                  }}
+                >
+                  Cancelar
+                </button>
               </div>
 
-              <button className="btn" onClick={createClass} style={{ marginTop: 12, width: "100%" }}>
-                Crear materia
-              </button>
+              {/* Input extra para nuevo módulo */}
+              {newClassModuleId === OTHER_OPTION && (
+                <div style={{ marginTop: 10 }}>
+                  <div className="label">Nombre del nuevo módulo</div>
+                  <input
+                    className="input"
+                    value={newModuleName}
+                    onChange={(e) => setNewModuleName(e.target.value)}
+                    placeholder="Nombre del nuevo módulo"
+                  />
+                </div>
+              )}
 
+              {/* ── Tabla de materias existentes ── */}
               <div
                 style={{
-                  marginTop: 12,
+                  marginTop: 16,
                   overflow: "hidden",
                   borderRadius: 18,
                   border: "1px solid var(--stroke)",
@@ -1583,30 +2168,48 @@ export default function AdminPage() {
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                      <th style={{ textAlign: "left", padding: 12 }}>Materia</th>
-                      <th style={{ textAlign: "left", padding: 12, width: 90 }}>Nivel</th>
-                      <th style={{ textAlign: "left", padding: 12 }}>Módulo</th>
-                      <th style={{ textAlign: "left", padding: 12 }}>Grupos</th>
+                      {([
+                        { value: tblFilterLevel,  onChange: (v: string) => setTblFilterLevel(v),  disabled: false,          label: "Nivel",   options: tblLevelOptions.map(o => ({ value: o.id, label: o.name })) },
+                        { value: tblFilterModule, onChange: (v: string) => setTblFilterModule(v), disabled: !tblFilterLevel,  label: "Módulo",  options: tblModuleOptions.map(n => ({ value: n, label: n })) },
+                        { value: tblFilterGroup,  onChange: (v: string) => setTblFilterGroup(v),  disabled: !tblFilterModule, label: "Grupo",   options: tblGroupOptions.map(n => ({ value: n, label: n })) },
+                        { value: tblFilterName,   onChange: (v: string) => setTblFilterName(v),   disabled: !tblFilterGroup,  label: "Materia", options: tblNameOptions.map(n => ({ value: n, label: n })) },
+                      ]).map((col) => (
+                        <th key={col.label} style={{ padding: "8px 12px", textAlign: "left" }}>
+                          <select
+                            className="select"
+                            value={col.value}
+                            onChange={(e) => col.onChange(e.target.value)}
+                            disabled={col.disabled}
+                            style={{
+                              fontSize: 13,
+                              padding: "4px 6px",
+                              fontWeight: col.value ? 600 : 400,
+                              color: col.value ? "var(--text)" : "var(--muted)",
+                            }}
+                          >
+                            <option value="">{col.label}</option>
+                            {col.options.map((o) => (
+                              <option key={o.value} value={o.value} style={{ color: "#000" }}>{o.label}</option>
+                            ))}
+                          </select>
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {classesForCreate.length === 0 ? (
+                    {classesFiltered.length === 0 ? (
                       <tr>
                         <td colSpan={4} style={{ padding: 12, color: "var(--muted)" }}>
                           {loadingData ? "Cargando..." : "Sin materias"}
                         </td>
                       </tr>
                     ) : (
-                      classesForCreate.map((c) => (
+                      classesFiltered.map((c) => (
                         <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                          <td style={{ padding: 12, fontWeight: 500 }}>{c.name}</td>
-                          <td style={{ padding: 12 }}>{c.level}</td>
+                          <td style={{ padding: 12 }}>{levels.find((l) => l.id === Number(c.level))?.name ?? c.level}</td>
                           <td style={{ padding: 12 }}>{c.module_name || "—"}</td>
-                          <td style={{ padding: 12 }}>
-                            {c.groups?.length
-                              ? c.groups.map((g) => g.name).join(", ")
-                              : "—"}
-                          </td>
+                          <td style={{ padding: 12 }}>{c.groups?.length ? c.groups.map((g) => g.name).join(", ") : "—"}</td>
+                          <td style={{ padding: 12, fontWeight: 500 }}>{c.name}</td>
                         </tr>
                       ))
                     )}
@@ -1616,54 +2219,437 @@ export default function AdminPage() {
             </div>
           )}
 
+          {view === "EVAL_CRUD" && (
+            <>
+              {msg   && <div className="msgError" style={{ marginTop: 12 }}>{msg}</div>}
+              {okMsg && <div className="msgOk"    style={{ marginTop: 12 }}>{okMsg}</div>}
+            <div className="card" style={{ marginTop: 18 }}>
+              <h2 style={{ marginTop: 0 }}>Gestionar Evaluaciones</h2>
+
+
+              {/* ── Modo de creación (radio buttons) ── */}
+              <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
+                <div className="label" style={{ margin: 0, whiteSpace: "nowrap" }}>Crear evaluación por</div>
+                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                  {(["module", "group", "class"] as EvalCrudMode[]).map((m) => {
+                    const labels: Record<EvalCrudMode, string> = {
+                      module: "Módulo",
+                      group: "Grupo",
+                      class: "Materia",
+                    };
+                    return (
+                      <label
+                        key={m}
+                        style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 14 }}
+                      >
+                        <input
+                          type="radio"
+                          name="ecMode"
+                          value={m}
+                          checked={ecMode === m}
+                          onChange={() => setEcMode(m)}
+                        />
+                        {labels[m]}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* ── Fila 1: Año, Curso, [Profesor], Crear, Cancelar ── */}
+              {(() => {
+                const scopeReady = ecMode === "class" ? !!ecClassId : ecMode === "module" ? !!ecModuleId : !!ecGroupId;
+                const cols = ecMode === "class" ? "1fr 1fr auto auto" : "1fr 1fr 1fr auto auto";
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, alignItems: "end", marginBottom: 12 }}>
+                    <div>
+                      <div className="label">Año</div>
+                      <select
+                        className="select"
+                        value={ecLevel}
+                        onChange={(e) => setEcLevel(Number(e.target.value))}
+                      >
+                        <option value={0} disabled>Seleccionar año...</option>
+                        <option value={-1} style={{ fontWeight: 700 }}>Todos</option>
+                        {levels.map((x) => (
+                          <option key={x.id} value={x.id}>{x.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <div className="label">Curso</div>
+                      <select
+                        className="select"
+                        value={ecCourseId}
+                        onChange={(e) => setEcCourseId(e.target.value)}
+                      >
+                        <option value="" style={{ fontWeight: 700 }}>Todos</option>
+                        {ecCourses.map((c) => (
+                          <option key={c.id} value={String(c.id)}>{c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {ecMode !== "class" && (
+                      <div>
+                        <div className="label">Profesor</div>
+                        <select
+                          className="select"
+                          value={ecTeacherId}
+                          onChange={(e) => setEcTeacherId(e.target.value)}
+                        >
+                          <option value="">Seleccionar profesor...</option>
+                          {ecTeachers.map((t) => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+                      <button
+                        className="btn"
+                        style={{ marginTop: 0, padding: "12px 48px", opacity: scopeReady ? 1 : 0.35, whiteSpace: "nowrap" }}
+                        disabled={ecCreating || !scopeReady}
+                        onClick={ecHandleCreate}
+                      >
+                        {ecCreating ? "..." : "Crear"}
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+                      <button
+                        type="button"
+                        style={{
+                          padding: "12px 20px",
+                          border: "none",
+                          borderRadius: 16,
+                          background: "#4b5563",
+                          color: "#ffffff",
+                          fontWeight: 800,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
+                        onClick={ecHandleCancel}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ── Fila 2: Módulo, Grupo, Materia, Tipo, Título, % ── */}
+              {(() => {
+                const grupoDisabled = !ecLevel;
+                const materiaDisabled = !ecLevel;
+                const scopeReady = ecMode === "class" ? !!ecClassId : ecMode === "module" ? !!ecModuleId : !!ecGroupId;
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1.5fr 70px", gap: 12, alignItems: "end" }}>
+                    <div>
+                      <div className="label">Módulo</div>
+                      <select
+                        className="select"
+                        value={ecModuleId}
+                        onChange={(e) => setEcModuleId(e.target.value)}
+                        disabled={!ecLevel}
+                      >
+                        <option value="" style={{ fontWeight: 700 }}>Todos</option>
+                        {ecModules.map((m) => (
+                          <option key={m.id} value={String(m.id)}>{m.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ opacity: grupoDisabled ? 0.4 : 1, pointerEvents: grupoDisabled ? "none" : "auto" }}>
+                      <div className="label">Grupo</div>
+                      <select
+                        className="select"
+                        value={ecGroupId}
+                        onChange={(e) => setEcGroupId(e.target.value)}
+                        disabled={grupoDisabled}
+                      >
+                        <option value="" style={{ fontWeight: 700 }}>Todos</option>
+                        {ecGroups.map((g) => (
+                          <option key={g.id} value={String(g.id)}>{g.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ opacity: materiaDisabled ? 0.4 : 1, pointerEvents: materiaDisabled ? "none" : "auto" }}>
+                      <div className="label">Materia</div>
+                      <select
+                        className="select"
+                        value={ecClassId}
+                        onChange={(e) => setEcClassId(e.target.value)}
+                        disabled={materiaDisabled}
+                      >
+                        <option value="" style={{ fontWeight: 700 }}>Todos</option>
+                        {ecClasses.map((c) => (
+                          <option key={c.id} value={String(c.id)}>{c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ opacity: scopeReady ? 1 : 0.35, pointerEvents: scopeReady ? "auto" : "none" }}>
+                      <div className="label">Tipo</div>
+                      <select
+                        className="select"
+                        value={ecType}
+                        onChange={(e) => {
+                          setEcType(e.target.value);
+                          if (e.target.value !== "__other__") setEcTypeOther("");
+                        }}
+                        disabled={!ecLevel}
+                      >
+                        <option value="" style={{ fontWeight: 700 }}>Todos</option>
+                        {types.map((t) => (
+                          <option key={t.id} value={String(t.id)}>{t.type}</option>
+                        ))}
+                        <option value="__other__">Otro...</option>
+                      </select>
+                      {ecType === "__other__" && (
+                        <div style={{ marginTop: 6 }}>
+                          <input
+                            className="input"
+                            value={ecTypeOther}
+                            onChange={(e) => setEcTypeOther(e.target.value)}
+                            placeholder="Ej: Taller, Quiz..."
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ opacity: scopeReady ? 1 : 0.35, pointerEvents: scopeReady ? "auto" : "none" }}>
+                      <div className="label">Título</div>
+                      <input
+                        className="input"
+                        value={ecTitle}
+                        onChange={(e) => setEcTitle(e.target.value)}
+                        placeholder="Ej: Parcial 1..."
+                        disabled={!scopeReady}
+                      />
+                    </div>
+                    <div style={{ opacity: scopeReady ? 1 : 0.35, pointerEvents: scopeReady ? "auto" : "none" }}>
+                      <div className="label">%</div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        className="input"
+                        style={{ textAlign: "center" }}
+                        value={ecPercent}
+                        onChange={(e) => setEcPercent(Number(e.target.value))}
+                        disabled={!scopeReady}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* ── Evaluaciones existentes (card separado) ── */}
+            {ecLevel !== 0 && (
+              <div className="card" style={{ marginTop: 18 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 12,
+                  }}
+                >
+                  <h2 style={{ margin: 0 }}>Evaluaciones existentes</h2>
+                </div>
+
+                {ecLoadingExisting ? (
+                  <div style={{ color: "var(--muted)", fontSize: 13 }}>Cargando evaluaciones...</div>
+                ) : ecExistingFiltered.length === 0 ? (
+                  <div style={{ color: "var(--muted)", fontSize: 13 }}>
+                    No hay evaluaciones para la selección actual.
+                  </div>
+                ) : (
+                  <div style={{ borderRadius: 14, border: "1px solid var(--stroke)", overflow: "hidden" }}>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1.5fr 1.2fr 0.9fr 1.2fr 100px 70px 70px",
+                        padding: "12px 16px",
+                        background: "rgba(14,165,233,.06)",
+                        borderBottom: "1px solid var(--stroke)",
+                        fontWeight: 700,
+                        fontSize: 13,
+                        gap: 8,
+                      }}
+                    >
+                      <div style={{ color: "var(--label)" }}>Curso</div>
+                      <div style={{ color: "var(--label)" }}>Tipo</div>
+                      <div style={{ color: "var(--label)" }}>Evaluación</div>
+                      <div style={{ color: "var(--label)" }}>Profesor</div>
+                      <div style={{ textAlign: "center", color: "var(--label)" }}>%</div>
+                      <div />
+                      <div />
+                    </div>
+
+                    {ecExistingFiltered.map((ev) => (
+                      <div
+                        key={ev.id}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1.5fr 1.2fr 0.9fr 1.2fr 100px 70px 70px",
+                          padding: "12px 16px",
+                          alignItems: "center",
+                          borderBottom: "1px solid var(--stroke)",
+                          fontSize: 13,
+                          gap: 8,
+                        }}
+                      >
+                        <div style={{ color: "var(--muted)" }}>{ev.course?.name ?? "—"}</div>
+                        <div style={{ color: "var(--muted)" }}>{ev.evaluation_type?.type ?? "—"}</div>
+                        <div style={{ fontWeight: 500 }}>{ev.title}</div>
+                        <div>
+                          <select
+                            className="select"
+                            style={{ fontSize: 14, padding: "8px 6px" }}
+                            value={ecEditTeachers[ev.id] ?? ev.teacher?.id ?? ""}
+                            onChange={(e) =>
+                              setEcEditTeachers((p) => ({ ...p, [ev.id]: e.target.value }))
+                            }
+                          >
+                            <option value="">Sin profesor</option>
+                            {(ecRowTeachers.length > 0 ? ecRowTeachers : teachers).map((t) => (
+                              <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div style={{ textAlign: "center" }}>
+                          <input
+                            type="number"
+                            min={1}
+                            max={100}
+                            className="input"
+                            style={{ textAlign: "center", padding: "4px 6px", fontSize: 13 }}
+                            value={ecEditPercents[ev.id] ?? String(ev.percent)}
+                            onChange={(e) =>
+                              setEcEditPercents((p) => ({ ...p, [ev.id]: e.target.value }))
+                            }
+                          />
+                        </div>
+                        <div style={{ textAlign: "center" }}>
+                          <button
+                            type="button"
+                            className="btnLight"
+                            style={{ fontSize: 12, padding: "8px 14px", borderRadius: 8 }}
+                            disabled={ecSavingPercent[ev.id]}
+                            onClick={() => ecHandleSavePercent(ev.id)}
+                          >
+                            {ecSavingPercent[ev.id] ? "..." : "Guardar"}
+                          </button>
+                        </div>
+                        <div style={{ textAlign: "center", paddingLeft: 6 }}>
+                          <button
+                            type="button"
+                            className="btnLight"
+                            style={{
+                              fontSize: 12,
+                              padding: "8px 14px",
+                              borderRadius: 8,
+                              background: "#ef4444",
+                              color: "#fff",
+                              borderColor: "#ef4444",
+                            }}
+                            disabled={ecDeleting[ev.id]}
+                            onClick={() => ecHandleDelete(ev.id)}
+                          >
+                            {ecDeleting[ev.id] ? "..." : "Eliminar"}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            </>
+          )}
+
           {view === "TYPES" && (
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Crear un tipo de evaluación</h2>
 
-              <div>
-                <div className="label">Tipo</div>
-                <input
-                  className="input"
-                  value={newType}
-                  onChange={(e) => setNewType(e.target.value)}
-                  placeholder="Ej: Quiz, Parcial, Final..."
-                />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 12, alignItems: "flex-end" }}>
+                <div>
+                  <div className="label">Tipo</div>
+                  <input
+                    className="input"
+                    value={newType}
+                    onChange={(e) => setNewType(e.target.value)}
+                    placeholder="Ej: Quiz, Parcial, Final..."
+                  />
+                </div>
+                <button className="btn" onClick={createEvalType} style={{ padding: "10px 16px", whiteSpace: "nowrap" }}>
+                  Crear tipo
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ padding: "10px 16px", whiteSpace: "nowrap", background: "#4b5563", borderColor: "#4b5563" }}
+                  onClick={() => { setNewType(""); loadAll(); }}
+                >
+                  Cancelar
+                </button>
               </div>
 
-              <button className="btn" onClick={createEvalType} style={{ marginTop: 12, width: "100%" }}>
-                Crear tipo
-              </button>
-
-              <div
-                style={{
-                  marginTop: 12,
-                  overflow: "hidden",
-                  borderRadius: 18,
-                  border: "1px solid var(--stroke)",
-                }}
-              >
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                      <th style={{ textAlign: "left", padding: 12 }}>Tipo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {types.length === 0 ? (
-                      <tr>
-                        <td colSpan={2} style={{ padding: 12, color: "var(--muted)" }}>
-                          {loadingData ? "Cargando..." : "Sin tipos"}
-                        </td>
+              <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
+                <div
+                  style={{
+                    overflow: "hidden",
+                    borderRadius: 18,
+                    border: "1px solid var(--stroke)",
+                    width: "100%",
+                    maxWidth: 400,
+                  }}
+                >
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ background: "rgba(14,165,233,.08)" }}>
+                        <th style={{ textAlign: "left", padding: "12px 12px 12px 20px" }}>Tipo</th>
+                        <th style={{ textAlign: "center", padding: 12 }}></th>
                       </tr>
-                    ) : (
-                      types.map((t) => (
-                        <tr key={t.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                          <td style={{ padding: 12, fontWeight: 500 }}>{t.type}</td>
+                    </thead>
+                    <tbody>
+                      {types.length === 0 ? (
+                        <tr>
+                          <td colSpan={2} style={{ padding: 12, color: "var(--muted)", textAlign: "center" }}>
+                            {loadingData ? "Cargando..." : "Sin tipos"}
+                          </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : (
+                        types.map((t) => {
+                          const inUse = (t.eval_count ?? 0) > 0;
+                          return (
+                            <tr key={t.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
+                              <td style={{ padding: "12px 12px 12px 20px", textAlign: "left", fontWeight: 500 }}>{t.type}</td>
+                              <td style={{ padding: "8px 12px", textAlign: "center" }}>
+                                <button
+                                  disabled={inUse}
+                                  title={inUse ? "No se puede eliminar: tiene evaluaciones asociadas" : "Eliminar tipo"}
+                                  onClick={() => deleteEvalType(t.id)}
+                                  style={{
+                                    padding: "4px 12px",
+                                    borderRadius: 8,
+                                    border: "none",
+                                    background: inUse ? "var(--muted)" : "#ef4444",
+                                    color: "#fff",
+                                    cursor: inUse ? "not-allowed" : "pointer",
+                                    opacity: inUse ? 0.45 : 1,
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  Eliminar
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -1672,234 +2658,406 @@ export default function AdminPage() {
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Asignar Materias a un Profesor</h2>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                <div>
-                  <div className="label">Level / Año</div>
+              {/* Filtros + botones — distribuidos en todo el ancho */}
+              <div style={{ display: "flex", gap: 12, alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 140 }}>
+                  <div className="label">Año</div>
                   <select
                     className="select"
+                    style={{ width: "100%" }}
                     value={selAssignLevel}
-                    onChange={(e) => setSelAssignLevel(e.target.value)}
+                    onChange={(e) => {
+                      const lv = e.target.value;
+                      setSelAssignLevel(lv);
+                      setSelAssignCourse("ALL");
+                      setAssignEdits({});
+                      setAssignMatFilter("ALL");
+                      setAssignProfFilter("ALL");
+                      if (lv) loadAssignmentGrid("ALL", lv);
+                      else setAssignGrid([]);
+                    }}
                   >
-                    <option value="">Selecciona...</option>
-                    {LEVELS.map((lvl) => (
-                      <option key={lvl.value} value={String(lvl.value)}>
-                        {lvl.label}
-                      </option>
+                    <option value="">Selecciona un año...</option>
+                    <option value="ALL" style={{ fontWeight: 700 }}>Todos</option>
+                    {levels.map((lvl) => (
+                      <option key={lvl.id} value={String(lvl.id)}>{lvl.name}</option>
                     ))}
                   </select>
                 </div>
 
-                <div>
-                  <div className="label">Teacher</div>
+                <div style={{ flex: 1, minWidth: 140 }}>
+                  <div className="label">Curso</div>
                   <select
                     className="select"
-                    value={selTeacher}
-                    onChange={(e) => setSelTeacher(e.target.value)}
+                    style={{ width: "100%" }}
+                    value={selAssignCourse}
+                    onChange={(e) => {
+                      const cv = e.target.value;
+                      setSelAssignCourse(cv);
+                      setAssignEdits({});
+                      setAssignMatFilter("ALL");
+                      setAssignProfFilter("ALL");
+                      loadAssignmentGrid(cv, selAssignLevel);
+                    }}
                   >
-                    <option value="">Selecciona...</option>
-                    {teachers.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
+                    <option value="ALL" style={{ fontWeight: 700 }}>Todos</option>
+                    {coursesForLevel.map((c) => (
+                      <option key={c.id} value={String(c.id)}>{c.name}</option>
                     ))}
                   </select>
                 </div>
 
-                <div>
-                  <div className="label">Materia</div>
-                  <select
-                    className="select"
-                    value={selClass}
-                    onChange={(e) => setSelClass(e.target.value)}
-                    disabled={!selAssignLevel}
-                  >
-                    <option value="">
-                      {!selAssignLevel ? "Selecciona un level primero" : "Selecciona..."}
-                    </option>
-                    {classesForAssign.map((c) => (
-                      <option key={c.id} value={String(c.id)}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <button
+                  className="btn"
+                  style={{ alignSelf: "flex-end" }}
+                  onClick={saveAssignmentGrid}
+                  disabled={assignSaving || assignGrid.length === 0}
+                >
+                  {assignSaving ? "Guardando..." : "Guardar"}
+                </button>
+
+                <button
+                  className="btn"
+                  style={{ alignSelf: "flex-end", background: "#4b5563", borderColor: "#4b5563" }}
+                  onClick={resetAssignView}
+                >
+                  Cancelar
+                </button>
               </div>
 
-              <button className="btn" onClick={assignTeacher} style={{ marginTop: 12, width: "100%" }}>
-                Asignar
-              </button>
+              {/* Tabla */}
+              {assignLoading && (
+                <div style={{ marginTop: 16, color: "var(--muted)" }}>Cargando...</div>
+              )}
+
+              {!assignLoading && assignGrid.length > 0 && (
+                <div style={{ marginTop: 16, maxWidth: 900, marginLeft: "auto", marginRight: "auto" }}>
+                <div style={{ borderRadius: GRILLA.radiusPrimary, overflow: "hidden", border: GRILLA.outerBorder }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ background: isDarkThemeEnabled() ? GRILLA.headerBgDark : GRILLA.headerBgLight }}>
+                        <th style={{ padding: "6px 16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: isDarkThemeEnabled() ? GRILLA.headerTextDark : GRILLA.headerTextLight, borderBottom: GRILLA.headerBottomBorder }}>
+                          <select
+                            className="select"
+                            style={{ fontWeight: 700, fontSize: 13 }}
+                            value={assignMatFilter}
+                            onChange={(e) => { setAssignMatFilter(e.target.value); if (e.target.value === "WITHOUT") setAssignProfFilter("ALL"); }}
+                          >
+                            <option value="ALL" style={{ color: "#000", fontWeight: 700 }}>Todas</option>
+                            <option value="WITH" style={{ color: "#000", fontWeight: 700 }}>Con Profesor</option>
+                            <option value="WITHOUT" style={{ color: "#000", fontWeight: 700 }}>Sin Profesor</option>
+                            {assignGrid
+                              .filter((r, i, arr) => arr.findIndex((x) => x.id_class === r.id_class) === i)
+                              .map((r) => (
+                                <option key={r.id_class} value={String(r.id_class)}>{r.class_name}</option>
+                              ))}
+                          </select>
+                        </th>
+                        <th style={{ padding: "6px 16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: isDarkThemeEnabled() ? GRILLA.headerTextDark : GRILLA.headerTextLight, borderBottom: GRILLA.headerBottomBorder }}>
+                          <select
+                            className="select"
+                            style={{ fontWeight: 700, fontSize: 13 }}
+                            value={assignProfFilter}
+                            onChange={(e) => { setAssignProfFilter(e.target.value); setAssignMatFilter("ALL"); }}
+                          >
+                            <option value="ALL" style={{ color: "#000", fontWeight: 700 }}>Todos</option>
+                            <option value="WITH" style={{ color: "#000", fontWeight: 700 }}>Con Materias asignadas</option>
+                            <option value="WITHOUT" style={{ color: "#000", fontWeight: 700 }}>Sin Materias asignadas</option>
+                            {teachers.map((t) => (
+                              <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                          </select>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody style={{ fontSize: 13, lineHeight: 2.5 }}>
+                      {assignVisibleRows.map((r, idx) => {
+                        const key = `${r.id_class}_${r.id_course}`;
+                        return (
+                          <tr
+                            key={key}
+                            style={{ background: getGrillaBaseRowBg(idx, isDarkThemeEnabled()), borderBottom: GRILLA.rowBottomBorder }}
+                          >
+                            <td style={{ padding: "0 12px" }}>
+                              {assignMultiCourse
+                                ? <>{r.class_name} <span style={{ color: "var(--muted)", fontSize: 11 }}>· {r.course_name}</span></>
+                                : r.class_name}
+                            </td>
+                            <td style={{ padding: "0 8px" }}>
+                              <select
+                                className="select"
+                                style={{ fontSize: 13, padding: "3px 16px", lineHeight: 2.5, borderRadius: 999, border: "1px solid var(--stroke)", background: "var(--card)", boxShadow: "none" }}
+                                value={
+                                  Object.prototype.hasOwnProperty.call(assignEdits, key)
+                                    ? assignEdits[key]
+                                    : (r.id_teacher || "")
+                                }
+                                onChange={(e) =>
+                                  setAssignEdits((prev) => ({ ...prev, [key]: e.target.value }))
+                                }
+                              >
+                                <option value="" style={{ color: "#000", fontWeight: 700 }}>- Sin profesor -</option>
+                                {teachers.map((t) => (
+                                  <option key={t.id} value={t.id}>{t.name}</option>
+                                ))}
+                              </select>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {assignOrphanTeachers.map((t, idx) => (
+                        <tr
+                          key={`orphan-${t.id}`}
+                          style={{ background: getGrillaBaseRowBg(assignVisibleRows.length + idx, isDarkThemeEnabled()), borderBottom: GRILLA.rowBottomBorder, opacity: 0.65 }}
+                        >
+                          <td style={{ padding: "0 12px", fontStyle: "italic" }}>--</td>
+                          <td style={{ padding: "0 12px" }}>{t.name}</td>
+                        </tr>
+                      ))}
+                      {assignVisibleRows.length === 0 && assignOrphanTeachers.length === 0 && (
+                        <tr>
+                          <td colSpan={2} style={{ padding: "14px 16px", textAlign: "center", color: "var(--muted)", fontSize: 14 }}>
+                            Sin resultados para el filtro seleccionado
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                </div>
+              )}
             </div>
           )}
 
           {view === "USERS" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Crear Persona</h2>
+              <h2 style={{ marginTop: 0 }}>Crear / Actualizar persona</h2>
 
-              <div
-                style={{
-                  marginTop: 10,
-                  padding: 14,
-                  borderRadius: 18,
-                  border: "1px solid var(--stroke)",
-                  background: "rgba(34,197,94,.08)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  flexWrap: "wrap",
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 900 }}>Plantilla Excel</div>
-                  <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                    Descárgala para cargar personas correctamente.
+              {/* ── Fila 1: Crear/Actualizar persona ── */}
+              <div style={{ marginTop: 10 }}>
+                <div style={{ padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(14,165,233,.06)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap", marginBottom: 12 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700 }}>Rol</div>
+                    {ROLE_OPTIONS.map((r) => (
+                      <label key={r.value} style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer", fontSize: 14 }}>
+                        <input
+                          type="checkbox"
+                          checked={!!uRoles[r.value]}
+                          onChange={(e) => setURoles((p) => ({ ...p, [r.value]: e.target.checked }))}
+                        />
+                        <span>{r.label}</span>
+                      </label>
+                    ))}
                   </div>
-                </div>
-                <button className="btn" onClick={downloadTemplate} disabled={templateLoading}>
-                  {templateLoading ? "Generando..." : "⬇️ Descargar plantilla"}
-                </button>
-              </div>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
 
-              <div
-                style={{
-                  marginTop: 14,
-                  padding: 14,
-                  borderRadius: 18,
-                  border: "1px solid var(--stroke)",
-                  background: "rgba(14,165,233,.06)",
-                }}
-              >
-                <div style={{ fontWeight: 900, fontSize: 16 }}>Crear usuario manual (1)</div>
-                <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 4 }}>
-                  Todos los campos son obligatorios (incluye course).
-                </div>
-
-                <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div>
-                    <div className="label">Email</div>
-                    <input className="input" value={uEmail} onChange={(e) => setUEmail(e.target.value)} />
-                  </div>
-
-                  <div>
-                    <div className="label">Nombre</div>
-                    <input className="input" value={uName} onChange={(e) => setUName(e.target.value)} />
-                  </div>
-
-                  <div>
-                    <div className="label">Cédula</div>
-                    <input className="input" value={uCedula} onChange={(e) => setUCedula(e.target.value)} />
-                  </div>
-
-                  <div>
-                    <div className="label">code_jiliu</div>
-                    <input
-                      className="input"
-                      value={uCodeJiliu}
-                      onChange={(e) => setUCodeJiliu(e.target.value)}
-                    />
-                  </div>
-
-                  <div style={{ gridColumn: "1 / span 2" }}>
-                    <div className="label">Course</div>
-                    <select className="select" value={uCourseId} onChange={(e) => setUCourseId(e.target.value)}>
-                      <option value="">Selecciona...</option>
-                      {courses.map((c) => (
-                        <option key={c.id} value={String(c.id)}>
-                          {c.name} (Nivel {c.level})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div style={{ gridColumn: "1 / span 2" }}>
-                    <div className="label">Roles</div>
-                    <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-                      {ROLE_OPTIONS.map((r) => (
-                        <label
-                          key={r.value}
-                          style={{
-                            display: "flex",
-                            gap: 8,
-                            alignItems: "center",
-                            padding: "10px 12px",
-                            borderRadius: 14,
-                            border: "1px solid var(--stroke)",
-                            background: "var(--card)",
-                            cursor: "pointer",
-                          }}
+                    {/* Cédula + Buscar */}
+                    <div style={{ flex: 1, minWidth: 220 }}>
+                      <div className="label">Cédula</div>
+                      <div style={{ display: "flex", alignItems: "stretch", border: "1px solid var(--stroke)", borderRadius: 12, overflow: "hidden", height: 42 }}>
+                        <input
+                          className="input"
+                          style={{ flex: 1, border: "none", outline: "none", borderRadius: 0, height: "100%", padding: "0 10px" }}
+                          inputMode="numeric"
+                          value={uCedula}
+                          onChange={(e) => { setUCedula(e.target.value.replace(/\D/g, "")); setUFoundUser(false); setUNotFound(false); }}
+                          onKeyDown={(e) => { if (e.key === "Enter") searchUserByCedula(); }}
+                        />
+                        <button
+                          type="button"
+                          className="btn"
+                          style={{ borderRadius: 0, margin: 0, height: "100%", background: "linear-gradient(to bottom, #6b7280, #4b5563)", borderColor: "#4b5563", whiteSpace: "nowrap", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}
+                          onClick={searchUserByCedula}
+                          disabled={uSearching}
                         >
-                          <input
-                            type="checkbox"
-                            checked={!!uRoles[r.value]}
-                            onChange={(e) => setURoles((p) => ({ ...p, [r.value]: e.target.checked }))}
-                          />
-                          <span style={{ fontWeight: 900 }}>{r.label}</span>
-                        </label>
-                      ))}
+                          {uSearching ? "..." : "Buscar"}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </div>
 
-                <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
-                  <button className="btn" onClick={createUserManual} disabled={creatingUser} style={{ width: 240 }}>
-                    {creatingUser ? "Creando..." : "Crear"}
-                  </button>
-                  <button type="button" className="btnLight" onClick={() => resetManualUserForm()}>
-                    Limpiar
-                  </button>
+                    <div style={{ flex: 2, minWidth: 130 }}>
+                      <div className="label">Nombre</div>
+                      <input className="input" style={{ width: "100%", height: 42 }} value={uName} onChange={(e) => setUName(e.target.value)} />
+                    </div>
+
+                    <div style={{ flex: 2, minWidth: 150 }}>
+                      <div className="label">Email</div>
+                      <input className="input" style={{ width: "100%", height: 42 }} value={uEmail} onChange={(e) => setUEmail(e.target.value)} />
+                    </div>
+
+                    {(uRoles.S || uRoles.M) && (
+                      <div style={{ flex: 1, minWidth: 90 }}>
+                        <div className="label">Código Jiliu</div>
+                        <input
+                          className="input"
+                          style={{ width: "100%", height: 42 }}
+                          inputMode="numeric"
+                          value={uCodeJiliu}
+                          onChange={(e) => setUCodeJiliu(e.target.value.replace(/\D/g, ""))}
+                        />
+                      </div>
+                    )}
+
+                    {(uRoles.S || uRoles.M) && (
+                      <div style={{ flex: 1, minWidth: 110 }}>
+                        <div className="label">Año</div>
+                        <select
+                          className="select"
+                          style={{ width: "100%", height: 42, paddingTop: 0, paddingBottom: 0, boxSizing: "border-box" }}
+                          value={uLevelId}
+                          onChange={(e) => { setULevelId(e.target.value); setUCourseId(""); }}
+                        >
+                          <option value="">Selecciona...</option>
+                          {levels.map((l) => (
+                            <option key={l.id} value={String(l.id)}>{l.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {(uRoles.S || uRoles.M) && (
+                      <div style={{ flex: 1, minWidth: 110 }}>
+                        <div className="label">Curso</div>
+                        <select
+                          className="select"
+                          style={{ width: "100%", height: 42, paddingTop: 0, paddingBottom: 0, boxSizing: "border-box" }}
+                          value={uCourseId}
+                          disabled={!uLevelId}
+                          onChange={(e) => setUCourseId(e.target.value)}
+                        >
+                          <option value="">{!uLevelId ? "Selecciona un año" : "Selecciona..."}</option>
+                          {coursesForULevel.map((c) => (
+                            <option key={c.id} value={String(c.id)}>{c.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <button className="btn" onClick={createUserManual} disabled={creatingUser} style={{ height: 42 }}>
+                      {creatingUser ? "Guardando..." : "Guardar"}
+                    </button>
+                    {uFoundUser && (
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ height: 42, background: "#dc2626", borderColor: "#b91c1c" }}
+                        onClick={deleteUser}
+                      >
+                        Eliminar
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{ height: 42, background: "#4b5563", borderColor: "#4b5563" }}
+                      onClick={() => { resetManualUserForm(); setMsg(null); setOkMsg(null); }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontWeight: 900, fontSize: 16 }}>Subir Excel: Crear Personas</div>
-                <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
-                  Columnas obligatorias: <b>email</b>, <b>name</b>, <b>cedula</b>, <b>code_jiliu</b>, <b>id_course</b>, <b>type</b> (S/T/A o lista S,T).
+              {/* ── Fila 2: Cargue masivo ── */}
+              <div style={{ padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(34,197,94,.08)", marginTop: 36 }}>
+                <div
+                  onClick={() => setShowMasivo(v => !v)}
+                  style={{ fontWeight: 900, fontSize: 15, marginBottom: showMasivo ? 10 : 0, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, userSelect: "none" }}
+                >
+                  <span style={{ fontSize: 12, transition: "transform .2s", display: "inline-block", transform: showMasivo ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+                  Cargue masivo
                 </div>
 
-                <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12 }}>
-                  <input ref={fileRef} type="file" accept=".xlsx" />
-                  <button className="btn" onClick={uploadExcelUsers} disabled={uploading} style={{ width: 220 }}>
-                    {uploading ? "Subiendo..." : "Procesar Excel"}
-                  </button>
+                {showMasivo && <>
+                {/* Input file oculto */}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".xlsx"
+                  style={{ display: "none" }}
+                  onChange={(e) => setUploadFileName(e.target.files?.[0]?.name ?? "")}
+                />
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+
+                  {/* Izquierda: Descargar Plantilla */}
                   <button
-                    type="button"
-                    onClick={() => {
-                      setUploadReport(null);
-                      setMsg(null);
-                      setOkMsg(null);
-                      if (fileRef.current) fileRef.current.value = "";
-                    }}
-                    className="btnLight"
+                    className="btn"
+                    onClick={downloadTemplate}
+                    disabled={templateLoading}
+                    style={{ background: "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)", border: "1px solid rgba(34,197,94,.8)", color: "#fff", fontWeight: 700, height: 42, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, whiteSpace: "nowrap", boxShadow: "0 4px 12px rgba(34,197,94,.35)" }}
                   >
-                    Limpiar
+                    {templateLoading ? "Generando..." : (
+                      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        ↓&nbsp;&nbsp;&nbsp;Plantilla&nbsp;&nbsp;
+                        <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24">
+                          {/* Página base */}
+                          <path d="M4 2h9l5 5v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="#fff" stroke="#14532d" strokeWidth="1.2"/>
+                          <path d="M13 2v5h5" fill="none" stroke="#14532d" strokeWidth="1.2"/>
+                          {/* Banda verde con "X" estilo Excel */}
+                          <rect x="3" y="10" width="18" height="11" rx="1" fill="#16a34a" stroke="#14532d" strokeWidth="0.8"/>
+                          <text x="6.5" y="19.5" fontSize="9" fontWeight="bold" fill="#ffffff" fontFamily="Arial, sans-serif">xls</text>
+                        </svg>
+                      </span>
+                    )}
                   </button>
-                </div>
 
-                {uploadReport && (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      overflow: "hidden",
-                      borderRadius: 18,
-                      border: "1px solid var(--stroke)",
-                    }}
-                  >
-                    <div style={{ padding: 12, fontWeight: 900, background: "rgba(14,165,233,.08)" }}>
-                      Resultado
+                  {/* Derecha: Elegir archivo + Cargar Plantilla + Cancelar */}
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+
+                    {/* Elegir archivo + nombre */}
+                    <div style={{ display: "flex", alignItems: "stretch", border: "1px solid var(--stroke)", borderRadius: 12, overflow: "hidden", height: 42 }}>
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ borderRadius: 0, margin: 0, height: "100%", background: "linear-gradient(to bottom, #6b7280, #4b5563)", borderColor: "#4b5563", whiteSpace: "nowrap", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}
+                        onClick={() => fileRef.current?.click()}
+                      >
+                        Elegir archivo
+                      </button>
+                      <input
+                        type="text"
+                        readOnly
+                        value={uploadFileName || "Ningún archivo seleccionado"}
+                        style={{ width: 400, padding: "0 10px", fontSize: 13, background: "#ffffff", border: "none", outline: "none", color: uploadFileName ? "var(--text)" : "var(--muted)" }}
+                      />
                     </div>
-                    <div style={{ padding: 12 }}>
-                      <div style={{ fontWeight: 900 }}>Creados: {uploadReport.created}</div>
-                      <div style={{ fontWeight: 900 }}>Actualizados: {uploadReport.updated}</div>
-                      <div style={{ fontWeight: 900 }}>Saltados: {uploadReport.skipped}</div>
 
+                    {/* Cargar Plantilla */}
+                    <button className="btn" onClick={uploadExcelUsers} disabled={uploading}>
+                      {uploading ? "Subiendo..." : "↑ Cargar Archivo"}
+                    </button>
+
+                    {/* Cancelar */}
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{ background: "#4b5563", borderColor: "#4b5563" }}
+                      onClick={() => {
+                        setUploadReport(null);
+                        setUploadFileName("");
+                        setMsg(null);
+                        setOkMsg(null);
+                        if (fileRef.current) fileRef.current.value = "";
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+                {uploadReport && (
+                  <div style={{ marginTop: 12, overflow: "hidden", borderRadius: 14, border: "1px solid var(--stroke)" }}>
+                    <div style={{ padding: "8px 12px", fontWeight: 900, background: "rgba(14,165,233,.08)", fontSize: 13 }}>Resultado</div>
+                    <div style={{ padding: "8px 12px", fontSize: 13 }}>
+                      <div>Creados: <b>{uploadReport.created}</b></div>
+                      <div>Actualizados: <b>{uploadReport.updated}</b></div>
+                      <div>Saltados: <b>{uploadReport.skipped}</b></div>
                       {Array.isArray(uploadReport.errors) && uploadReport.errors.length > 0 && (
-                        <div style={{ marginTop: 10 }}>
+                        <div style={{ marginTop: 8 }}>
                           <div style={{ fontWeight: 900, color: "#b91c1c" }}>Errores:</div>
-                          <ul style={{ marginTop: 6 }}>
+                          <ul style={{ marginTop: 4 }}>
                             {uploadReport.errors.slice(0, 25).map((x: any, idx: number) => (
-                              <li key={idx} style={{ color: "#b91c1c", fontWeight: 700 }}>
-                                Fila {x.row}: {x.error}
-                              </li>
+                              <li key={idx} style={{ color: "#b91c1c", fontWeight: 700 }}>Fila {x.row}: {x.error}</li>
                             ))}
                           </ul>
                         </div>
@@ -1907,98 +3065,9 @@ export default function AdminPage() {
                     </div>
                   </div>
                 )}
-              </div>
-            </div>
-          )}
-
-          {view === "UPDATE_USER" && (
-            <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Actualizar Persona</h2>
-
-              <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
-                Digita la cédula y el sistema te carga los datos para modificarlos.
+                </>}
               </div>
 
-              <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div style={{ gridColumn: "1 / span 2" }}>
-                  <div className="label">Cédula a actualizar</div>
-                  <input className="input" value={upCedula} onChange={(e) => setUpCedula(e.target.value)} />
-                  {upSearching && (
-                    <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                      Buscando usuario...
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <div className="label">Email</div>
-                  <input className="input" value={upEmail} onChange={(e) => setUpEmail(e.target.value)} />
-                </div>
-
-                <div>
-                  <div className="label">Nombre</div>
-                  <input className="input" value={upName} onChange={(e) => setUpName(e.target.value)} />
-                </div>
-
-                <div>
-                  <div className="label">code_jiliu</div>
-                  <input className="input" value={upCodeJiliu} onChange={(e) => setUpCodeJiliu(e.target.value)} />
-                </div>
-
-                <div>
-                  <div className="label">Course</div>
-                  <select className="select" value={upCourseId} onChange={(e) => setUpCourseId(e.target.value)}>
-                    <option value="">Selecciona...</option>
-                    {courses.map((c) => (
-                      <option key={c.id} value={String(c.id)}>
-                        {c.name} (Nivel {c.level})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div style={{ gridColumn: "1 / span 2" }}>
-                  <div className="label">Roles</div>
-                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-                    {ROLE_OPTIONS.map((r) => (
-                      <label
-                        key={r.value}
-                        style={{
-                          display: "flex",
-                          gap: 8,
-                          alignItems: "center",
-                          padding: "10px 12px",
-                          borderRadius: 14,
-                          border: "1px solid var(--stroke)",
-                          background: "var(--card)",
-                          cursor: "pointer",
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={!!upRoles[r.value]}
-                          onChange={(e) => setUpRoles((p) => ({ ...p, [r.value]: e.target.checked }))}
-                        />
-                        <span style={{ fontWeight: 900 }}>{r.label}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
-                <button
-                  className="btn"
-                  onClick={updateUserByCedula}
-                  disabled={upLoading || upSearching}
-                  style={{ width: 260 }}
-                >
-                  {upLoading ? "Actualizando..." : "Actualizar"}
-                </button>
-                <button type="button" className="btnLight" onClick={() => resetUpdateUserForm()}>
-                  Limpiar
-                </button>
-              </div>
             </div>
           )}
 
@@ -2014,79 +3083,99 @@ export default function AdminPage() {
                 }}
               >
                 <div>
-                  <h2 style={{ margin: 0 }}>Subir nota manual</h2>
-                  <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                    Grilla de notas estilo hoja de cálculo para todas las materias.
-                  </div>
+                  <h2 style={{ margin: 0 }}>Gestionar Notas</h2>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={loadGradeGrid}
-                  className="btnLight"
-                  disabled={upsertClassFilter === "all" || gLoadingRoster}
-                  style={{ width: 180, flexShrink: 0 }}
-                >
-                  {gLoadingRoster ? "Cargando..." : "Refrescar lista"}
-                </button>
               </div>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 12,
-                  marginTop: 14,
-                }}
-              >
-                <div>
+              <div style={{ display: "flex", gap: 12, marginTop: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
+                {/* Año */}
+                <div style={{ flex: "1 1 140px" }}>
                   <div className="label">Año</div>
                   <select
                     className="select"
                     value={String(upsertLevelFilter)}
                     onChange={(e) => {
                       const v = e.target.value;
-                      setUpsertLevelFilter(v === "" ? "" : Number(v));
+                      setUpsertLevelFilter(v === "" ? "" : Number(v)); // 0 = Todos
                     }}
                   >
-                    <option value="">Selecciona un Año</option>
+                    <option value="" disabled>Seleccionar año...</option>
+                    <option value="0" style={{ fontWeight: 700 }}>Todos</option>
                     {availableLevels.map((lvl) => (
                       <option key={lvl} value={String(lvl)}>
-                        {lvl}
+                        {levels.find((l) => l.id === lvl)?.name ?? `Nivel ${lvl}`}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                <div>
-                  <div className="label">Materia</div>
+                {/* Curso */}
+                <div style={{ flex: "1 1 140px" }}>
+                  <div className="label">Curso</div>
                   <select
                     className="select"
-                    value={upsertClassFilter}
+                    value={upsertCourseFilter === "all" ? "all" : String(upsertCourseFilter)}
                     onChange={(e) =>
-                      setUpsertClassFilter(
-                        e.target.value === "all" ? "all" : Number(e.target.value)
-                      )
+                      setUpsertCourseFilter(e.target.value === "all" ? "all" : Number(e.target.value))
                     }
-                    disabled={upsertLevelFilter === ""}
                   >
-                    <option value="all">
-                      {upsertLevelFilter === "" ? "Selecciona un Año" : "Selecciona una materia"}
-                    </option>
-                    {upsertClassesFiltered.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
+                    <option value="all" style={{ fontWeight: 700 }}>Todos</option>
+                    {upsertCoursesFiltered.map((c) => (
+                      <option key={c.id} value={String(c.id)}>{c.name}</option>
                     ))}
                   </select>
+                </div>
+
+                {/* Materia + botones alineados */}
+                <div style={{ flex: "2 1 200px", display: "flex", gap: 10, alignItems: "flex-end" }}>
+                  <div style={{ flex: 1 }}>
+                    <div className="label">Materia</div>
+                    <select
+                      className="select"
+                      value={upsertClassFilter}
+                      onChange={(e) =>
+                        setUpsertClassFilter(
+                          e.target.value === "all" ? "all" : Number(e.target.value)
+                        )
+                      }
+                    >
+                      <option value="all">Todas</option>
+                      {upsertClassesFiltered.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Botón Descargar */}
+                  {gEvaluations.length > 0 && gRoster.length > 0 && (
+                    <button
+                      type="button"
+                      className="btnLight"
+                      onClick={downloadExcel}
+                      style={{
+                        background: "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)",
+                        border: "1px solid rgba(34,197,94,.8)",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        whiteSpace: "nowrap",
+                        boxShadow: "0 4px 12px rgba(34,197,94,.35)",
+                      }}
+                    >
+                      ↓&nbsp;&nbsp;Descargar&nbsp;
+                      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24">
+                        <path d="M4 2h9l5 5v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="#fff" stroke="#14532d" strokeWidth="1.2"/>
+                        <path d="M13 2v5h5" fill="none" stroke="#14532d" strokeWidth="1.2"/>
+                        <rect x="3" y="10" width="18" height="11" rx="1" fill="#16a34a" stroke="#14532d" strokeWidth="0.8"/>
+                        <text x="6.5" y="19.5" fontSize="9" fontWeight="bold" fill="#ffffff" fontFamily="Arial, sans-serif">xls</text>
+                      </svg>
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {upsertClassFilter === "all" ? (
-                <div style={{ marginTop: 16, color: "var(--muted)" }}>
-                  Selecciona una materia para cargar todas sus evaluaciones y notas.
-                </div>
-              ) : (
+              {upsertLevelFilter === "" ? null : (
                 <div style={{ marginTop: 16 }}>
                   <div
                     style={{
@@ -2099,14 +3188,15 @@ export default function AdminPage() {
                     }}
                   >
                     <div style={{ fontWeight: 900 }}>
-                      Materia: {gridClassInfo?.name ?? selectedUpsertClass?.name ?? "—"}
+                      {upsertClassFilter !== "all"
+                        ? `Materia: ${gridClassInfo?.name ?? selectedUpsertClass?.name ?? "—"}`
+                        : upsertCourseFilter !== "all"
+                          ? `Curso: ${courses.find(c => c.id === Number(upsertCourseFilter))?.name ?? "—"} — Todas las materias`
+                          : upsertLevelFilter !== "" && upsertLevelFilter !== 0
+                            ? `${levels.find(l => l.id === upsertLevelFilter)?.name ?? `Nivel ${upsertLevelFilter}`} — Todos los cursos — Todas las materias`
+                            : "Todas las notas"}
                     </div>
 
-                    {gEvaluations.length > 0 && (
-                      <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                        Haz clic en <b>Actualizar</b> para habilitar edición por fila.
-                      </div>
-                    )}
                   </div>
 
                   <div
@@ -2123,6 +3213,7 @@ export default function AdminPage() {
                         overflowX: "auto",
                         overflowY: "auto",
                         maxHeight: "68vh",
+                        minHeight: 200,
                         background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)",
                       }}
                     >
@@ -2148,44 +3239,109 @@ export default function AdminPage() {
                         </colgroup>
 
                         <thead>
+                          {/* Subheader row: class names when showing multiple classes */}
+                          {upsertClassFilter === "all" && gEvaluations.length > 0 && (() => {
+                            const groups: { classId: number; className: string; count: number }[] = [];
+                            for (const ev of gEvaluations) {
+                              const cid = ev.id_class;
+                              const last = groups[groups.length - 1];
+                              if (last && last.classId === cid) { last.count++; }
+                              else groups.push({ classId: cid, className: ev.class?.name || `Clase ${cid}`, count: 1 });
+                            }
+                            return (
+                              <tr>
+                                <td colSpan={2} style={{ borderBottom: GRILLA.headerBottomBorder, background: GRILLA.headerBgLight, position: "sticky", top: 0, left: 0, zIndex: 7 }} />
+                                {groups.map((g) => (
+                                  <td
+                                    key={g.classId}
+                                    colSpan={g.count}
+                                    style={{
+                                      padding: "4px 10px",
+                                      borderBottom: GRILLA.headerBottomBorder,
+                                      fontSize: 11,
+                                      textAlign: "center",
+                                      background: GRILLA.headerBgLight,
+                                      borderLeft: "1px solid var(--stroke)",
+                                      position: "sticky",
+                                      top: 0,
+                                      zIndex: 5,
+                                    }}
+                                  >
+                                    {g.className}
+                                  </td>
+                                ))}
+                                <td style={{ borderBottom: GRILLA.headerBottomBorder, background: GRILLA.headerBgLight, position: "sticky", top: 0, zIndex: 5 }} />
+                              </tr>
+                            );
+                          })()}
                           <tr>
                             <th
-                              onClick={() => toggleGrillaSort("cedula")}
                               style={{
                                 textAlign: "left",
-                                padding: "8px 10px",
+                                padding: "8px 12px",
                                 borderBottom: GRILLA.headerBottomBorder,
-                                fontWeight: 800,
                                 position: "sticky",
-                                top: 0,
+                                top: upsertClassFilter === "all" ? 33 : 0,
                                 left: 0,
                                 zIndex: 6,
                                 whiteSpace: "nowrap",
                                 boxShadow: "none",
-                                cursor: "pointer",
-                                userSelect: "none",
                               }}
                             >
-                              Cédula {grillaSortKey === "cedula" ? (grillaSortDir === "asc" ? "▲" : "▼") : ""}
+                              <select
+                                className="select"
+                                value={gFilterCedula}
+                                onChange={(e) => {
+                                  setGFilterCedula(e.target.value);
+                                  if (e.target.value !== "all") setGFilterName("all");
+                                }}
+                                disabled={gFilterName !== "all"}
+                                style={{
+                                  fontSize: 13,
+                                  padding: "4px 6px",
+                                  fontWeight: gFilterCedula !== "all" ? 600 : 400,
+                                  color: gFilterCedula !== "all" ? "var(--text)" : "var(--muted)",
+                                }}
+                              >
+                                <option value="all" style={{ fontWeight: 900, color: "#000" }}>Todos</option>
+                                {sortedRoster.map((st) => (
+                                  <option key={st.id} value={st.cedula} style={{ color: "#000" }}>{st.cedula}</option>
+                                ))}
+                              </select>
                             </th>
 
                             <th
-                              onClick={() => toggleGrillaSort("name")}
                               style={{
                                 textAlign: "left",
-                                padding: "8px 10px",
+                                padding: "8px 12px",
                                 borderBottom: GRILLA.headerBottomBorder,
-                                fontWeight: 800,
                                 position: "sticky",
-                                top: 0,
+                                top: upsertClassFilter === "all" ? 33 : 0,
                                 left: STICKY_ALUMNO_LEFT,
                                 zIndex: 6,
                                 boxShadow: "none",
-                                cursor: "pointer",
-                                userSelect: "none",
                               }}
                             >
-                              Alumno {grillaSortKey === "name" ? (grillaSortDir === "asc" ? "▲" : "▼") : ""}
+                              <select
+                                className="select"
+                                value={gFilterName}
+                                onChange={(e) => {
+                                  setGFilterName(e.target.value);
+                                  if (e.target.value !== "all") setGFilterCedula("all");
+                                }}
+                                disabled={gFilterCedula !== "all"}
+                                style={{
+                                  fontSize: 13,
+                                  padding: "4px 6px",
+                                  fontWeight: gFilterName !== "all" ? 600 : 400,
+                                  color: gFilterName !== "all" ? "var(--text)" : "var(--muted)",
+                                }}
+                              >
+                                <option value="all" style={{ fontWeight: 900, color: "#000" }}>Todos</option>
+                                {sortedRoster.map((st) => (
+                                  <option key={st.id} value={st.id} style={{ color: "#000" }}>{st.name}</option>
+                                ))}
+                              </select>
                             </th>
 
                             {gEvaluations.map((ev) => (
@@ -2195,11 +3351,11 @@ export default function AdminPage() {
                                   textAlign: "left",
                                   padding: "8px 10px",
                                   borderBottom: GRILLA.headerBottomBorder,
-                                  fontWeight: 800,
                                   position: "sticky",
-                                  top: 0,
+                                  top: upsertClassFilter === "all" ? 33 : 0,
                                   zIndex: 5,
                                   lineHeight: 1.2,
+                                  borderLeft: upsertClassFilter === "all" ? "1px solid var(--stroke)" : undefined,
                                 }}
                               >
                                 {getEvaluationColumnLabel(ev)}
@@ -2211,14 +3367,11 @@ export default function AdminPage() {
                                 textAlign: "center",
                                 padding: "8px 10px",
                                 borderBottom: GRILLA.headerBottomBorder,
-                                fontWeight: 800,
                                 position: "sticky",
-                                top: 0,
+                                top: upsertClassFilter === "all" ? 33 : 0,
                                 zIndex: 5,
                               }}
-                            >
-                              Acción
-                            </th>
+                            />
                           </tr>
                         </thead>
 
@@ -2228,7 +3381,10 @@ export default function AdminPage() {
                               <td
                                 colSpan={Math.max(3, gEvaluations.length + 3)}
                                 style={{
-                                  padding: 16,
+                                  padding: 32,
+                                  minHeight: 120,
+                                  textAlign: "center",
+                                  fontSize: 14,
                                   color: "var(--muted)",
                                   background: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)",
                                 }}
@@ -2263,7 +3419,7 @@ export default function AdminPage() {
                               </td>
                             </tr>
                           ) : (
-                            sortedRoster.map((st, rowIndex) => {
+                            filteredRoster.map((st, rowIndex) => {
                               const isEditing = !!editingRow[st.id];
                               const isBusy = !!savingOne[st.id] || savingAll;
 
@@ -2286,7 +3442,6 @@ export default function AdminPage() {
                                     style={{
                                       padding: "2px 10px",
                                       borderBottom: GRILLA.rowBottomBorder,
-                                      fontWeight: 700,
                                       background: isEditing ? activeRowBg : baseRowBg,
                                       position: "sticky",
                                       left: 0,
@@ -2312,7 +3467,7 @@ export default function AdminPage() {
                                       color: cellTextColor,
                                     }}
                                   >
-                                    <div style={{ fontWeight: 700, lineHeight: 1.15 }}>
+                                    <div style={{ lineHeight: 1.15 }}>
                                       {st.name}
                                     </div>
                                   </td>
@@ -2352,9 +3507,9 @@ export default function AdminPage() {
                                             <span
                                               style={{
                                                 display: "inline-block",
-                                                padding: "2px 10px",
+                                                padding: "2px 4px",
                                                 borderRadius: 4,
-                                                fontSize: 11,
+                                                fontSize: 8,
                                                 fontWeight: 700,
                                                 letterSpacing: 0.3,
                                                 background: isDarkTheme
@@ -2389,7 +3544,7 @@ export default function AdminPage() {
                                               if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
                                               setGradeDraft((p) => ({ ...p, [key]: v }));
                                             }}
-                                            placeholder={enabledForCourse ? "—" : "N/A"}
+                                            placeholder={enabledForCourse ? "—" : "-"}
                                             onFocus={(e) => {
                                               if (editable) {
                                                 e.currentTarget.style.background = getGrillaFocusCellBg(isDarkTheme);
@@ -2504,45 +3659,6 @@ export default function AdminPage() {
                     </div>
                   </div>
 
-                  {gEvaluations.length > 0 && gRoster.length > 0 && (
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: 12,
-                        marginTop: 12,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                        Total estudiantes: <b>{gRoster.length}</b> · Total evaluaciones:{" "}
-                        <b>{gEvaluations.length}</b>
-                      </div>
-
-                      <div style={{ display: "flex", gap: 10 }}>
-                        <button
-                          type="button"
-                          className="btnLight"
-                          onClick={downloadExcel}
-                          style={{
-                            background: "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)",
-                            border: "1px solid rgba(34,197,94,.8)",
-                          }}
-                        >
-                          Descargar en Excel
-                        </button>
-                        <button
-                          type="button"
-                          className="btnLight"
-                          onClick={saveAll}
-                          disabled={savingAll}
-                        >
-                          {savingAll ? "Guardando..." : "Guardar toda la grilla"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
             </div>

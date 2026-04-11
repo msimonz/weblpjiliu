@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
-import { primaryRole, roleLabelFromRole } from "@/lib/roles";
+import { roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
@@ -17,10 +17,14 @@ type EvalItem = {
   percent: number;
   created_at: string;
   course?: { id: number; name: string; level: number; year: string };
-  class?: { id: number; name: string; level: number };
+  class?: { id: number; name: string; level: number } | null;
   evaluation_type?: { id: number; type: string };
-  id_course: number;
-  id_class: number;
+  module?: { id: number; name: string } | null;
+  group?: { id: number; name: string } | null;
+  id_course: number | null;
+  id_class: number | null;
+  id_module?: number | null;
+  id_group?: number | null;
   id_type: number;
 };
 
@@ -65,8 +69,9 @@ type TeacherDashboardResponse = {
   groups: DashboardGroup[];
 };
 
-type TeacherView = "DASHBOARD" | "EVALS" | "CREATE" | "UPSERT";
+type TeacherView = "" | "DASHBOARD" | "EVALS" | "CREATE" | "UPSERT";
 type LevelValue = number | "all" | "";
+type LevelItem = { id: number; name: string };
 const GRILLA = {
   headerBgLight: "#d9edf7",
   headerBgDark: "#083b5c",
@@ -105,13 +110,9 @@ function gradeCellKey(studentId: string, examId: number) {
   return `${studentId}__${examId}`;
 }
 
-function levelLabel(level: number | null | undefined) {
+function levelLabel(level: number | null | undefined, levelMap: Record<number, string> = {}) {
   const n = Number(level);
-  if (n === 1) return "Primer año";
-  if (n === 2) return "Segundo año";
-  if (n === 3) return "Tercer año";
-  if (n === 4) return "Cuarto año";
-  return `Año ${level ?? "—"}`;
+  return levelMap[n] ?? `Año ${level ?? "—"}`;
 }
 
 function isDarkThemeEnabled() {
@@ -160,7 +161,7 @@ export default function TeacherPage() {
   const [loadingMe, setLoadingMe] = useState(true);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [view, setView] = useState<TeacherView>("DASHBOARD");
+  const [view, setView] = useState<TeacherView>("");
 
   const [items, setItems] = useState<EvalItem[]>([]);
   const [loadingList, setLoadingList] = useState(false);
@@ -168,6 +169,11 @@ export default function TeacherPage() {
 
   const [myClasses, setMyClasses] = useState<TeacherClass[]>([]);
   const [loadingClasses, setLoadingClasses] = useState(false);
+  const [levels, setLevels] = useState<LevelItem[]>([]);
+  const levelMap = useMemo<Record<number, string>>(
+    () => Object.fromEntries(levels.map((l) => [l.id, l.name])),
+    [levels]
+  );
 
   const [dashboard, setDashboard] = useState<TeacherDashboardResponse | null>(null);
   const [loadingDashboard, setLoadingDashboard] = useState(false);
@@ -371,6 +377,9 @@ export default function TeacherPage() {
       loadTypes();
       loadEvaluations();
       loadTeacherCourses();
+      apiFetch("/api/teacher/levels")
+        .then((res) => setLevels(res?.items || []))
+        .catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingMe]);
@@ -399,7 +408,12 @@ export default function TeacherPage() {
     let list = [...items];
 
     if (evalLevelFilter !== "all" && evalLevelFilter !== "") {
-      list = list.filter((e) => Number(e.class?.level ?? 0) === Number(evalLevelFilter));
+      list = list.filter(
+        (e) =>
+          // module/group evals have no class level — always show them
+          e.id_class == null ||
+          Number(e.class?.level ?? 0) === Number(evalLevelFilter)
+      );
     }
 
     if (evalClassFilter !== "all") {
@@ -978,7 +992,7 @@ export default function TeacherPage() {
     router.replace("/login");
   }
 
-  const roleLabel = useMemo(() => roleLabelFromRole(primaryRole(me)), [me]);
+  const roleLabel = useMemo(() => roleLabelFromRole(getActiveRole(me)), [me]);
 
   if (loadingMe) return <div className="container">Cargando...</div>;
 
@@ -1246,10 +1260,11 @@ export default function TeacherPage() {
                   }
                 }}
               >
+                <option value="" disabled>¿Qué quieres hacer?...</option>
                 <option value="DASHBOARD">Ver Materias Asignadas</option>
-                <option value="EVALS">Ver/Actualizar Evaluaciones</option>
+                <option value="UPSERT">Gestionar notas de Estudiantes</option>
                 <option value="CREATE">Crear/Eliminar Evaluaciones</option>
-                <option value="UPSERT">Ver/Actualizar notas de Estudiantes</option>
+                <option value="EVALS">Ver/Actualizar Evaluaciones</option>
               </select>
             </div>
           </div>
@@ -1371,7 +1386,7 @@ export default function TeacherPage() {
                         gridTemplateColumns: "repeat(4, 1fr)",
                       }}
                     >
-                      {[1, 2, 3, 4].map((lvl, idx) => {
+                      {(levels.length > 0 ? levels.map((l) => l.id) : [1, 2, 3, 4]).map((lvl, idx) => {
                         const group = dashboard.groups.find((g) => Number(g.level) === lvl);
                         const items = group?.items || [];
                         const studentCount = group?.student_count ?? 0;
@@ -1397,7 +1412,7 @@ export default function TeacherPage() {
                                 fontSize: 15,
                               }}
                             >
-                              {levelLabel(lvl)}{group ? ` - ${studentCount} est.` : ""}
+                              {levelLabel(lvl, levelMap)}{group ? ` - ${studentCount} est.` : ""}
                             </div>
 
                             {/* cuerpo columna */}
@@ -1477,7 +1492,7 @@ export default function TeacherPage() {
                     <option value="all">Todos los años</option>
                     {availableLevels.map((lvl) => (
                       <option key={lvl} value={String(lvl)}>
-                        {levelLabel(lvl)}
+                        {levelLabel(lvl, levelMap)}
                       </option>
                     ))}
                   </select>
@@ -1537,57 +1552,92 @@ export default function TeacherPage() {
                         </td>
                       </tr>
                     ) : (
-                      evalItemsFiltered.map((e) => (
-                        <tr key={e.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
-                          <td style={{ padding: 12 }}>{e.class?.name ?? `ID ${e.id_class}`}</td>
-                          <td style={{ padding: 12 }}>
-                            <button
-                              type="button"
-                              onClick={() => goToUpsertFromEvaluation(e)}
-                              style={{
-                                background: "transparent",
-                                border: "none",
-                                padding: 0,
-                                margin: 0,
-                                color: "var(--text)",
-                                font: "inherit",
-                                fontWeight: 500,
-                                cursor: "pointer",
-                                textAlign: "left",
-                                textDecoration: "underline",
-                                textUnderlineOffset: 3,
-                              }}
-                              title="Ir a cambiar nota de esta evaluación"
-                            >
-                              {getEvaluationListLabel(e)}
-                            </button>
-                          </td>
-                          <td style={{ padding: "8px 12px" }}>
-                            <input
-                              type="number"
-                              min={1}
-                              max={100}
-                              className="input"
-                              style={{ textAlign: "center" }}
-                              value={percentDraft[e.id] ?? String(e.percent)}
-                              onChange={(ev) =>
-                                setPercentDraft((p) => ({ ...p, [e.id]: ev.target.value }))
-                              }
-                            />
-                          </td>
-                          <td style={{ padding: "8px 12px", textAlign: "center" }}>
-                            <button
-                              type="button"
-                              className="btnLight"
-                              style={{ fontSize: 12, padding: "4px 10px" }}
-                              disabled={savingEvalRow[e.id]}
-                              onClick={() => handleUpdateEvalRow(e.id)}
-                            >
-                              {savingEvalRow[e.id] ? "..." : "Actualizar %"}
-                            </button>
-                          </td>
-                        </tr>
-                      ))
+                      evalItemsFiltered.map((e) => {
+                        const isModuleLevel = e.id_class == null && e.id_module != null;
+                        const isGroupLevel = e.id_class == null && e.id_group != null;
+                        const isReadOnly = isModuleLevel || isGroupLevel;
+
+                        let scopeLabel: string;
+                        if (isGroupLevel) {
+                          const modName = e.module?.name ?? `Módulo ${e.id_module}`;
+                          const grpName = e.group?.name ?? `Grupo ${e.id_group}`;
+                          scopeLabel = `Módulo - ${modName} · Grupo - ${grpName}`;
+                        } else if (isModuleLevel) {
+                          scopeLabel = `Módulo - ${e.module?.name ?? `Módulo ${e.id_module}`}`;
+                        } else {
+                          scopeLabel = e.class?.name ?? `ID ${e.id_class}`;
+                        }
+
+                        return (
+                          <tr key={e.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)", opacity: isReadOnly ? 0.85 : 1 }}>
+                            <td style={{ padding: 12 }}>
+                              {isReadOnly ? (
+                                <span style={{ color: "var(--muted)", fontSize: 13 }}>{scopeLabel}</span>
+                              ) : (
+                                scopeLabel
+                              )}
+                            </td>
+                            <td style={{ padding: 12 }}>
+                              {isReadOnly ? (
+                                <span style={{ fontWeight: 500 }}>{getEvaluationListLabel(e)}</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => goToUpsertFromEvaluation(e)}
+                                  style={{
+                                    background: "transparent",
+                                    border: "none",
+                                    padding: 0,
+                                    margin: 0,
+                                    color: "var(--text)",
+                                    font: "inherit",
+                                    fontWeight: 500,
+                                    cursor: "pointer",
+                                    textAlign: "left",
+                                    textDecoration: "underline",
+                                    textUnderlineOffset: 3,
+                                  }}
+                                  title="Ir a cambiar nota de esta evaluación"
+                                >
+                                  {getEvaluationListLabel(e)}
+                                </button>
+                              )}
+                            </td>
+                            <td style={{ padding: "8px 12px" }}>
+                              {isReadOnly ? (
+                                <span style={{ color: "var(--muted)" }}>{e.percent}%</span>
+                              ) : (
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={100}
+                                  className="input"
+                                  style={{ textAlign: "center" }}
+                                  value={percentDraft[e.id] ?? String(e.percent)}
+                                  onChange={(ev) =>
+                                    setPercentDraft((p) => ({ ...p, [e.id]: ev.target.value }))
+                                  }
+                                />
+                              )}
+                            </td>
+                            <td style={{ padding: "8px 12px", textAlign: "center" }}>
+                              {isReadOnly ? (
+                                <span style={{ fontSize: 12, color: "var(--muted)" }}>Solo lectura</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btnLight"
+                                  style={{ fontSize: 12, padding: "4px 10px" }}
+                                  disabled={savingEvalRow[e.id]}
+                                  onClick={() => handleUpdateEvalRow(e.id)}
+                                >
+                                  {savingEvalRow[e.id] ? "..." : "Actualizar %"}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1621,7 +1671,7 @@ export default function TeacherPage() {
 
                   {selectedCreateCourse?.id && (
                     <div style={{ marginTop: 8, color: "var(--muted)", fontSize: 13 }}>
-                      Año detectado: <b>{levelLabel(selectedCreateCourse.level)}</b>
+                      Año detectado: <b>{levelLabel(selectedCreateCourse.level, levelMap)}</b>
                     </div>
                   )}
                 </div>

@@ -108,6 +108,26 @@
 <ownDataTypeParameters>,,</ownDataTypeParameters>
 <autoIncrementCycle>false</autoIncrementCycle>
 </Column>
+<Column name="id_group" id="BB002001-BB02-BB02-BB02-BB0200000001">
+<createdBy>Alexander Marquez</createdBy>
+<createdTime>2026-04-10 14:47:48 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
+<Column name="id_module" id="BB003001-BB03-BB03-BB03-BB0300000001">
+<createdBy>Alexander Marquez</createdBy>
+<createdTime>2026-04-10 14:47:48 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
 <Column name="created_at" id="FAC005F2-3A79-9C08-B956-79361191ECA9">
 <sourceDDLFile>jiliu.sql</sourceDDLFile>
 <createdBy>msimonz</createdBy>

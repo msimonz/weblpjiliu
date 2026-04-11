@@ -38,6 +38,17 @@
 <colAssociation fkAssociation="3723431F-1A0A-D1EC-CF2F-1707924CD842" referredColumn="120DDD22-601E-B927-929E-558C6D61D597"/>
 </associations>
 </Column>
+<Column name="id_course" id="BB004001-BB04-BB04-BB04-BB0400000001">
+<createdBy>Alexander Marquez</createdBy>
+<createdTime>2026-04-10 14:47:48 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+<nullsAllowed>true</nullsAllowed>
+<useDomainConstraints>false</useDomainConstraints>
+<use>1</use>
+<logicalDatatype>LOGDT011</logicalDatatype>
+<ownDataTypeParameters>,,</ownDataTypeParameters>
+<autoIncrementCycle>false</autoIncrementCycle>
+</Column>
 <Column name="created_at" id="FCCE7F65-21F5-C96B-AB3F-6716A17C703D">
 <sourceDDLFile>jiliu.sql</sourceDDLFile>
 <createdBy>msimonz</createdBy>

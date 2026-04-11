@@ -12,13 +12,18 @@ function requireTeacher(req, res, next) {
   return next();
 }
 
-function levelLabel(level) {
-  const n = Number(level);
-  if (n === 1) return "Primer año";
-  if (n === 2) return "Segundo año";
-  if (n === 3) return "Tercer año";
-  if (n === 4) return "Cuarto año";
-  return `Año ${level ?? "—"}`;
+async function getLevelMap() {
+  const { data } = await supabaseAdmin
+    .from("level")
+    .select("id,name")
+    .order("id", { ascending: true });
+  const map = {};
+  for (const l of data || []) map[l.id] = l.name;
+  return map;
+}
+
+function levelLabel(level, levelMap = {}) {
+  return levelMap[Number(level)] ?? `Año ${level ?? "—"}`;
 }
 
 async function getTeacherClasses(teacherId) {
@@ -89,7 +94,10 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
   try {
     const teacherId = req.auth.user.id;
 
-    const teacherClasses = await getTeacherClasses(teacherId);
+    const [teacherClasses, levelMap] = await Promise.all([
+      getTeacherClasses(teacherId),
+      getLevelMap(),
+    ]);
     const cleanClasses = (teacherClasses || []).filter(Boolean);
 
     const groupsMap = new Map();
@@ -99,7 +107,7 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
       if (!groupsMap.has(lvl)) {
         groupsMap.set(lvl, {
           level: lvl,
-          level_label: levelLabel(lvl),
+          level_label: levelLabel(lvl, levelMap),
           items: [],
         });
       }
@@ -256,6 +264,16 @@ teacherRouter.get("/courses", requireAuth, requireTeacher, async (req, res) => {
   }
 });
 
+teacherRouter.get("/levels", requireAuth, requireTeacher, async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from("level")
+    .select("id,name")
+    .order("id", { ascending: true });
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ items: data || [] });
+});
+
 teacherRouter.get("/evaluation-types", requireAuth, requireTeacher, async (req, res) => {
   const { data, error } = await supabaseAdmin
     .from("evaluation_type")
@@ -309,9 +327,13 @@ teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) 
         id_course,
         id_class,
         id_type,
+        id_module,
+        id_group,
         course:course(id,name,level,year),
         class:class(id,name,level),
-        evaluation_type:evaluation_type(id,type)
+        evaluation_type:evaluation_type(id,type),
+        module:module(id,name),
+        group:group(id,name)
       `)
       .eq("id_teacher", teacherId)
       .order("created_at", { ascending: false });

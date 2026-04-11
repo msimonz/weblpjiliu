@@ -19,6 +19,11 @@
 <createdTime>2026-02-27 19:45:52 UTC</createdTime>
 <ownerDesignName>DER_EDIT</ownerDesignName>
 </ColumnProxy>
+<ColumnProxy name="id_course" id="BB004001-BB04-BB04-BB04-BB0400000001">
+<createdBy>Alexander Marquez</createdBy>
+<createdTime>2026-04-10 14:47:48 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
 <ColumnProxy name="created_at" id="FCCE7F65-21F5-C96B-AB3F-6716A17C703D">
 <createdBy>msimonz</createdBy>
 <createdTime>2026-02-27 19:45:52 UTC</createdTime>

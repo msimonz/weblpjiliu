@@ -1,0 +1,122 @@
+objeto,table_name,column_name,pos,data_type,udt_name,character_maximum_length,numeric_precision,numeric_scale,is_nullable,column_default,constraint_name,constraint_type,fk_foreign_table,fk_foreign_column,fk_on_update,fk_on_delete,index_def,check_clause
+CHECK,evaluation,null,null,null,null,null,null,null,null,null,evaluation_percent_check,CHECK,null,null,null,null,null,((percent >= (0)::numeric) AND (percent <= (100)::numeric))
+COLUMN,attendance,id,1,bigint,int8,null,64,0,NO,nextval('attendance_id_seq'::regclass),null,null,null,null,null,null,null,null
+COLUMN,attendance,id_student,2,uuid,uuid,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,attendance,id_class,3,bigint,int8,null,64,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,attendance,date,4,timestamp with time zone,timestamptz,null,null,null,YES,now(),null,null,null,null,null,null,null,null
+COLUMN,attendance,observation,5,text,text,null,null,null,YES,null,null,null,null,null,null,null,null,null
+COLUMN,class,id,1,bigint,int8,null,64,0,NO,nextval('class_id_seq'::regclass),null,null,null,null,null,null,null,null
+COLUMN,class,name,2,text,text,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,class,level,3,integer,int4,null,32,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,class,created_at,4,timestamp with time zone,timestamptz,null,null,null,YES,now(),null,null,null,null,null,null,null,null
+COLUMN,class,id_module,5,bigint,int8,null,64,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,class,id_group,6,smallint,int2,null,16,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,class_group,id_class,1,bigint,int8,null,64,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,class_group,id_group,2,bigint,int8,null,64,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,class_teacher,id_teacher,1,uuid,uuid,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,class_teacher,id_class,2,bigint,int8,null,64,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,class_teacher,created_at,3,timestamp with time zone,timestamptz,null,null,null,YES,now(),null,null,null,null,null,null,null,null
+COLUMN,class_teacher,id_course,4,bigint,int8,null,64,0,YES,null,null,null,null,null,null,null,null,null
+COLUMN,course,id,1,bigint,int8,null,64,0,NO,nextval('course_id_seq'::regclass),null,null,null,null,null,null,null,null
+COLUMN,course,name,2,smallint,int2,null,16,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,course,year,3,smallint,int2,null,16,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,course,level,4,integer,int4,null,32,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,evaluation,id,1,bigint,int8,null,64,0,NO,nextval('evaluation_id_seq'::regclass),null,null,null,null,null,null,null,null
+COLUMN,evaluation,id_course,2,bigint,int8,null,64,0,YES,null,null,null,null,null,null,null,null,null
+COLUMN,evaluation,id_class,3,bigint,int8,null,64,0,YES,null,null,null,null,null,null,null,null,null
+COLUMN,evaluation,id_teacher,4,uuid,uuid,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,evaluation,id_type,5,bigint,int8,null,64,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,evaluation,percent,6,numeric,numeric,null,5,2,NO,null,null,null,null,null,null,null,null,null
+COLUMN,evaluation,title,7,text,text,null,null,null,NO,'Evaluación'::text,null,null,null,null,null,null,null,null
+COLUMN,evaluation,created_at,8,timestamp with time zone,timestamptz,null,null,null,YES,now(),null,null,null,null,null,null,null,null
+COLUMN,evaluation,id_group,9,bigint,int8,null,64,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,evaluation,id_module,10,bigint,int8,null,64,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,evaluation_type,id,1,bigint,int8,null,64,0,NO,nextval('evaluation_type_id_seq'::regclass),null,null,null,null,null,null,null,null
+COLUMN,evaluation_type,type,2,text,text,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,evaluation_type,created_at,3,timestamp with time zone,timestamptz,null,null,null,YES,now(),null,null,null,null,null,null,null,null
+COLUMN,grades,id_student,1,uuid,uuid,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,grades,id_exam,2,bigint,int8,null,64,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,grades,grade,3,numeric,numeric,null,10,2,NO,null,null,null,null,null,null,null,null,null
+COLUMN,grades,finished_at,4,timestamp with time zone,timestamptz,null,null,null,YES,null,null,null,null,null,null,null,null,null
+COLUMN,grades,attempts,5,integer,int4,null,32,0,NO,1,null,null,null,null,null,null,null,null
+COLUMN,grades,created_at,7,timestamp with time zone,timestamptz,null,null,null,YES,now(),null,null,null,null,null,null,null,null
+COLUMN,grades,updated_at,8,timestamp with time zone,timestamptz,null,null,null,YES,now(),null,null,null,null,null,null,null,null
+COLUMN,group,id,1,bigint,int8,null,64,0,NO,nextval('group_id_seq'::regclass),null,null,null,null,null,null,null,null
+COLUMN,group,name,2,text,text,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,group,id_module,3,smallint,int2,null,16,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,level,id,1,bigint,int8,null,64,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,level,name,2,text,text,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,materias,id_module,1,integer,int4,null,32,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,materias,module,2,character varying,varchar,300,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,materias,id_group,3,integer,int4,null,32,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,materias,grupo,4,character varying,varchar,300,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,materias,id_class,5,integer,int4,null,32,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,materias,class,6,character varying,varchar,300,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,materias,level,7,integer,int4,null,32,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,module,id,1,bigint,int8,null,64,0,NO,nextval('module_id_seq'::regclass),null,null,null,null,null,null,null,null
+COLUMN,module,name,2,text,text,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,type,id,1,smallint,int2,null,16,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,type,code,2,character,bpchar,1,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,type,name,3,text,text,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,user_history,id_student,1,uuid,uuid,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,user_history,id_course,2,bigint,int8,null,64,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,user_history,created_at,3,timestamp with time zone,timestamptz,null,null,null,YES,now(),null,null,null,null,null,null,null,null
+COLUMN,user_type,id_user,1,uuid,uuid,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,user_type,id_type,2,smallint,int2,null,16,0,NO,null,null,null,null,null,null,null,null,null
+COLUMN,user_type,created_at,3,timestamp with time zone,timestamptz,null,null,null,NO,now(),null,null,null,null,null,null,null,null
+COLUMN,users,id,1,uuid,uuid,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,users,name,2,text,text,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,users,email,3,text,text,null,null,null,NO,null,null,null,null,null,null,null,null,null
+COLUMN,users,code_jiliu,4,text,text,null,null,null,YES,null,null,null,null,null,null,null,null,null
+COLUMN,users,id_course,5,bigint,int8,null,64,0,YES,null,null,null,null,null,null,null,null,null
+COLUMN,users,cedula,6,text,text,null,null,null,YES,null,null,null,null,null,null,null,null,null
+COLUMN,users,created_at,7,timestamp with time zone,timestamptz,null,null,null,YES,now(),null,null,null,null,null,null,null,null
+CONSTRAINT,attendance,id,1,null,null,null,null,null,null,null,attendance_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,class,id,1,null,null,null,null,null,null,null,class_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,class_teacher,id_teacher,1,null,null,null,null,null,null,null,class_teacher_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,class_teacher,id_class,2,null,null,null,null,null,null,null,class_teacher_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,course,id,1,null,null,null,null,null,null,null,course_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,evaluation,id,1,null,null,null,null,null,null,null,evaluation_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,evaluation_type,id,1,null,null,null,null,null,null,null,evaluation_type_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,evaluation_type,type,1,null,null,null,null,null,null,null,evaluation_type_type_key,UNIQUE,null,null,null,null,null,null
+CONSTRAINT,grades,id_student,1,null,null,null,null,null,null,null,grades_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,grades,id_exam,2,null,null,null,null,null,null,null,grades_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,group,id,1,null,null,null,null,null,null,null,group_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,level,id,1,null,null,null,null,null,null,null,level_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,materias,id_class,1,null,null,null,null,null,null,null,pk_materias,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,module,id,1,null,null,null,null,null,null,null,module_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,type,code,1,null,null,null,null,null,null,null,type_code_key,UNIQUE,null,null,null,null,null,null
+CONSTRAINT,type,id,1,null,null,null,null,null,null,null,type_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,user_history,id_student,1,null,null,null,null,null,null,null,user_history_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,user_history,id_course,2,null,null,null,null,null,null,null,user_history_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,user_type,id_user,1,null,null,null,null,null,null,null,user_type_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,user_type,id_type,2,null,null,null,null,null,null,null,user_type_pkey,PRIMARY KEY,null,null,null,null,null,null
+CONSTRAINT,users,cedula,1,null,null,null,null,null,null,null,users_cedula_key,UNIQUE,null,null,null,null,null,null
+CONSTRAINT,users,code_jiliu,1,null,null,null,null,null,null,null,users_code_jiliu_key,UNIQUE,null,null,null,null,null,null
+CONSTRAINT,users,email,1,null,null,null,null,null,null,null,users_email_key,UNIQUE,null,null,null,null,null,null
+CONSTRAINT,users,id,1,null,null,null,null,null,null,null,users_pkey,PRIMARY KEY,null,null,null,null,null,null
+FK,attendance,id_class,1,null,null,null,null,null,null,null,attendance_id_class_fkey,FOREIGN KEY,class,id,NO ACTION,CASCADE,null,null
+FK,attendance,id_student,1,null,null,null,null,null,null,null,attendance_id_student_fkey,FOREIGN KEY,users,id,NO ACTION,CASCADE,null,null
+FK,class,id_module,1,null,null,null,null,null,null,null,class_id_module_fkey,FOREIGN KEY,module,id,CASCADE,CASCADE,null,null
+FK,class_group,id_class,1,null,null,null,null,null,null,null,class_group_id_class_fkey,FOREIGN KEY,class,id,NO ACTION,CASCADE,null,null
+FK,class_group,id_group,1,null,null,null,null,null,null,null,class_group_id_group_fkey,FOREIGN KEY,group,id,NO ACTION,CASCADE,null,null
+FK,class_teacher,id_class,1,null,null,null,null,null,null,null,class_teacher_id_class_fkey,FOREIGN KEY,class,id,NO ACTION,CASCADE,null,null
+FK,class_teacher,id_course,1,null,null,null,null,null,null,null,class_teacher_id_course_fkey,FOREIGN KEY,course,id,CASCADE,CASCADE,null,null
+FK,class_teacher,id_teacher,1,null,null,null,null,null,null,null,class_teacher_id_teacher_fkey,FOREIGN KEY,users,id,NO ACTION,CASCADE,null,null
+FK,evaluation,id_class,1,null,null,null,null,null,null,null,evaluation_id_class_fkey,FOREIGN KEY,class,id,NO ACTION,CASCADE,null,null
+FK,evaluation,id_course,1,null,null,null,null,null,null,null,evaluation_id_course_fkey,FOREIGN KEY,course,id,NO ACTION,CASCADE,null,null
+FK,evaluation,id_group,1,null,null,null,null,null,null,null,evaluation_id_group_fkey,FOREIGN KEY,group,id,CASCADE,CASCADE,null,null
+FK,evaluation,id_module,1,null,null,null,null,null,null,null,evaluation_id_module_fkey,FOREIGN KEY,module,id,CASCADE,CASCADE,null,null
+FK,evaluation,id_teacher,1,null,null,null,null,null,null,null,evaluation_id_teacher_fkey,FOREIGN KEY,users,id,NO ACTION,CASCADE,null,null
+FK,evaluation,id_type,1,null,null,null,null,null,null,null,evaluation_id_type_fkey,FOREIGN KEY,evaluation_type,id,NO ACTION,RESTRICT,null,null
+FK,grades,id_exam,1,null,null,null,null,null,null,null,grades_id_exam_fkey,FOREIGN KEY,evaluation,id,NO ACTION,CASCADE,null,null
+FK,grades,id_student,1,null,null,null,null,null,null,null,grades_id_student_fkey,FOREIGN KEY,users,id,NO ACTION,CASCADE,null,null
+FK,user_history,id_course,1,null,null,null,null,null,null,null,user_history_id_course_fkey,FOREIGN KEY,course,id,NO ACTION,CASCADE,null,null
+FK,user_history,id_student,1,null,null,null,null,null,null,null,user_history_id_student_fkey,FOREIGN KEY,users,id,NO ACTION,CASCADE,null,null
+FK,user_type,id_type,1,null,null,null,null,null,null,null,user_type_id_type_fkey,FOREIGN KEY,type,id,NO ACTION,RESTRICT,null,null
+FK,user_type,id_user,1,null,null,null,null,null,null,null,user_type_id_user_fkey,FOREIGN KEY,users,id,NO ACTION,CASCADE,null,null
+FK,users,id_course,1,null,null,null,null,null,null,null,users_id_course_fkey,FOREIGN KEY,course,id,NO ACTION,NO ACTION,null,null
+INDEX,class_group,idx_class_group_id_class_id_group_uq,null,null,null,null,null,null,null,null,idx_class_group_id_class_id_group_uq,UNIQUE INDEX,null,null,null,null,"CREATE UNIQUE INDEX idx_class_group_id_class_id_group_uq ON public.class_group USING btree (id_class, id_group)",null
+INDEX,class_group,idx_class_group_id_group,null,null,null,null,null,null,null,null,idx_class_group_id_group,INDEX,null,null,null,null,CREATE INDEX idx_class_group_id_group ON public.class_group USING btree (id_group),null
+INDEX,user_type,user_type_type_idx,null,null,null,null,null,null,null,null,user_type_type_idx,INDEX,null,null,null,null,CREATE INDEX user_type_type_idx ON public.user_type USING btree (id_type),null
+INDEX,user_type,user_type_user_idx,null,null,null,null,null,null,null,null,user_type_user_idx,INDEX,null,null,null,null,CREATE INDEX user_type_user_idx ON public.user_type USING btree (id_user),null

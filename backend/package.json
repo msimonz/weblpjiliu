@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node server.js",
     "job:etm": "node src/jobs/etm_weekly_sync.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -16,6 +18,7 @@
     "@supabase/supabase-js": "^2.95.3",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "multer": "^2.0.2",
     "node-cron": "^4.2.1",

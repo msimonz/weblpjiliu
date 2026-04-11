@@ -46,6 +46,16 @@
 <createdTime>2026-02-27 19:45:52 UTC</createdTime>
 <ownerDesignName>DER_EDIT</ownerDesignName>
 </ColumnProxy>
+<ColumnProxy name="id_group" id="BB002001-BB02-BB02-BB02-BB0200000001">
+<createdBy>Alexander Marquez</createdBy>
+<createdTime>2026-04-10 14:47:48 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
+<ColumnProxy name="id_module" id="BB003001-BB03-BB03-BB03-BB0300000001">
+<createdBy>Alexander Marquez</createdBy>
+<createdTime>2026-04-10 14:47:48 UTC</createdTime>
+<ownerDesignName>DER_EDIT</ownerDesignName>
+</ColumnProxy>
 <ColumnProxy name="created_at" id="FAC005F2-3A79-9C08-B956-79361191ECA9">
 <createdBy>msimonz</createdBy>
 <createdTime>2026-02-27 19:45:52 UTC</createdTime>
