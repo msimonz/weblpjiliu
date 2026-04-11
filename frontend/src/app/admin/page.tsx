@@ -3190,9 +3190,9 @@ export default function AdminPage() {
                     <div style={{ fontWeight: 900 }}>
                       {upsertClassFilter !== "all"
                         ? `Materia: ${gridClassInfo?.name ?? selectedUpsertClass?.name ?? "—"}`
-                        : upsertCourseFilter !== "all"
+                        : String(upsertCourseFilter) !== "all"
                           ? `Curso: ${courses.find(c => c.id === Number(upsertCourseFilter))?.name ?? "—"} — Todas las materias`
-                          : upsertLevelFilter !== "" && upsertLevelFilter !== 0
+                          : typeof upsertLevelFilter === "number" && upsertLevelFilter !== 0
                             ? `${levels.find(l => l.id === upsertLevelFilter)?.name ?? `Nivel ${upsertLevelFilter}`} — Todos los cursos — Todas las materias`
                             : "Todas las notas"}
                     </div>
