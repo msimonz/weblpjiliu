@@ -29,13 +29,29 @@ function levelLabel(level, levelMap = {}) {
 async function getTeacherClasses(teacherId) {
   const { data, error } = await supabaseAdmin
     .from("class_teacher")
-    .select("id_class, class:class(id,name,level)")
+    .select("id_class, class:class(id,name,level,id_module,id_group,module:module(id,name))")
     .eq("id_teacher", teacherId)
     .order("id_class", { ascending: true });
 
   if (error) throw error;
 
-  return (data || []).map((r) => r.class).filter(Boolean);
+  const classes = (data || []).map((r) => r.class).filter(Boolean);
+
+  // id_group en class no tiene FK a group; resolvemos nombres por separado
+  const groupIds = [...new Set(classes.map((c) => Number(c.id_group)).filter(Boolean))];
+  if (groupIds.length > 0) {
+    const { data: groups } = await supabaseAdmin
+      .from("group")
+      .select("id,name")
+      .in("id", groupIds);
+
+    const groupMap = new Map((groups || []).map((g) => [Number(g.id), g]));
+    for (const cls of classes) {
+      cls.group = groupMap.get(Number(cls.id_group)) ?? null;
+    }
+  }
+
+  return classes;
 }
 
 async function teacherHasClass(teacherId, classId) {
@@ -50,33 +66,42 @@ async function teacherHasClass(teacherId, classId) {
   return !!data?.id_class;
 }
 
+// Cache the student type id — it never changes between requests
+let _studentTypeId = null;
+async function getStudentTypeId() {
+  if (_studentTypeId) return _studentTypeId;
+  const { data, error } = await supabaseAdmin
+    .from("type")
+    .select("id")
+    .eq("code", "S")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data?.id) throw new Error("No existe type 'S'");
+  _studentTypeId = data.id;
+  return _studentTypeId;
+}
+
 async function getStudentsByCourseIds(courseIds) {
   if (!courseIds?.length) return [];
 
-  const { data: users, error: uErr } = await supabaseAdmin
-    .from("users")
-    .select("id,name,cedula,id_course")
-    .in("id_course", courseIds)
-    .order("name", { ascending: true });
+  const [{ data: users, error: uErr }, studentTypeId] = await Promise.all([
+    supabaseAdmin
+      .from("users")
+      .select("id,name,cedula,id_course")
+      .in("id_course", courseIds)
+      .order("name", { ascending: true }),
+    getStudentTypeId(),
+  ]);
 
   if (uErr) throw uErr;
 
   const ids = (users || []).map((u) => u.id);
   if (ids.length === 0) return [];
 
-  const { data: tRow, error: tErr } = await supabaseAdmin
-    .from("type")
-    .select("id")
-    .eq("code", "S")
-    .maybeSingle();
-
-  if (tErr) throw tErr;
-  if (!tRow?.id) throw new Error("No existe type 'S'");
-
   const { data: utRows, error: utErr } = await supabaseAdmin
     .from("user_type")
     .select("id_user")
-    .eq("id_type", tRow.id)
+    .eq("id_type", studentTypeId)
     .in("id_user", ids);
 
   if (utErr) throw utErr;
@@ -94,9 +119,15 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
   try {
     const teacherId = req.auth.user.id;
 
-    const [teacherClasses, levelMap] = await Promise.all([
+    const [teacherClasses, levelMap, assignData] = await Promise.all([
       getTeacherClasses(teacherId),
       getLevelMap(),
+      supabaseAdmin
+        .from("class_teacher")
+        .select("id_class, id_course, course:course(id,name), class:class(id,name,level,id_module,module:module(id,name))")
+        .eq("id_teacher", teacherId)
+        .order("id_class", { ascending: true })
+        .then(({ data }) => data || []),
     ]);
     const cleanClasses = (teacherClasses || []).filter(Boolean);
 
@@ -178,6 +209,20 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
       }
     }
 
+    const assignments = assignData
+      .filter((r) => r.class?.id)
+      .map((r) => ({
+        class_id: r.id_class,
+        class_name: r.class?.name || "",
+        level: Number(r.class?.level || 0),
+        level_label: levelLabel(Number(r.class?.level || 0), levelMap),
+        course_id: r.id_course || null,
+        course_name: r.course?.name || "",
+        module_id: r.class?.id_module || null,
+        module_name: r.class?.module?.name || "",
+      }))
+      .sort((a, b) => a.level - b.level || a.class_name.localeCompare(b.class_name, "es"));
+
     return res.json({
       summary: {
         assigned_classes: cleanClasses.length,
@@ -185,6 +230,7 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
         academic_year: academicYear,
       },
       groups,
+      assignments,
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -395,7 +441,6 @@ teacherRouter.get("/class-grade-grid", requireAuth, requireTeacher, async (req, 
         evaluation_type:evaluation_type(id,type)
       `)
       .eq("id_class", classId)
-      .eq("id_teacher", teacherId)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true });
 
@@ -519,7 +564,7 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
 
     const { data: cls, error: clsErr } = await supabaseAdmin
       .from("class")
-      .select("id,level,name")
+      .select("id,level,name,id_group,id_module")
       .eq("id", classIdNum)
       .maybeSingle();
 
@@ -578,6 +623,8 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
         id_type: Number(typeId),
         percent: p,
         title: t,
+        id_group: cls.id_group ?? null,
+        id_module: cls.id_module ?? null,
       })
       .select("id,title,percent,created_at,id_course,id_class,id_type")
       .maybeSingle();
@@ -724,5 +771,119 @@ teacherRouter.delete("/evaluations/:id", requireAuth, requireTeacher, async (req
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error eliminando evaluación" });
+  }
+});
+
+/**
+ * Batch grade grid — replaces N calls to /class-grade-grid
+ * GET /api/teacher/grade-grids-batch?class_ids=1,2,3
+ */
+teacherRouter.get("/grade-grids-batch", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacherId = req.auth.user.id;
+    const raw = String(req.query.class_ids || "");
+    const classIds = raw
+      .split(",")
+      .map(Number)
+      .filter((n) => Number.isFinite(n) && n > 0);
+
+    if (classIds.length === 0) return res.status(400).json({ error: "class_ids requerido" });
+
+    // 1) Verify all requested classes belong to this teacher (one query)
+    const { data: ctRows, error: ctErr } = await supabaseAdmin
+      .from("class_teacher")
+      .select("id_class")
+      .eq("id_teacher", teacherId)
+      .in("id_class", classIds);
+
+    if (ctErr) return res.status(500).json({ error: ctErr.message });
+
+    const allowedSet = new Set((ctRows || []).map((r) => Number(r.id_class)));
+    const denied = classIds.filter((id) => !allowedSet.has(id));
+    if (denied.length > 0) {
+      return res.status(403).json({ error: `Materias no asignadas: ${denied.join(",")}` });
+    }
+
+    // 2) Fetch all class metadata + all evaluations in parallel
+    const [{ data: classRows, error: clsErr }, { data: evalRows, error: evErr }] = await Promise.all([
+      supabaseAdmin
+        .from("class")
+        .select("id,name,level")
+        .in("id", classIds),
+      supabaseAdmin
+        .from("evaluation")
+        .select(`
+          id,title,percent,created_at,
+          id_course,id_class,id_type,
+          course:course(id,name,level,year),
+          class:class(id,name,level),
+          evaluation_type:evaluation_type(id,type)
+        `)
+        .in("id_class", classIds)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true }),
+    ]);
+
+    if (clsErr) return res.status(500).json({ error: clsErr.message });
+    if (evErr) return res.status(500).json({ error: evErr.message });
+
+    const classMap = new Map((classRows || []).map((c) => [c.id, c]));
+    const evals = evalRows || [];
+
+    // 3) Fetch students for all unique course_ids (one call)
+    const allCourseIds = [...new Set(evals.map((e) => Number(e.id_course)).filter(Boolean))];
+    const studentsRaw = allCourseIds.length > 0 ? await getStudentsByCourseIds(allCourseIds) : [];
+
+    // 4) Fetch course names
+    let courseNameMap = new Map();
+    if (allCourseIds.length > 0) {
+      const { data: courseRows, error: cErr } = await supabaseAdmin
+        .from("course")
+        .select("id,name")
+        .in("id", allCourseIds);
+      if (cErr) return res.status(500).json({ error: cErr.message });
+      courseNameMap = new Map((courseRows || []).map((c) => [Number(c.id), c.name]));
+    }
+
+    const students = studentsRaw.map((u) => ({
+      id: u.id,
+      name: u.name,
+      cedula: u.cedula,
+      id_course: u.id_course,
+      course_name: courseNameMap.get(Number(u.id_course)) || null,
+    }));
+
+    // 5) Fetch all grades in one query
+    const allExamIds = evals.map((e) => e.id);
+    const allStudentIds = students.map((s) => s.id);
+    let allGrades = [];
+    if (allExamIds.length > 0 && allStudentIds.length > 0) {
+      const { data: gRows, error: gErr } = await supabaseAdmin
+        .from("grades")
+        .select("id_student,id_exam,grade,attempts")
+        .in("id_exam", allExamIds)
+        .in("id_student", allStudentIds);
+
+      if (gErr) return res.status(500).json({ error: gErr.message });
+      allGrades = gRows || [];
+    }
+
+    // Build per-class sections
+    const sections = classIds.map((classId) => {
+      const cls = classMap.get(classId) ?? null;
+      const classEvals = evals.filter((e) => Number(e.id_class) === classId);
+      const classCourseIds = new Set(classEvals.map((e) => Number(e.id_course)).filter(Boolean));
+      const classStudents = students.filter((s) => classCourseIds.has(Number(s.id_course)));
+      const classExamIds = new Set(classEvals.map((e) => e.id));
+      const classStudentIds = new Set(classStudents.map((s) => s.id));
+      const classGrades = allGrades.filter(
+        (g) => classExamIds.has(g.id_exam) && classStudentIds.has(g.id_student)
+      );
+      return { class: cls, evaluations: classEvals, students: classStudents, grades: classGrades };
+    });
+
+    return res.json({ sections });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
   }
 });

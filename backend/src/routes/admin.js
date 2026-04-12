@@ -784,17 +784,22 @@ adminRouter.get("/class-grade-grid", requireAuth, requireAdmin, async (req, res)
 });
 
 // Flexible grade grid: all params optional
-// level=0 or omit = all levels; course_id omit = all courses; class_id omit = all classes
+// level=0 or omit = all levels; course_id omit = all courses; module_id omit = all modules; class_id omit = all classes
 adminRouter.get("/grade-grid", requireAuth, requireAdmin, async (req, res) => {
   try {
     const classId  = toInt(req.query.class_id);
     const courseId = toInt(req.query.course_id);
+    const moduleId = toInt(req.query.module_id);
     const level    = toInt(req.query.level); // 0 or omit = all levels
 
     // 1. Resolve which classes to include
-    let classQuery = supabaseAdmin.from("class").select("id,name,level");
-    if (classId)             classQuery = classQuery.eq("id", classId);
-    else if (level && level > 0) classQuery = classQuery.eq("level", level);
+    let classQuery = supabaseAdmin.from("class").select("id,name,level,id_module");
+    if (classId) {
+      classQuery = classQuery.eq("id", classId);
+    } else {
+      if (level && level > 0) classQuery = classQuery.eq("level", level);
+      if (moduleId)           classQuery = classQuery.eq("id_module", moduleId);
+    }
     classQuery = classQuery.order("level").order("name");
 
     const { data: classRows, error: clsErr } = await classQuery;

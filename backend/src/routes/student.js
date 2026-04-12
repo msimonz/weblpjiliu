@@ -78,34 +78,66 @@ studentRouter.get("/classes", requireAuth, async (req, res) => {
 });
 
 /**
+ * Niveles y cursos del estudiante (curso actual + historial)
+ * GET /api/student/my-courses
+ */
+studentRouter.get("/my-courses", requireAuth, async (req, res) => {
+  const userId = req.auth.user.id;
+
+  const course = await getStudentCourse(req, res);
+  if (!course) return;
+
+  const { data: histRows, error: histErr } = await supabaseAdmin
+    .from("user_history")
+    .select("id_course, course:course(id,name,level,year)")
+    .eq("id_student", userId);
+
+  if (histErr) return res.status(500).json({ error: histErr.message });
+
+  const coursesMap = new Map();
+  coursesMap.set(course.id, course);
+  for (const h of histRows || []) {
+    if (h.course?.id && !coursesMap.has(h.course.id)) {
+      coursesMap.set(h.course.id, h.course);
+    }
+  }
+
+  const items = Array.from(coursesMap.values())
+    .sort((a, b) => Number(a.level) - Number(b.level));
+
+  return res.json({ items, current_course_id: course.id });
+});
+
+/**
  * Resumen por materias del año
  * ✅ Debe devolver TODAS las materias del level, incluso si no tienen evaluaciones o notas.
  */
 studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   const userId = req.auth.user.id;
-  const level = Number(req.query.level || 1);
+  const requestedCourseId = Number(req.query.course_id || 0);
 
-  if (!level || level < 1 || level > 4) {
-    return res.status(400).json({ error: "level inválido (1..4)" });
+  const studentCourse = await getStudentCourse(req, res);
+  if (!studentCourse) return;
+
+  // Resolver curso activo: actual o uno del historial del estudiante
+  let activeCourse = studentCourse;
+  if (requestedCourseId && requestedCourseId !== studentCourse.id) {
+    const { data: histEntry } = await supabaseAdmin
+      .from("user_history")
+      .select("id_course, course:course(id,name,level,year)")
+      .eq("id_student", userId)
+      .eq("id_course", requestedCourseId)
+      .maybeSingle();
+    if (histEntry?.course?.id) activeCourse = histEntry.course;
   }
 
-  const course = await getStudentCourse(req, res);
-  if (!course) return;
+  const level = Number(activeCourse.level);
+  const activeCourseId = activeCourse.id;
 
-  if (!checkLevelAllowed(level, course)) {
-    return res.json({
-      blocked: true,
-      message: "Aún no ha cursado este año.",
-      course,
-      items: [],
-      stats: null,
-    });
-  }
-
-  // 1) Traer TODAS las materias del nivel
+  // 1) Traer TODAS las materias del nivel con nombre de módulo
   const { data: classRows, error: classErr } = await supabaseAdmin
     .from("class")
-    .select("id,name,level")
+    .select("id,name,level,module:module(id,name)")
     .eq("level", level)
     .order("name", { ascending: true });
 
@@ -118,7 +150,7 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   if (classes.length === 0) {
     return res.json({
       blocked: false,
-      course,
+      course: activeCourse,
       items: [],
       stats: {
         passed: 0,
@@ -137,16 +169,17 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
     byClass.set(classId, {
       class_id: classId,
       name: String(cls.name ?? `Materia ${classId}`),
+      module_name: cls.module?.name ?? null,
       sumW: 0,
       sum: 0,
     });
   }
 
-  // 3) Traer evaluaciones del course real del estudiante
+  // 3) Traer evaluaciones del curso activo
   const { data: evals, error: evalErr } = await supabaseAdmin
     .from("evaluation")
     .select("id,id_class,percent,title")
-    .eq("id_course", course.id);
+    .eq("id_course", activeCourseId);
 
   if (evalErr) {
     return res.status(500).json({ error: evalErr.message });
@@ -185,6 +218,7 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
       byClass.set(classId, {
         class_id: classId,
         name: `Materia ${classId}`,
+        module_name: null,
         sumW: 0,
         sum: 0,
       });
@@ -207,6 +241,7 @@ const items = Array.from(byClass.values())
     return {
       class_id: x.class_id,
       name: x.name,
+      module_name: x.module_name ?? null,
       weighted,
     };
   })
@@ -244,7 +279,7 @@ const items = Array.from(byClass.values())
 
   return res.json({
     blocked: false,
-    course,
+    course: activeCourse,
     items,
     stats: {
       passed,
@@ -258,32 +293,31 @@ const items = Array.from(byClass.values())
 
 studentRouter.get("/grades", requireAuth, async (req, res) => {
   const userId = req.auth.user.id;
-  const level = Number(req.query.level || 1);
   const classId = Number(req.query.class_id || 0);
+  const requestedCourseId = Number(req.query.course_id || 0);
 
-  if (!level || level < 1 || level > 4) {
-    return res.status(400).json({ error: "level inválido (1..4)" });
-  }
   if (!classId) return res.status(400).json({ error: "class_id requerido" });
 
-  const course = await getStudentCourse(req, res);
-  if (!course) return;
+  const studentCourse = await getStudentCourse(req, res);
+  if (!studentCourse) return;
 
-  if (!checkLevelAllowed(level, course)) {
-    return res.json({
-      blocked: true,
-      message: "Aún no ha cursado este año.",
-      course,
-      items: [],
-      weighted: null,
-    });
+  // Resolver curso activo: actual o uno del historial del estudiante
+  let activeCourse = studentCourse;
+  if (requestedCourseId && requestedCourseId !== studentCourse.id) {
+    const { data: histEntry } = await supabaseAdmin
+      .from("user_history")
+      .select("id_course, course:course(id,name,level,year)")
+      .eq("id_student", userId)
+      .eq("id_course", requestedCourseId)
+      .maybeSingle();
+    if (histEntry?.course?.id) activeCourse = histEntry.course;
   }
 
-  // evaluaciones de esa materia en el course REAL del estudiante
+  // evaluaciones de esa materia en el curso activo
   const { data: evals, error: evalErr } = await supabaseAdmin
     .from("evaluation")
     .select("id,title,percent,created_at,id_type")
-    .eq("id_course", course.id)
+    .eq("id_course", activeCourse.id)
     .eq("id_class", classId)
     .order("created_at", { ascending: true });
 
@@ -291,7 +325,7 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
 
   const evaluations = evals || [];
   if (evaluations.length === 0) {
-    return res.json({ blocked: false, items: [], weighted: null, course });
+    return res.json({ blocked: false, items: [], weighted: null, course: activeCourse });
   }
 
   const evalIds = evaluations.map((e) => e.id);
@@ -360,5 +394,5 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
 
   const weighted = sumW > 0 ? Number((sum / sumW).toFixed(2)) : null;
 
-  return res.json({ blocked: false, items, weighted, course });
+  return res.json({ blocked: false, items, weighted, course: activeCourse });
 });
