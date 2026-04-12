@@ -11,6 +11,8 @@ import ChangePasswordButton from "@/components/ChangePasswordButton";
 
 type ClassItem = { id: number; name: string; level: number };
 
+type CourseItem = { id: number; name: number; level: number; year: number };
+
 type GradeItem = {
   exam_id: number;
   type: string | null;
@@ -24,6 +26,7 @@ type GradeItem = {
 type SummaryItem = {
   class_id: number;
   name: string;
+  module_name: string | null;
   weighted: number | null;
 };
 
@@ -50,21 +53,28 @@ export default function DashboardPage() {
 
   const [level, setLevel] = useState<number>(1);
 
-  const studentCourseFixed = useMemo(() => {
-    const c = me?.course ?? null;
-    console.log("C", c);
-    return c;
-  }, [me]);
+  const [studentCourses, setStudentCourses] = useState<CourseItem[]>([]);
+
+  const studentCourseFixed = useMemo(() => me?.course ?? null, [me]);
 
   const studentLevelFixed = useMemo(() => {
     const lvl = Number(studentCourseFixed?.level);
     return Number.isFinite(lvl) && lvl > 0 ? lvl : null;
   }, [studentCourseFixed]);
 
-  const blockedByYear = useMemo(() => {
-    if (!studentLevelFixed) return false;
-    return level !== studentLevelFixed;
-  }, [level, studentLevelFixed]);
+  const availableLevels = useMemo(() =>
+    studentCourses
+      .map(c => ({ value: Number(c.level), label: LEVELS.find(l => l.value === Number(c.level))?.label ?? `Nivel ${c.level}` }))
+      .sort((a, b) => a.value - b.value),
+    [studentCourses]
+  );
+
+  const selectedCourseForLevel = useMemo(() =>
+    studentCourses.find(c => Number(c.level) === level) ?? null,
+    [studentCourses, level]
+  );
+
+  const courseId = useMemo(() => selectedCourseForLevel?.id ?? null, [selectedCourseForLevel]);
 
   const [q, setQ] = useState("");
   const [suggestions, setSuggestions] = useState<ClassItem[]>([]);
@@ -113,6 +123,13 @@ export default function DashboardPage() {
   }, [meLoading, studentLevelFixed]);
 
   useEffect(() => {
+    if (meLoading) return;
+    apiFetch("/api/student/my-courses")
+      .then((res) => setStudentCourses(res?.items || []))
+      .catch(() => setStudentCourses([]));
+  }, [meLoading]);
+
+  useEffect(() => {
     setSelectedClass(null);
     setQ("");
     setSuggestions([]);
@@ -123,23 +140,17 @@ export default function DashboardPage() {
   }, [level]);
 
   async function loadSummary() {
+    if (!courseId) return;
     setError(null);
-
-    if (blockedByYear) {
-      setSummaryItems([]);
-      setSummaryStats(null);
-      return;
-    }
-
     setSummaryLoading(true);
     try {
-      const res = await apiFetch(`/api/student/subjects-summary?level=${level}`);
+      const res = await apiFetch(`/api/student/subjects-summary?course_id=${courseId}`);
       setSummaryItems(res?.items || []);
       setSummaryStats(res?.stats || null);
     } catch (e: any) {
       setSummaryItems([]);
       setSummaryStats(null);
-      setError(e?.message || "Error cargando resumen del año");
+      setError(e?.message || "Error cargando resumen");
     } finally {
       setSummaryLoading(false);
     }
@@ -147,17 +158,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     loadSummary();
-  }, [level, blockedByYear]);
+  }, [courseId]);
 
   useEffect(() => {
     setError(null);
-
-    if (blockedByYear) {
-      setSuggestions([]);
-      setOpenSug(false);
-      setLoadingSug(false);
-      return;
-    }
 
     if (!q.trim()) {
       setSuggestions([]);
@@ -185,7 +189,7 @@ export default function DashboardPage() {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
-  }, [q, level, blockedByYear]);
+  }, [q, level]);
 
   function pickClass(c: ClassItem) {
     setSelectedClass(c);
@@ -194,11 +198,6 @@ export default function DashboardPage() {
   }
 
   async function handleConsult(classOverride?: { id: number; name: string }) {
-    if (blockedByYear) {
-      setError("Sin notas para este año..");
-      return;
-    }
-
     const classId = classOverride?.id ?? selectedClass?.id;
     if (!classId) return;
 
@@ -211,11 +210,8 @@ export default function DashboardPage() {
     setError(null);
     setLoadingGrades(true);
     try {
-      const res = await apiFetch(`/api/student/grades?level=${level}&class_id=${classId}`);
-
-      console.log("RESPUESTA /grades:", res);
-      console.log("ITEMS /grades:", res?.items);
-
+      const url = `/api/student/grades?class_id=${classId}${courseId ? `&course_id=${courseId}` : ""}`;
+      const res = await apiFetch(url);
       setItems(res?.items || []);
       setWeighted(typeof res?.weighted === "number" ? res.weighted : null);
     } catch (e: any) {
@@ -428,46 +424,57 @@ export default function DashboardPage() {
             }}
           >
             <section className="flatSection">
-              <h2 className="sectionSubtitle">Resumen:</h2>
 
               <div
-                className="yearRefreshRow"
                 style={{
-                  marginTop: 16,
-                  alignItems: "flex-start",
+                  marginTop: 8,
+                  display: "flex",
+                  flexDirection: "row",
+                  alignItems: "flex-end",
+                  gap: 12,
+                  width: "100%",
                 }}
               >
-                <div className="yearSelectWrap">
+                <div style={{ flex: "0 0 50%", minWidth: 0 }}>
+                  <div className="label" style={{ fontWeight: 700, marginBottom: 4, fontSize: 12 }}>Nivel</div>
                   <select
                     className="select"
                     value={level}
                     onChange={(e) => setLevel(Number(e.target.value))}
+                    disabled={availableLevels.length === 0}
+                    style={{ width: "100%", fontWeight: 700 }}
                   >
-                    {LEVELS.map((x) => (
-                      <option key={x.value} value={x.value}>
-                        {x.label}
-                      </option>
-                    ))}
+                    {availableLevels.length === 0
+                      ? <option value={level}>{LEVELS.find(l => l.value === level)?.label ?? `Nivel ${level}`}</option>
+                      : availableLevels.map((x) => (
+                          <option key={x.value} value={x.value}>{x.label}</option>
+                        ))
+                    }
                   </select>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={loadSummary}
-                  className="btn actionBtn yearRefreshBtn"
-                >
-                  {summaryLoading ? "Cargando..." : "Refrescar"}
-                </button>
+                <div style={{ flex: "0 0 calc(25% - 8px)", minWidth: 0 }}>
+                  <div className="label" style={{ fontWeight: 700, marginBottom: 4, fontSize: 12 }}>Curso</div>
+                  <div
+                    className="select"
+                    style={{ width: "100%", display: "flex", alignItems: "center", cursor: "default", userSelect: "none", fontWeight: 700 }}
+                  >
+                    {selectedCourseForLevel?.name ?? "—"}
+                  </div>
+                </div>
+
+                <div style={{ flex: "0 0 calc(25% - 8px)", minWidth: 0 }}>
+                  <div className="label" style={{ fontWeight: 700, marginBottom: 4, fontSize: 12 }}>Año</div>
+                  <div
+                    className="select"
+                    style={{ width: "100%", display: "flex", alignItems: "center", cursor: "default", userSelect: "none", fontWeight: 700 }}
+                  >
+                    {selectedCourseForLevel?.year ?? "—"}
+                  </div>
+                </div>
               </div>
 
-              {blockedByYear && (
-                <div style={{ marginTop: 8, color: "#b45309", fontWeight: 500, fontSize: 13 }}>
-                  Sin notas para este año..
-                </div>
-              )}
-
-              {!blockedByYear && (
-                <div className="summaryCardsGrid" style={{ marginTop: 36 }}>
+              <div className="summaryCardsGrid" style={{ marginTop: 28 }}>
                   <div className="summaryCardItem">
                     <div className="summaryCardLabel" style={{ color: "var(--text)" }}>
                       Aprobadas
@@ -486,7 +493,7 @@ export default function DashboardPage() {
 
                   <div className="summaryCardItem">
                     <div className="summaryCardLabel" style={{ color: "var(--text)" }}>
-                      Perdidas
+                      No Aprobadas
                     </div>
                     <div
                       className={`summaryCardBox ${failedActive ? "summaryCardBoxFailedActive" : ""}`}
@@ -518,7 +525,6 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 </div>
-              )}
             </section>
 
             <section className="flatSection">
@@ -544,10 +550,7 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              {blockedByYear ? (
-                <div style={{ marginTop: 18, color: "var(--muted)", fontWeight: 500 }}></div>
-              ) : (
-                <>
+              <>
                   {!selectedClass && (
                     <div style={{ marginTop: -10 }}>
                       <div
@@ -572,23 +575,30 @@ export default function DashboardPage() {
                           }}
                         >
                           <colgroup>
-                            <col style={{ width: "56%" }} />
-                            <col style={{ width: "20%" }} />
+                            <col style={{ width: "22%" }} />
+                            <col style={{ width: "38%" }} />
+                            <col style={{ width: "16%" }} />
                             <col style={{ width: "24%" }} />
                           </colgroup>
                           <thead>
                             <tr style={{ background: "transparent" }}>
                               <th
+                                className="fit-th fit-wrap fit-tight"
+                                style={{ background: "transparent", color: "#000" }}
+                              >
+                                <b>Módulo</b>
+                              </th>
+                              <th
                                 className="fit-th fit-wrap"
                                 style={{ background: "transparent", color: "#000" }}
                               >
-                                Materia
+                                <b>Materia</b>
                               </th>
                               <th
                                 className="fit-th fit-num fit-tight"
                                 style={{ background: "transparent", color: "#000" }}
                               >
-                                Nota final
+                                <b>Nota final</b>
                               </th>
                               <th
                                 className="fit-th fit-num fit-tight"
@@ -600,7 +610,7 @@ export default function DashboardPage() {
                             {summaryLoading ? (
                               <tr className="table-row-hover">
                                 <td
-                                  colSpan={3}
+                                  colSpan={4}
                                   className="fit-td fit-wrap"
                                   style={{ color: "var(--muted)" }}
                                 >
@@ -610,7 +620,7 @@ export default function DashboardPage() {
                             ) : summaryItems.length === 0 ? (
                               <tr className="table-row-hover">
                                 <td
-                                  colSpan={3}
+                                  colSpan={4}
                                   className="fit-td fit-wrap"
                                   style={{ color: "var(--muted)" }}
                                 >
@@ -620,6 +630,13 @@ export default function DashboardPage() {
                             ) : (
                               summaryItems.map((s) => (
                                 <tr key={s.class_id} className="table-row-hover">
+                                  <td
+                                    className="fit-td fit-wrap"
+                                    style={{ color: "var(--muted)", fontSize: 11 }}
+                                  >
+                                    {s.module_name ?? "—"}
+                                  </td>
+
                                   <td
                                     className="fit-td fit-wrap"
                                     style={{ fontWeight: 500, color: "var(--text)" }}
@@ -839,15 +856,23 @@ export default function DashboardPage() {
                             setWeighted(null);
                             loadSummary();
                           }}
-                          className="btn actionBtn yearRefreshBtn"
+                          className="btn yearRefreshBtn"
+                          style={{
+                            background: "linear-gradient(180deg,#fb923c 0%,#f97316 100%)",
+                            color: "#ffffff",
+                            border: "1px solid rgba(251,146,60,.82)",
+                            boxShadow: "0 10px 24px rgba(249,115,22,.22)",
+                            fontSize: 20,
+                            fontWeight: 700,
+                            gap: 6,
+                          }}
                         >
-                          Volver
+                          <span>⬅</span><span style={{ fontSize: 14, fontWeight: 400 }}>Volver</span>
                         </button>
                       </div>
                     </div>
                   )}
                 </>
-              )}
             </section>
           </div>
         </div>

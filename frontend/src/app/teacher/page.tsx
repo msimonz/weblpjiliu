@@ -8,8 +8,17 @@ import { roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
+import * as XLSX from "xlsx";
 
-type TeacherClass = { id: number; name: string; level: number };
+type TeacherClass = {
+  id: number;
+  name: string;
+  level: number;
+  id_module: number | null;
+  id_group: number | null;
+  module?: { id: number; name: string } | null;
+  group?: { id: number; name: string } | null;
+};
 
 type EvalItem = {
   id: number;
@@ -53,11 +62,48 @@ type GradeGridResponse = {
   grades: GridGradeRow[];
 };
 
+type SectionContext = {
+  classId: number;
+  className: string;
+  moduleId: number | null;
+  moduleName: string;
+  groupId: number | null;
+  groupName: string;
+};
+
+type FlatGradeRow = {
+  // primary section (first encountered) — kept for legacy refs
+  classId: number;
+  className: string;
+  level: number;
+  levelName: string;
+  moduleId: number | null;
+  moduleName: string;
+  groupId: number | null;
+  groupName: string;
+  // all sections this student appears in (for filtering)
+  allSectionContexts: SectionContext[];
+  student: StudentRow;
+  sectionEvals: EvalItem[];   // merged across all sections
+  sectionGrades: GridGradeRow[]; // merged across all sections
+};
+
 type DashboardGroup = {
   level: number;
   level_label: string;
   items: TeacherClass[];
   student_count?: number;
+};
+
+type DashboardAssignment = {
+  class_id: number;
+  class_name: string;
+  level: number;
+  level_label: string;
+  course_id: number | null;
+  course_name: string;
+  module_id: number | null;
+  module_name: string;
 };
 
 type TeacherDashboardResponse = {
@@ -67,6 +113,7 @@ type TeacherDashboardResponse = {
     academic_year: number;
   };
   groups: DashboardGroup[];
+  assignments: DashboardAssignment[];
 };
 
 type TeacherView = "" | "DASHBOARD" | "EVALS" | "CREATE" | "UPSERT";
@@ -81,10 +128,10 @@ const GRILLA = {
   rowHoverBgDark: "#0b2236",
 
   stripeLightEven: "#ffffff",
-  stripeLightOdd: "#f9fdfd",
+  stripeLightOdd: "#edf5fb",
 
-  stripeDarkEven: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)",
-  stripeDarkOdd: "#051422",
+  stripeDarkEven: "#051422",
+  stripeDarkOdd: "#071e30",
 
   activeRowBgLight: "color-mix(in srgb, rgb(22,163,74) 10%, #ffffff 90%)",
   activeRowBgDark: "color-mix(in srgb, rgb(22,163,74) 14%, var(--card) 86%)",
@@ -177,18 +224,32 @@ export default function TeacherPage() {
 
   const [dashboard, setDashboard] = useState<TeacherDashboardResponse | null>(null);
   const [loadingDashboard, setLoadingDashboard] = useState(false);
+  const [dashLevelFilter, setDashLevelFilter] = useState<number | "all">("all");
+  const [dashCourseFilter, setDashCourseFilter] = useState<number | "all">("all");
 
   // ===== FILTROS POR PANEL =====
   // EVALS
   const [evalLevelFilter, setEvalLevelFilter] = useState<LevelValue>("all");
+  const [evalCourseFilter, setEvalCourseFilter] = useState<number | "all">("all");
+  const [evalModuleFilter, setEvalModuleFilter] = useState<string>("");
   const [evalClassFilter, setEvalClassFilter] = useState<number | "all">("all");
 
   // CREATE
+  const [createLevelFilter, setCreateLevelFilter] = useState<LevelValue>("");
+  const [createModuleFilter, setCreateModuleFilter] = useState<string>("");
   const [createClassFilter, setCreateClassFilter] = useState<number | "all">("all");
 
   // UPSERT
   const [upsertLevelFilter, setUpsertLevelFilter] = useState<LevelValue>("");
-  const [upsertClassFilter, setUpsertClassFilter] = useState<number | "all">("all");
+  const [upsertCourseFilter, setUpsertCourseFilter] = useState<number | "all">("all");
+
+  // table-header filters (client-side, computed from allSections)
+  const [thFilterLevel, setThFilterLevel] = useState("");
+  const [thFilterModule, setThFilterModule] = useState("");
+  const [thFilterGroup, setThFilterGroup] = useState("");
+  const [thFilterClass, setThFilterClass] = useState("");
+  const [thFilterCedula, setThFilterCedula] = useState("");
+  const [thFilterName, setThFilterName] = useState("");
 
   // cursos de creación
   const [courses, setCourses] = useState<CourseItem[]>([]);
@@ -206,7 +267,7 @@ export default function TeacherPage() {
   const [cCourse, setCCourse] = useState<string>("");
   const [cType, setCType] = useState<string>("");
   const [cTypeOther, setCTypeOther] = useState<string>("");
-  const [cPercent, setCPercent] = useState<number>(30);
+  const [cPercent, setCPercent] = useState<number>(0);
   const [creating, setCreating] = useState(false);
 
   // evaluaciones existentes de la materia seleccionada en CREATE
@@ -216,16 +277,8 @@ export default function TeacherPage() {
   const [savingEvalPercent, setSavingEvalPercent] = useState<Record<number, boolean>>({});
   const [deletingEval, setDeletingEval] = useState<Record<number, boolean>>({});
 
-  const [gridClassInfo, setGridClassInfo] = useState<{
-    id: number;
-    name: string;
-    level: number;
-  } | null>(null);
-  const [gEvaluations, setGEvaluations] = useState<EvalItem[]>([]);
-  const [gRoster, setGRoster] = useState<StudentRow[]>([]);
+  const [allSections, setAllSections] = useState<GradeGridResponse[]>([]);
   const [gLoadingRoster, setGLoadingRoster] = useState(false);
-
-  const [gGrades, setGGrades] = useState<GridGradeRow[]>([]);
   const [gradeDraft, setGradeDraft] = useState<Record<string, string>>({});
   const [savingOne, setSavingOne] = useState<Record<string, boolean>>({});
   const [savingAll, setSavingAll] = useState(false);
@@ -237,10 +290,12 @@ export default function TeacherPage() {
   const [editingRow, setEditingRow] = useState<Record<string, boolean>>({});
   const [rowSnapshot, setRowSnapshot] = useState<Record<string, Record<string, string>>>({});
 
-  const [toast, setToast] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
-  const toastTimer = useRef<number | null>(null);
+  const [msgKind, setMsgKind] = useState<"ok" | "err">("err");
+  const msgTimer = useRef<number | null>(null);
 
-  const pendingUpsertClassIdRef = useRef<number | null>(null);
+  const pendingThFilterClassRef = useRef<string | null>(null);
+  const loadIdRef = useRef(0);
+  const resetFiltersOnNextLoad = useRef(false);
 
   const CEDULA_COL_W = 150;
   const ALUMNO_COL_W = 260;
@@ -251,6 +306,7 @@ export default function TeacherPage() {
   function goToUpsertFromEvaluation(item: EvalItem) {
     const classId = Number(item.id_class);
     const level = Number(item.class?.level ?? 0);
+    const className = item.class?.name ?? "";
 
     if (!classId || !level) return;
 
@@ -258,11 +314,13 @@ export default function TeacherPage() {
     setView("UPSERT");
 
     if (Number(upsertLevelFilter) === level) {
-      setUpsertClassFilter(classId);
+      // Data already loaded for this level — just set the class filter
+      setThFilterClass(className);
       return;
     }
 
-    pendingUpsertClassIdRef.current = classId;
+    // Need to load new level — store the pending class filter to apply after load
+    pendingThFilterClassRef.current = className;
     setUpsertLevelFilter(level);
   }
 
@@ -277,9 +335,10 @@ export default function TeacherPage() {
   }
 
   function flash(text: string, kind: "ok" | "err" = "ok") {
-    setToast({ text, kind });
-    if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 1600);
+    setMsg(text);
+    setMsgKind(kind);
+    if (msgTimer.current) window.clearTimeout(msgTimer.current);
+    msgTimer.current = window.setTimeout(() => setMsg(null), 3000);
   }
 
   // auth guard
@@ -385,6 +444,34 @@ export default function TeacherPage() {
   }, [loadingMe]);
 
   // =========================
+  // DASHBOARD FILTERS
+  // =========================
+  const dashAssignments = useMemo(() => dashboard?.assignments || [], [dashboard]);
+
+  const dashLevels = useMemo(() => {
+    const set = new Set<number>();
+    for (const a of dashAssignments) set.add(a.level);
+    return [...set].sort((a, b) => a - b);
+  }, [dashAssignments]);
+
+  const dashCoursesForLevel = useMemo(() => {
+    const seen = new Map<number, string>();
+    for (const a of dashAssignments) {
+      if (dashLevelFilter !== "all" && a.level !== dashLevelFilter) continue;
+      if (a.course_id) seen.set(a.course_id, a.course_name);
+    }
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+  }, [dashAssignments, dashLevelFilter]);
+
+  const dashAssignmentsFiltered = useMemo(() => {
+    return dashAssignments.filter((a) => {
+      if (dashLevelFilter !== "all" && a.level !== dashLevelFilter) return false;
+      if (dashCourseFilter !== "all" && a.course_id !== dashCourseFilter) return false;
+      return true;
+    });
+  }, [dashAssignments, dashLevelFilter, dashCourseFilter]);
+
+  // =========================
   // HELPERS GENERALES
   // =========================
   const availableLevels = useMemo(() => {
@@ -404,24 +491,94 @@ export default function TeacherPage() {
     return myClasses.filter((c) => Number(c.level) === Number(evalLevelFilter));
   }, [myClasses, evalLevelFilter]);
 
+  // Cascade options for EVALS — derived directly from myClasses/courses (no cross-reference with items)
+  const myClassesMap = useMemo(
+    () => new Map(myClasses.map((c) => [c.id, c])),
+    [myClasses]
+  );
+
+  const evalLevelOptions = useMemo(() => {
+    const seen = new Set<number>();
+    const out: { value: number; label: string }[] = [];
+    for (const c of myClasses) {
+      const lvl = Number(c.level);
+      if (lvl && !seen.has(lvl)) {
+        seen.add(lvl);
+        out.push({ value: lvl, label: levelLabel(lvl, levelMap) });
+      }
+    }
+    return out.sort((a, b) => a.value - b.value);
+  }, [myClasses, levelMap]);
+
+  const evalCourseOptions = useMemo(() => {
+    const levelNum = evalLevelFilter !== "all" && evalLevelFilter !== "" ? Number(evalLevelFilter) : null;
+    return courses
+      .filter((c) => levelNum === null || Number(c.level) === levelNum)
+      .map((c) => ({ id: c.id, name: String(c.name ?? "") }))
+      .sort((a, b) => a.name.localeCompare(b.name, "es"));
+  }, [courses, evalLevelFilter]);
+
+  const evalModuleOptions = useMemo(() => {
+    const levelNum = evalLevelFilter !== "all" && evalLevelFilter !== "" ? Number(evalLevelFilter) : null;
+    const seen = new Set<string>();
+    const out: { value: string; label: string }[] = [];
+    for (const c of myClasses) {
+      if (levelNum !== null && Number(c.level) !== levelNum) continue;
+      const modName = c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "");
+      if (modName && !seen.has(modName)) {
+        seen.add(modName);
+        out.push({ value: modName, label: modName });
+      }
+    }
+    return out.sort((a, b) => a.label.localeCompare(b.label, "es"));
+  }, [myClasses, evalLevelFilter]);
+
+  const evalClassOptions = useMemo(() => {
+    const levelNum = evalLevelFilter !== "all" && evalLevelFilter !== "" ? Number(evalLevelFilter) : null;
+    return myClasses
+      .filter((c) => {
+        if (levelNum !== null && Number(c.level) !== levelNum) return false;
+        if (evalModuleFilter) {
+          const modName = c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "");
+          if (modName !== evalModuleFilter) return false;
+        }
+        return true;
+      })
+      .map((c) => ({ id: c.id, name: String(c.name ?? "") }))
+      .sort((a, b) => a.name.localeCompare(b.name, "es"));
+  }, [myClasses, evalLevelFilter, evalModuleFilter]);
+
   const evalItemsFiltered = useMemo(() => {
     let list = [...items];
 
     if (evalLevelFilter !== "all" && evalLevelFilter !== "") {
-      list = list.filter(
-        (e) =>
-          // module/group evals have no class level — always show them
-          e.id_class == null ||
-          Number(e.class?.level ?? 0) === Number(evalLevelFilter)
-      );
+      const levelNum = Number(evalLevelFilter);
+      list = list.filter((e) => {
+        const cls = myClassesMap.get(Number(e.id_class));
+        if (cls) return Number(cls.level) === levelNum;
+        return Number(e.class?.level ?? e.course?.level ?? 0) === levelNum;
+      });
+    }
+
+    if (evalCourseFilter !== "all") {
+      list = list.filter((e) => Number(e.id_course) === Number(evalCourseFilter));
+    }
+
+    if (evalModuleFilter) {
+      list = list.filter((e) => {
+        const cls = myClassesMap.get(Number(e.id_class));
+        const modName = (cls?.module?.name ?? (cls?.id_module ? `Módulo ${cls.id_module}` : ""))
+          || (e.module?.name ?? (e.id_module ? `Módulo ${e.id_module}` : ""));
+        return modName === evalModuleFilter;
+      });
     }
 
     if (evalClassFilter !== "all") {
-      list = list.filter((e) => e.id_class === Number(evalClassFilter));
+      list = list.filter((e) => Number(e.id_class) === Number(evalClassFilter));
     }
 
     return list;
-  }, [items, evalLevelFilter, evalClassFilter]);
+  }, [items, myClassesMap, evalLevelFilter, evalCourseFilter, evalModuleFilter, evalClassFilter]);
 
   const evalsInSelectedClass = useMemo(() => {
     if (evalClassFilter === "all") return [];
@@ -429,15 +586,22 @@ export default function TeacherPage() {
   }, [items, evalClassFilter]);
 
   useEffect(() => {
-    if (evalLevelFilter === "all") {
-      setEvalClassFilter("all");
-      return;
-    }
-    if (evalClassFilter === "all") return;
+    setEvalCourseFilter("all");
+    setEvalModuleFilter("");
+    setEvalClassFilter("all");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evalLevelFilter]);
 
-    const exists = evalClassesFiltered.some((c) => c.id === Number(evalClassFilter));
-    if (!exists) setEvalClassFilter("all");
-  }, [evalLevelFilter, evalClassFilter, evalClassesFiltered]);
+  useEffect(() => {
+    setEvalModuleFilter("");
+    setEvalClassFilter("all");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evalCourseFilter]);
+
+  useEffect(() => {
+    setEvalClassFilter("all");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evalModuleFilter]);
 
   useEffect(() => {
     const next: Record<number, string> = {};
@@ -515,8 +679,10 @@ export default function TeacherPage() {
         method: "PATCH",
         body: JSON.stringify({ percent: val }),
       });
-      flash("✅ Porcentaje actualizado", "ok");
-      await loadEvaluations();
+      setItems((prev) =>
+        prev.map((e) => (e.id === evalId ? { ...e, percent: val } : e))
+      );
+      flash("% Actualizado", "ok");
     } catch (e: any) {
       flash(e?.message || "Error al actualizar", "err");
     } finally {
@@ -534,15 +700,38 @@ export default function TeacherPage() {
   }, [cCourse, courses]);
 
   const createClassesFiltered = useMemo(() => {
-    if (!selectedCreateCourse?.id) return [];
-    return myClasses.filter((c) => Number(c.level) === Number(selectedCreateCourse.level));
-  }, [myClasses, selectedCreateCourse]);
+    const levelNum = createLevelFilter && createLevelFilter !== "all" ? Number(createLevelFilter) : null;
+    if (levelNum === null) return [];
+    return myClasses.filter((c) => {
+      if (Number(c.level) !== levelNum) return false;
+      if (createModuleFilter) {
+        const modName = c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "—");
+        if (modName !== createModuleFilter) return false;
+      }
+      return true;
+    });
+  }, [myClasses, createLevelFilter, createModuleFilter]);
+
+  useEffect(() => {
+    setCCourse("");
+    setCreateModuleFilter("");
+    setCreateClassFilter("all");
+    setTitlePick("");
+    setTitleOther("");
+    setCPercent(0);
+    setCreateClassEvals([]);
+    setEditPercents({});
+  }, [createLevelFilter]);
+
+  useEffect(() => {
+    setCreateClassFilter("all");
+  }, [createModuleFilter]);
 
   useEffect(() => {
     setCreateClassFilter("all");
     setTitlePick("");
     setTitleOther("");
-    setCPercent(30);
+    setCPercent(0);
     setCreateClassEvals([]);
     setEditPercents({});
   }, [cCourse]);
@@ -685,149 +874,364 @@ export default function TeacherPage() {
         }),
       });
 
-      const newEvalLevel = Number(selectedCreateCourse?.level ?? 0);
-
-      setCCourse("");
-      setCreateClassFilter("all");
       setCType("");
       setCTypeOther("");
       setTitlePick("");
       setTitleOther("");
-      setCPercent(30);
+      setCPercent(0);
 
-      flash("✅ Evaluación creada", "ok");
-      await loadEvaluations();
-      setView("EVALS");
+      // Reload existing evals for this class (keeps dropdowns selected)
+      const reloaded = await apiFetch(`/api/teacher/evaluations?class_id=${id_class}`);
+      const evs: EvalItem[] = reloaded?.items || [];
+      setCreateClassEvals(evs);
+      const initP: Record<number, string> = {};
+      evs.forEach((e) => { initP[e.id] = String(e.percent); });
+      setEditPercents(initP);
 
-      if (Number.isFinite(newEvalLevel) && newEvalLevel > 0) {
-        setEvalLevelFilter(newEvalLevel);
-      }
-      setEvalClassFilter(id_class);
+      flash("Evaluación creada", "ok");
     } catch (e: any) {
       setMsg(e?.message || "Error creando evaluación");
-      flash("❌ No se pudo crear", "err");
     } finally {
       setCreating(false);
     }
   }
 
   // =========================
-  // UPSERT FILTERS
+  // UPSERT LOAD TRIGGER — Año change
   // =========================
-  const upsertClassesFiltered = useMemo(() => {
-    if (upsertLevelFilter === "") return [];
-    if (upsertLevelFilter === "all") return myClasses;
-    return myClasses.filter((c) => Number(c.level) === Number(upsertLevelFilter));
-  }, [myClasses, upsertLevelFilter]);
-
   useEffect(() => {
-    setGridClassInfo(null);
-    setGEvaluations([]);
-    setGRoster([]);
+    resetFiltersOnNextLoad.current = true; // next allSections load must reset all filters
+    setAllSections([]);
     setGradeDraft({});
     setEditingRow({});
     setRowSnapshot({});
-
-    if (pendingUpsertClassIdRef.current !== null) {
-      setUpsertClassFilter(pendingUpsertClassIdRef.current);
-      pendingUpsertClassIdRef.current = null;
-    } else {
-      setUpsertClassFilter("all");
-    }
+    setUpsertCourseFilter("all");
+    setThFilterModule("");
+    setThFilterGroup("");
+    setThFilterClass("");
+    setThFilterCedula("");
+    setThFilterName("");
+    if (upsertLevelFilter === "") return;
+    const ids = upsertLevelFilter === "all"
+      ? myClasses.map((c) => c.id)
+      : myClasses.filter((c) => Number(c.level) === Number(upsertLevelFilter)).map((c) => c.id);
+    if (ids.length === 0) return;
+    loadAllGradeGrids(ids);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upsertLevelFilter]);
 
+  // Apply pending class filter after load; only reset filters when triggered by Año change
   useEffect(() => {
-    setGridClassInfo(null);
-    setGEvaluations([]);
-    setGRoster([]);
-    setGradeDraft({});
-    setEditingRow({});
-    setRowSnapshot({});
-  }, [upsertClassFilter]);
+    if (resetFiltersOnNextLoad.current) {
+      resetFiltersOnNextLoad.current = false;
+      setThFilterLevel("");
+      setThFilterCedula("");
+      setThFilterName("");
+      if (pendingThFilterClassRef.current !== null) {
+        setThFilterClass(pendingThFilterClassRef.current);
+        pendingThFilterClassRef.current = null;
+      }
+    }
+  }, [allSections]);
 
-  const selectedUpsertClass = useMemo(() => {
-    if (upsertClassFilter === "all") return null;
-    return myClasses.find((c) => c.id === Number(upsertClassFilter)) || null;
-  }, [upsertClassFilter, myClasses]);
+  // Reload grid on Módulo or Materia change
+  useEffect(() => {
+    if (upsertLevelFilter === "") return;
+
+    setThFilterCedula("");
+    setThFilterName("");
+
+    const levelNum = Number(upsertLevelFilter);
+
+    const getModuleName = (c: TeacherClass) =>
+      c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "—");
+
+    if (thFilterClass) {
+      const cls = myClasses.find(
+        (c) => c.name === thFilterClass && Number(c.level) === levelNum
+      );
+      if (cls) { loadAllGradeGrids([cls.id]); return; }
+    }
+
+    if (thFilterModule) {
+      const ids = myClasses
+        .filter((c) => Number(c.level) === levelNum && getModuleName(c) === thFilterModule)
+        .map((c) => c.id);
+      if (ids.length > 0) { loadAllGradeGrids(ids); return; }
+    }
+
+    // Both cleared → reload all classes for the level
+    const ids = myClasses
+      .filter((c) => Number(c.level) === levelNum)
+      .map((c) => c.id);
+    if (ids.length > 0) loadAllGradeGrids(ids);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thFilterModule, thFilterClass]);
+
+  // =========================
+  // FLAT ROWS (for UPSERT table)
+  // =========================
+  const flatRows = useMemo<FlatGradeRow[]>(() => {
+    const studentMap = new Map<string, FlatGradeRow>();
+
+    for (const section of allSections) {
+      if (!section.class) continue;
+      const classId = section.class.id;
+      const classEntry = myClasses.find((c) => c.id === classId);
+      const lvl = Number(section.class.level);
+      const lvlName = levelMap[lvl] ?? `Año ${lvl}`;
+      const moduleId = classEntry?.id_module ? Number(classEntry.id_module) : null;
+      const moduleName = classEntry?.module?.name ?? (moduleId ? `Módulo ${moduleId}` : "—");
+      const groupId = classEntry?.id_group ? Number(classEntry.id_group) : null;
+      const groupName = classEntry?.group?.name ?? (groupId ? `Grupo ${groupId}` : "—");
+      const className = section.class.name;
+      const ctx: SectionContext = { classId, className, moduleId, moduleName, groupId, groupName };
+      const sectionEvals = section.evaluations || [];
+      const sectionGrades = section.grades || [];
+
+      for (const student of section.students || []) {
+        const existing = studentMap.get(student.id);
+        if (existing) {
+          if (!existing.allSectionContexts.some((c) => c.classId === classId)) {
+            existing.allSectionContexts.push(ctx);
+            const evalIds = new Set(existing.sectionEvals.map((e) => e.id));
+            for (const ev of sectionEvals) {
+              if (!evalIds.has(ev.id)) existing.sectionEvals.push(ev);
+            }
+            const gradeKeys = new Set(existing.sectionGrades.map((g) => `${g.id_student}_${g.id_exam}`));
+            for (const g of sectionGrades) {
+              if (!gradeKeys.has(`${g.id_student}_${g.id_exam}`)) existing.sectionGrades.push(g);
+            }
+          }
+        } else {
+          studentMap.set(student.id, {
+            classId,
+            className,
+            level: lvl,
+            levelName: lvlName,
+            moduleId,
+            moduleName,
+            groupId,
+            groupName,
+            allSectionContexts: [ctx],
+            student,
+            sectionEvals: [...sectionEvals],
+            sectionGrades: [...sectionGrades],
+          });
+        }
+      }
+    }
+
+    return Array.from(studentMap.values());
+  }, [allSections, myClasses, levelMap]);
+
+  // TH filter option memos
+  const thLevelOptions = useMemo(() => {
+    const seen = new Set<number>();
+    const out: { value: string; label: string }[] = [];
+    for (const r of flatRows) {
+      if (!seen.has(r.level)) {
+        seen.add(r.level);
+        out.push({ value: String(r.level), label: r.levelName });
+      }
+    }
+    return out.sort((a, b) => Number(a.value) - Number(b.value));
+  }, [flatRows]);
+
+  const classModuleName = (c: TeacherClass) =>
+    c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "—");
+
+  const thModuleOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { value: string; label: string }[] = [];
+    const levelNum = upsertLevelFilter && upsertLevelFilter !== "all" ? Number(upsertLevelFilter) : null;
+    for (const c of myClasses) {
+      if (levelNum !== null && Number(c.level) !== levelNum) continue;
+      const name = classModuleName(c);
+      if (!seen.has(name)) {
+        seen.add(name);
+        out.push({ value: name, label: name });
+      }
+    }
+    return out;
+  }, [myClasses, upsertLevelFilter]);
+
+  const thGroupOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { value: string; label: string }[] = [];
+    const levelNum = upsertLevelFilter && upsertLevelFilter !== "all" ? Number(upsertLevelFilter) : null;
+    for (const c of myClasses) {
+      if (levelNum !== null && Number(c.level) !== levelNum) continue;
+      if (thFilterModule && classModuleName(c) !== thFilterModule) continue;
+      const gName = c.group?.name ?? (c.id_group ? `Grupo ${c.id_group}` : "—");
+      if (!seen.has(gName)) {
+        seen.add(gName);
+        out.push({ value: gName, label: gName });
+      }
+    }
+    return out;
+  }, [myClasses, upsertLevelFilter, thFilterModule]);
+
+  const thClassOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { value: string; label: string }[] = [];
+    const levelNum = upsertLevelFilter && upsertLevelFilter !== "all" ? Number(upsertLevelFilter) : null;
+    for (const c of myClasses) {
+      if (levelNum !== null && Number(c.level) !== levelNum) continue;
+      if (thFilterModule && classModuleName(c) !== thFilterModule) continue;
+      if (!seen.has(c.name)) {
+        seen.add(c.name);
+        out.push({ value: c.name, label: c.name });
+      }
+    }
+    return out;
+  }, [myClasses, upsertLevelFilter, thFilterModule]);
+
+  const ctxMatches = (r: FlatGradeRow) =>
+    r.allSectionContexts.some(
+      (ctx) =>
+        (!thFilterModule || ctx.moduleName === thFilterModule) &&
+        (!thFilterGroup || ctx.groupName === thFilterGroup) &&
+        (!thFilterClass || ctx.className === thFilterClass)
+    );
+
+  const thCedulaOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { value: string; label: string }[] = [];
+    for (const r of flatRows) {
+      if (thFilterLevel && String(r.level) !== thFilterLevel) continue;
+      if ((thFilterModule || thFilterGroup || thFilterClass) && !ctxMatches(r)) continue;
+      if (!seen.has(r.student.cedula)) {
+        seen.add(r.student.cedula);
+        out.push({ value: r.student.cedula, label: r.student.cedula });
+      }
+    }
+    return out;
+  }, [flatRows, thFilterLevel, thFilterModule, thFilterGroup, thFilterClass]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const thNameOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { value: string; label: string }[] = [];
+    for (const r of flatRows) {
+      if (thFilterLevel && String(r.level) !== thFilterLevel) continue;
+      if ((thFilterModule || thFilterGroup || thFilterClass) && !ctxMatches(r)) continue;
+      if (thFilterCedula && r.student.cedula !== thFilterCedula) continue;
+      if (!seen.has(r.student.name)) {
+        seen.add(r.student.name);
+        out.push({ value: r.student.name, label: r.student.name });
+      }
+    }
+    return out;
+  }, [flatRows, thFilterLevel, thFilterModule, thFilterGroup, thFilterClass, thFilterCedula]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const coursesForUpsert = useMemo(() => {
+    if (upsertLevelFilter === "" || upsertLevelFilter === "all") return courses;
+    return courses.filter((c) => Number(c.level) === Number(upsertLevelFilter));
+  }, [courses, upsertLevelFilter]);
+
+  const coursesForCreate = useMemo(() => {
+    if (createLevelFilter === "" || createLevelFilter === "all") return courses;
+    return courses.filter((c) => Number(c.level) === Number(createLevelFilter));
+  }, [courses, createLevelFilter]);
+
+  const createModuleOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { value: string; label: string }[] = [];
+    const levelNum = createLevelFilter && createLevelFilter !== "all" ? Number(createLevelFilter) : null;
+    if (levelNum === null) return out;
+    for (const c of myClasses) {
+      if (Number(c.level) !== levelNum) continue;
+      const name = classModuleName(c);
+      if (!seen.has(name)) {
+        seen.add(name);
+        out.push({ value: name, label: name });
+      }
+    }
+    return out;
+  }, [myClasses, createLevelFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const flatRowsFiltered = useMemo<FlatGradeRow[]>(() => {
+    return flatRows.filter((r) => {
+      if (upsertCourseFilter !== "all" && Number(r.student.id_course) !== Number(upsertCourseFilter)) return false;
+      if (thFilterLevel && String(r.level) !== thFilterLevel) return false;
+      if (thFilterModule || thFilterGroup || thFilterClass) {
+        if (!ctxMatches(r)) return false;
+      }
+      if (thFilterCedula && r.student.cedula !== thFilterCedula) return false;
+      if (thFilterName && r.student.name !== thFilterName) return false;
+      return true;
+    });
+  }, [flatRows, upsertCourseFilter, thFilterLevel, thFilterModule, thFilterGroup, thFilterClass, thFilterCedula, thFilterName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const visibleEvals = useMemo<EvalItem[]>(() => {
+    const seenEvalIds = new Set<number>();
+    const out: EvalItem[] = [];
+    for (const r of flatRowsFiltered) {
+      for (const ev of r.sectionEvals) {
+        if (!seenEvalIds.has(ev.id)) {
+          seenEvalIds.add(ev.id);
+          out.push(ev);
+        }
+      }
+    }
+    return out.sort((a, b) => a.id - b.id);
+  }, [flatRowsFiltered]);
 
   const upsertDynamicMinWidth = useMemo(() => {
-    const cedulaW = 170;
-    const alumnoW = 320;
-    const evalW = 220;
-    const actionW = 180;
+    return 260 + 150 + visibleEvals.length * 170 + 160;
+  }, [visibleEvals]);
 
-    return cedulaW + alumnoW + actionW + gEvaluations.length * evalW;
-  }, [gEvaluations.length]);
-
-  async function loadGradeGrid() {
+  async function loadAllGradeGrids(classIds: number[]) {
+    const myId = ++loadIdRef.current;
     setMsg(null);
     setGLoadingRoster(true);
-    setGridClassInfo(null);
-    setGEvaluations([]);
-    setGRoster([]);
+    setAllSections([]);
     setGradeDraft({});
     setEditingRow({});
     setRowSnapshot({});
 
     try {
-      if (upsertClassFilter === "all") return;
+      const batchRes = await apiFetch(
+        `/api/teacher/grade-grids-batch?class_ids=${classIds.join(",")}`
+      ) as { sections: GradeGridResponse[] };
 
-      const res: GradeGridResponse = await apiFetch(
-        `/api/teacher/class-grade-grid?class_id=${Number(upsertClassFilter)}`
-      );
+      if (myId !== loadIdRef.current) return; // descartamos carga obsoleta
 
-      const evals = res?.evaluations || [];
-      const roster = res?.students || [];
-      const grades = res?.grades || [];
-
-      setGridClassInfo(res?.class || null);
-      setGEvaluations(evals);
-      setGRoster(roster);
-      setGGrades(grades);
+      const sections = (batchRes?.sections ?? []).filter((r) => r?.class);
+      setAllSections(sections);
 
       const drafts: Record<string, string> = {};
-      for (const g of grades) {
-        drafts[gradeCellKey(g.id_student, g.id_exam)] =
-          g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
+      for (const section of sections) {
+        for (const g of section.grades || []) {
+          drafts[gradeCellKey(g.id_student, g.id_exam)] =
+            g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
+        }
       }
       setGradeDraft(drafts);
     } catch (e: any) {
+      if (myId !== loadIdRef.current) return;
       setMsg(e?.message || "Error cargando alumnos/notas");
-      setGridClassInfo(null);
-      setGEvaluations([]);
-      setGRoster([]);
-      setGGrades([]);
+      setAllSections([]);
       setGradeDraft({});
     } finally {
-      setGLoadingRoster(false);
+      if (myId === loadIdRef.current) setGLoadingRoster(false);
     }
   }
 
-  useEffect(() => {
-    if (upsertClassFilter === "all") return;
-    loadGradeGrid();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [upsertClassFilter]);
+  function loadGradeGrid() {
+    if (upsertLevelFilter === "") return;
+    const ids = upsertLevelFilter === "all"
+      ? myClasses.map((c) => c.id)
+      : myClasses.filter((c) => Number(c.level) === Number(upsertLevelFilter)).map((c) => c.id);
+    if (ids.length === 0) return;
+    loadAllGradeGrids(ids);
+  }
 
-  const evaluationTypeCounts = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const ev of gEvaluations) {
-      const key = String(ev.evaluation_type?.type || ev.title || "Evaluación")
-        .trim()
-        .toLowerCase();
-      map.set(key, (map.get(key) || 0) + 1);
-    }
-    return map;
-  }, [gEvaluations]);
-
-  function getEvaluationColumnLabel(ev: EvalItem) {
+  function getEvaluationColumnLabel(ev: EvalItem, countsMap: Map<string, number>) {
     const typeLabel = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim();
     const typeKey = typeLabel.toLowerCase();
-    const repeated = (evaluationTypeCounts.get(typeKey) || 0) > 1;
-
-    if (repeated) {
-      return `${typeLabel} · ${ev.title} (${Number(ev.percent).toFixed(0)}%)`;
-    }
+    const repeated = (countsMap.get(typeKey) || 0) > 1;
+    if (repeated) return `${typeLabel} · ${ev.title} (${Number(ev.percent).toFixed(0)}%)`;
     return `${typeLabel} (${Number(ev.percent).toFixed(0)}%)`;
   }
 
@@ -835,12 +1239,12 @@ export default function TeacherPage() {
     return Number(student.id_course) === Number(ev.id_course);
   }
 
-  function getStudentApplicableEvaluations(student: StudentRow) {
-    return gEvaluations.filter((ev) => isEvaluationApplicableToStudent(student, ev));
+  function getStudentApplicableEvaluations(student: StudentRow, evals: EvalItem[]) {
+    return evals.filter((ev) => isEvaluationApplicableToStudent(student, ev));
   }
 
-  function beginEdit(student: StudentRow) {
-    const applicableEvals = getStudentApplicableEvaluations(student);
+  function beginEdit(student: StudentRow, sectionEvals: EvalItem[]) {
+    const applicableEvals = getStudentApplicableEvaluations(student, sectionEvals);
     if (applicableEvals.length === 0) {
       setMsg(`No hay evaluaciones aplicables para ${student.name}`);
       flash("❌ No hay evaluaciones para actualizar", "err");
@@ -871,17 +1275,17 @@ export default function TeacherPage() {
     setEditingRow((prev) => ({ ...prev, [student.id]: false }));
   }
 
-  async function handleRowAction(student: StudentRow) {
+  async function handleRowAction(student: StudentRow, sectionEvals: EvalItem[]) {
     if (!editingRow[student.id]) {
-      beginEdit(student);
+      beginEdit(student, sectionEvals);
       return;
     }
 
-    await saveOne(student);
+    await saveOne(student, sectionEvals);
   }
 
-  async function saveOne(student: StudentRow) {
-    const applicableEvals = getStudentApplicableEvaluations(student);
+  async function saveOne(student: StudentRow, sectionEvals: EvalItem[]) {
+    const applicableEvals = getStudentApplicableEvaluations(student, sectionEvals);
 
     if (applicableEvals.length === 0) {
       setMsg(`No hay evaluaciones aplicables para ${student.name}`);
@@ -900,7 +1304,7 @@ export default function TeacherPage() {
 
         if (!Number.isFinite(grade) || grade < 0 || grade > 100) {
           throw new Error(
-            `Nota inválida para ${student.name} en "${getEvaluationColumnLabel(ev)}" (0..100)`
+            `Nota inválida para ${student.name} en "${getEvaluationColumnLabel(ev, new Map())}" (0..100)`
           );
         }
       }
@@ -936,7 +1340,10 @@ export default function TeacherPage() {
   }
 
   async function saveAll() {
-    if (gRoster.length === 0 || gEvaluations.length === 0) return;
+    const hasSections = allSections.some(
+      (s) => (s.students?.length ?? 0) > 0 && (s.evaluations?.length ?? 0) > 0
+    );
+    if (!hasSections) return;
 
     setSavingAll(true);
     setMsg(null);
@@ -944,25 +1351,27 @@ export default function TeacherPage() {
     try {
       const payloads: Array<{ exam_id: number; student_cedula: string; grade: number }> = [];
 
-      for (const st of gRoster) {
-        const applicableEvals = getStudentApplicableEvaluations(st);
+      for (const section of allSections) {
+        for (const st of section.students || []) {
+          const applicableEvals = getStudentApplicableEvaluations(st, section.evaluations || []);
 
-        for (const ev of applicableEvals) {
-          const key = gradeCellKey(st.id, ev.id);
-          const raw = (gradeDraft[key] ?? "").trim();
-          const n = raw === "" ? NaN : Number(raw);
+          for (const ev of applicableEvals) {
+            const key = gradeCellKey(st.id, ev.id);
+            const raw = (gradeDraft[key] ?? "").trim();
+            const n = raw === "" ? NaN : Number(raw);
 
-          if (!Number.isFinite(n) || n < 0 || n > 100) {
-            throw new Error(
-              `Nota inválida para ${st.name} en "${getEvaluationColumnLabel(ev)}" (0..100)`
-            );
+            if (!Number.isFinite(n) || n < 0 || n > 100) {
+              throw new Error(
+                `Nota inválida para ${st.name} en "${getEvaluationColumnLabel(ev, new Map())}" (0..100)`
+              );
+            }
+
+            payloads.push({
+              exam_id: ev.id,
+              student_cedula: st.cedula,
+              grade: n,
+            });
           }
-
-          payloads.push({
-            exam_id: ev.id,
-            student_cedula: st.cedula,
-            grade: n,
-          });
         }
       }
 
@@ -977,14 +1386,47 @@ export default function TeacherPage() {
 
       setEditingRow({});
       setRowSnapshot({});
-      await loadGradeGrid();
-      flash("✅ Notas actualizadas para toda la materia", "ok");
+      loadGradeGrid();
+      flash("✅ Notas actualizadas", "ok");
     } catch (e: any) {
       setMsg(e?.message || "Error actualizando todas las notas");
       flash("❌ Error actualizando todas", "err");
     } finally {
       setSavingAll(false);
     }
+  }
+
+  function downloadExcel() {
+    const label = thFilterClass || thFilterModule
+      || (upsertCourseFilter !== "all" ? coursesForUpsert.find(c => c.id === Number(upsertCourseFilter))?.name : undefined)
+      || (upsertLevelFilter !== "" ? (levels.find(l => l.id === Number(upsertLevelFilter))?.name ?? `Nivel ${upsertLevelFilter}`) : "Grilla");
+    const countsMap = new Map<string, number>();
+    for (const ev of visibleEvals) {
+      const k = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim().toLowerCase();
+      countsMap.set(k, (countsMap.get(k) || 0) + 1);
+    }
+    const rows = flatRowsFiltered.map((row) => {
+      const st = row.student;
+      const r: Record<string, string | number> = { Cédula: st.cedula, Alumno: st.name };
+      for (const ev of visibleEvals) {
+        const col = getEvaluationColumnLabel(ev, countsMap);
+        if (Number(st.id_course) !== Number(ev.id_course)) { r[col] = "-"; continue; }
+        const gradeRecord = row.sectionGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
+        const attempts = gradeRecord?.attempts ?? 0;
+        const gradeVal = gradeRecord?.grade ?? 0;
+        if (attempts === 0 && gradeVal === 0) { r[col] = "No Presentó"; }
+        else {
+          const key = gradeCellKey(st.id, ev.id);
+          const val = gradeDraft[key];
+          r[col] = val === "" || val == null ? "" : Number(val);
+        }
+      }
+      return r;
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Notas");
+    XLSX.writeFile(wb, `${label}.xlsx`);
   }
 
   async function handleLogout() {
@@ -1004,27 +1446,6 @@ export default function TeacherPage() {
 
   return (
     <div>
-      {toast && (
-        <div
-          style={{
-            position: "fixed",
-            right: 18,
-            bottom: 18,
-            zIndex: 9999,
-            padding: "12px 14px",
-            borderRadius: 14,
-            fontWeight: 900,
-            color: toast.kind === "ok" ? "rgb(21,128,61)" : "rgb(185,28,28)",
-            background: "var(--card)",
-            border: "1px solid var(--stroke)",
-            boxShadow: "var(--shadow)",
-            backdropFilter: "blur(10px)",
-            WebkitBackdropFilter: "blur(10px)",
-          }}
-        >
-          {toast.text}
-        </div>
-      )}
 
       <style jsx>{`
         .teacher-solid-table {
@@ -1050,10 +1471,12 @@ export default function TeacherPage() {
 
         .teacher-solid-table thead,
         .teacher-solid-table thead tr,
-        .teacher-solid-table thead th {
+        .teacher-solid-table thead th,
+        .teacher-solid-table thead td {
           background-color: var(--table-head-bg) !important;
           background-image: none !important;
           color: var(--table-head-text) !important;
+          font-weight: 700 !important;
           opacity: 1 !important;
           backdrop-filter: none !important;
           -webkit-backdrop-filter: none !important;
@@ -1069,8 +1492,6 @@ export default function TeacherPage() {
       `}</style>
 
       <div
-        onMouseEnter={() => setSidebarOpen(true)}
-        onMouseLeave={() => setSidebarOpen(false)}
         style={{
           position: "fixed",
           top: 0,
@@ -1081,6 +1502,7 @@ export default function TeacherPage() {
         }}
       >
         <div
+          onClick={() => setSidebarOpen((v) => !v)}
           style={{
             position: "absolute",
             left: hamLeft,
@@ -1130,8 +1552,6 @@ export default function TeacherPage() {
 
       {/* SIDEBAR */}
       <aside
-        onMouseEnter={() => setSidebarOpen(true)}
-        onMouseLeave={() => setSidebarOpen(false)}
         style={{
           position: "fixed",
           left: 0,
@@ -1242,7 +1662,6 @@ export default function TeacherPage() {
                   const next = e.target.value as TeacherView;
                   setView(next);
                   setMsg(null);
-                  setToast(null);
                   if (next === "DASHBOARD") loadDashboard();
                   if (next === "EVALS") loadEvaluations();
                   if (next === "CREATE") {
@@ -1254,7 +1673,7 @@ export default function TeacherPage() {
                     setCTypeOther("");
                     setTitlePick("");
                     setTitleOther("");
-                    setCPercent(30);
+                    setCPercent(0);
                     setCreateClassEvals([]);
                     setEditPercents({});
                   }
@@ -1270,7 +1689,7 @@ export default function TeacherPage() {
           </div>
 
           {msg && (
-            <div className="msgError" style={{ marginTop: 12 }}>
+            <div className={msgKind === "ok" ? "msgOk" : "msgError"} style={{ marginTop: 12 }}>
               {msg}
             </div>
           )}
@@ -1342,116 +1761,107 @@ export default function TeacherPage() {
                 </div>
               </div>
 
-              {/* TABLA / GRID DE MATERIAS POR AÑO */}
+              {/* TABLA MATERIAS ASIGNADAS */}
               <div className="card">
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 12,
-                    marginBottom: 16,
-                  }}
-                >
-                  <h2 style={{ margin: 0 }}>Mis materias por año</h2>
-
-                  <button
-                    type="button"
-                    onClick={loadDashboard}
-                    className="btnLight"
-                    style={{ fontWeight: 900 }}
-                  >
-                    {loadingDashboard ? "Cargando..." : "Refrescar"}
-                  </button>
-                </div>
+                <h2 style={{ margin: 0, marginBottom: 14 }}>Mis materias asignadas</h2>
 
                 {loadingDashboard ? (
-                  <div style={{ color: "var(--muted)" }}>Cargando dashboard...</div>
-                ) : !dashboard?.groups?.length ? (
-                  <div style={{ color: "var(--muted)" }}>
-                    No tienes materias asignadas actualmente.
-                  </div>
+                  <div style={{ color: "var(--muted)" }}>Cargando...</div>
+                ) : dashAssignments.length === 0 ? (
+                  <div style={{ color: "var(--muted)" }}>No tienes materias asignadas actualmente.</div>
                 ) : (
                   <div
                     style={{
-                      overflowX: "auto",
-                      borderRadius: 18,
-                      border: "1px solid var(--stroke)",
+                      borderRadius: GRILLA.radiusSecondary,
+                      overflow: "hidden",
+                      border: "1px solid color-mix(in srgb, var(--stroke) 100%, transparent)",
+                      background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)",
+                      boxShadow: "var(--shadow)",
                     }}
                   >
-                    <div
-                      style={{
-                        minWidth: 900,
-                        display: "grid",
-                        gridTemplateColumns: "repeat(4, 1fr)",
-                      }}
-                    >
-                      {(levels.length > 0 ? levels.map((l) => l.id) : [1, 2, 3, 4]).map((lvl, idx) => {
-                        const group = dashboard.groups.find((g) => Number(g.level) === lvl);
-                        const items = group?.items || [];
-                        const studentCount = group?.student_count ?? 0;
-
-                        return (
-                          <div
-                            key={lvl}
-                            style={{
-                              borderRight: idx < 3 ? "1px solid var(--stroke)" : "none",
-                              minHeight: 420,
-                              display: "flex",
-                              flexDirection: "column",
-                            }}
-                          >
-                            {/* encabezado columna */}
-                            <div
-                              style={{
-                                padding: "14px 16px",
-                                borderBottom: "1px solid var(--stroke)",
-                                background: "rgba(14,165,233,.06)",
-                                fontWeight: 700,
-                                letterSpacing: ".04em",
-                                fontSize: 15,
-                              }}
-                            >
-                              {levelLabel(lvl, levelMap)}{group ? ` - ${studentCount} est.` : ""}
-                            </div>
-
-                            {/* cuerpo columna */}
-                            <div
-                              style={{
-                                padding: 12,
-                                display: "grid",
-                                gap: 10,
-                                alignContent: "start",
-                                flex: 1,
-                              }}
-                            >
-                              {items.length === 0 ? (
-                                <div
-                                  style={{
-                                    fontSize: 14,
-                                    padding: "8px 4px",
-                                  }}
-                                >
-                                  Sin materias asignadas
-                                </div>
-                              ) : (
-                                items.map((item) => (
-                                  <div
-                                    key={item.id}
-                                    style={{
-                                      padding: "-2px",
-                                      fontWeight: 500,
-                                      lineHeight: 1.4,
-                                    }}
-                                  >
-                                    {item.name}
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
+                    <div style={{ overflowX: "auto" }}>
+                      <table
+                        className="teacher-solid-table"
+                        style={{
+                          width: "100%",
+                          minWidth: 500,
+                          borderCollapse: "separate",
+                          borderSpacing: 0,
+                          fontSize: 14,
+                          color: "var(--text)",
+                        }}
+                      >
+                        <thead>
+                          <tr>
+                            {/* Nivel — dropdown en header */}
+                            <th style={{ textAlign: "left", padding: "6px 10px", borderBottom: GRILLA.headerBottomBorder, whiteSpace: "nowrap" }}>
+                              <select
+                                className="select"
+                                value={dashLevelFilter === "all" ? "all" : String(dashLevelFilter)}
+                                onChange={(e) => {
+                                  setDashLevelFilter(e.target.value === "all" ? "all" : Number(e.target.value));
+                                  setDashCourseFilter("all");
+                                }}
+                                style={{ fontSize: 13, padding: "3px 6px", fontWeight: 700 }}
+                              >
+                                <option value="all" style={{ fontWeight: 700 }}>Nivel</option>
+                                {dashLevels.map((lvl) => (
+                                  <option key={lvl} value={String(lvl)}>{levelLabel(lvl, levelMap)}</option>
+                                ))}
+                              </select>
+                            </th>
+                            {/* Curso — dropdown en header */}
+                            <th style={{ textAlign: "left", padding: "6px 10px", borderBottom: GRILLA.headerBottomBorder, whiteSpace: "nowrap" }}>
+                              <select
+                                className="select"
+                                value={dashCourseFilter === "all" ? "all" : String(dashCourseFilter)}
+                                onChange={(e) => setDashCourseFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+                                style={{ fontSize: 13, padding: "3px 6px", fontWeight: 700 }}
+                              >
+                                <option value="all" style={{ fontWeight: 700 }}>Curso</option>
+                                {dashCoursesForLevel.map((c) => (
+                                  <option key={c.id} value={String(c.id)}>{c.name}</option>
+                                ))}
+                              </select>
+                            </th>
+                            <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, whiteSpace: "nowrap", fontWeight: 700 }}>
+                              Módulo
+                            </th>
+                            <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, fontWeight: 700 }}>
+                              Materia
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dashAssignmentsFiltered.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} style={{ padding: 16, color: "var(--muted)" }}>
+                                Sin resultados para el filtro seleccionado.
+                              </td>
+                            </tr>
+                          ) : (
+                            dashAssignmentsFiltered.map((a, rowIndex) => {
+                              const bg = getGrillaBaseRowBg(rowIndex, isDarkTheme);
+                              return (
+                                <tr key={`${a.class_id}-${a.course_id}`} className="table-row-hover" data-editing="false" style={{ background: bg }}>
+                                  <td style={{ padding: "6px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg, whiteSpace: "nowrap" }}>
+                                    {a.level_label}
+                                  </td>
+                                  <td style={{ padding: "6px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg, whiteSpace: "nowrap" }}>
+                                    {a.course_name || "—"}
+                                  </td>
+                                  <td style={{ padding: "6px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg }}>
+                                    {a.module_name || "—"}
+                                  </td>
+                                  <td style={{ padding: "6px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg }}>
+                                    {a.class_name}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 )}
@@ -1464,183 +1874,196 @@ export default function TeacherPage() {
               ======================= */}
           {view === "EVALS" && (
             <div className="card" style={{ marginTop: 18 }}>
+              <h2 style={{ margin: 0 }}>Mis evaluaciones</h2>
+
               <div
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
+                  marginTop: 14,
+                  borderRadius: GRILLA.radiusSecondary,
+                  overflow: "hidden",
+                  border: "1px solid color-mix(in srgb, var(--stroke) 100%, transparent)",
+                  background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)",
+                  boxShadow: "var(--shadow)",
                 }}
               >
-                <h2 style={{ margin: 0 }}>Mis evaluaciones</h2>
-                <button onClick={loadEvaluations} className="btnLight" style={{ fontWeight: 900 }}>
-                  {loadingList ? "Cargando..." : "Refrescar"}
-                </button>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-                <div>
-                  <div className="label">Año</div>
-                  <select
-                    className="select"
-                    value={String(evalLevelFilter)}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setEvalLevelFilter(v === "all" ? "all" : Number(v));
+                <div style={{ overflowX: "auto" }}>
+                  <table
+                    className="teacher-solid-table"
+                    style={{
+                      width: "100%",
+                      minWidth: 700,
+                      borderCollapse: "separate",
+                      borderSpacing: 0,
+                      fontSize: 14,
+                      color: "var(--text)",
                     }}
                   >
-                    <option value="all">Todos los años</option>
-                    {availableLevels.map((lvl) => (
-                      <option key={lvl} value={String(lvl)}>
-                        {levelLabel(lvl, levelMap)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <div className="label">Materia</div>
-                  <select
-                    className="select"
-                    value={evalClassFilter}
-                    onChange={(e) =>
-                      setEvalClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
-                    }
-                  >
-                    <option value="all">
-                      {evalLevelFilter === "all"
-                        ? "Todas mis materias"
-                        : "Todas mis materias del año"}
-                    </option>
-                    {evalClassesFiltered.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {loadingClasses && (
-                <div style={{ marginTop: 6, color: "var(--muted)", fontSize: 13 }}>
-                  Cargando materias...
-                </div>
-              )}
-
-              <div
-                style={{
-                  marginTop: 12,
-                  overflow: "hidden",
-                  borderRadius: 18,
-                  border: "1px solid var(--stroke)",
-                }}
-              >
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                      <th style={{ textAlign: "left", padding: 12, color: "var(--label)" }}>Materia</th>
-                      <th style={{ textAlign: "left", padding: 12, color: "var(--label)" }}>Evaluación</th>
-                      <th style={{ textAlign: "left", padding: 12, width: 110, color: "var(--label)" }}>%</th>
-                      <th style={{ width: 120 }} />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {evalItemsFiltered.length === 0 ? (
+                    <thead>
                       <tr>
-                        <td colSpan={4} style={{ padding: 12, color: "var(--muted)" }}>
-                          {loadingList ? "Cargando..." : "No tienes evaluaciones con ese filtro."}
-                        </td>
+                        {/* Nivel */}
+                        <th style={{ textAlign: "left", padding: "6px 10px", borderBottom: GRILLA.headerBottomBorder, whiteSpace: "nowrap" }}>
+                          <select
+                            className="select"
+                            value={evalLevelFilter === "all" ? "all" : String(evalLevelFilter)}
+                            onChange={(e) => setEvalLevelFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+                            style={{ fontSize: 13, padding: "3px 6px", fontWeight: 700, color: isDarkTheme ? GRILLA.headerTextDark : GRILLA.headerTextLight }}
+                          >
+                            <option value="all" style={{ fontWeight: 700 }}>Nivel</option>
+                            {evalLevelOptions.map((o) => (
+                              <option key={o.value} value={String(o.value)}>{o.label}</option>
+                            ))}
+                          </select>
+                        </th>
+                        {/* Curso */}
+                        <th style={{ textAlign: "left", padding: "6px 10px", borderBottom: GRILLA.headerBottomBorder, whiteSpace: "nowrap" }}>
+                          <select
+                            className="select"
+                            value={evalCourseFilter === "all" ? "all" : String(evalCourseFilter)}
+                            onChange={(e) => setEvalCourseFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+                            style={{ fontSize: 13, padding: "3px 6px", fontWeight: 700, color: isDarkTheme ? GRILLA.headerTextDark : GRILLA.headerTextLight }}
+                          >
+                            <option value="all" style={{ fontWeight: 700 }}>Curso</option>
+                            {evalCourseOptions.map((c) => (
+                              <option key={c.id} value={String(c.id)}>{c.name}</option>
+                            ))}
+                          </select>
+                        </th>
+                        {/* Módulo */}
+                        <th style={{ textAlign: "left", padding: "6px 10px", borderBottom: GRILLA.headerBottomBorder, whiteSpace: "nowrap" }}>
+                          <select
+                            className="select"
+                            value={evalModuleFilter}
+                            onChange={(e) => setEvalModuleFilter(e.target.value)}
+                            style={{ fontSize: 13, padding: "3px 6px", fontWeight: 700, color: isDarkTheme ? GRILLA.headerTextDark : GRILLA.headerTextLight }}
+                          >
+                            <option value="" style={{ fontWeight: 700 }}>Módulo</option>
+                            {evalModuleOptions.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                          </select>
+                        </th>
+                        {/* Materia */}
+                        <th style={{ textAlign: "left", padding: "6px 10px", borderBottom: GRILLA.headerBottomBorder, whiteSpace: "nowrap" }}>
+                          <select
+                            className="select"
+                            value={evalClassFilter === "all" ? "all" : String(evalClassFilter)}
+                            onChange={(e) => setEvalClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+                            style={{ fontSize: 13, padding: "3px 6px", fontWeight: 700, color: isDarkTheme ? GRILLA.headerTextDark : GRILLA.headerTextLight }}
+                          >
+                            <option value="all" style={{ fontWeight: 700 }}>Materia</option>
+                            {evalClassOptions.map((c) => (
+                              <option key={c.id} value={String(c.id)}>{c.name}</option>
+                            ))}
+                          </select>
+                        </th>
+                        <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, fontWeight: 700 }}>Evaluación</th>
+                        <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, fontWeight: 700, width: 100 }}>%</th>
+                        <th style={{ width: 130, borderBottom: GRILLA.headerBottomBorder }} />
                       </tr>
-                    ) : (
-                      evalItemsFiltered.map((e) => {
-                        const isModuleLevel = e.id_class == null && e.id_module != null;
-                        const isGroupLevel = e.id_class == null && e.id_group != null;
-                        const isReadOnly = isModuleLevel || isGroupLevel;
+                    </thead>
+                    <tbody>
+                      {evalItemsFiltered.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} style={{ padding: 16, color: "var(--muted)", background: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)" }}>
+                            {loadingList ? "Cargando..." : "No tienes evaluaciones con ese filtro."}
+                          </td>
+                        </tr>
+                      ) : (
+                        evalItemsFiltered.map((e, rowIndex) => {
+                          const isModuleLevel = e.id_class == null && e.id_module != null;
+                          const isGroupLevel = e.id_class == null && e.id_group != null;
+                          const isReadOnly = isModuleLevel || isGroupLevel;
+                          const bg = getGrillaBaseRowBg(rowIndex, isDarkTheme);
 
-                        let scopeLabel: string;
-                        if (isGroupLevel) {
-                          const modName = e.module?.name ?? `Módulo ${e.id_module}`;
-                          const grpName = e.group?.name ?? `Grupo ${e.id_group}`;
-                          scopeLabel = `Módulo - ${modName} · Grupo - ${grpName}`;
-                        } else if (isModuleLevel) {
-                          scopeLabel = `Módulo - ${e.module?.name ?? `Módulo ${e.id_module}`}`;
-                        } else {
-                          scopeLabel = e.class?.name ?? `ID ${e.id_class}`;
-                        }
+                          const levelNum = Number(e.class?.level ?? 0);
+                          const levelName = levelNum ? (levelMap[levelNum] ?? `Año ${levelNum}`) : "—";
+                          const courseName = e.course?.name ?? "—";
+                          const modName = e.module?.name ?? (e.id_module ? `Módulo ${e.id_module}` : "—");
+                          const className = e.class?.name ?? (isGroupLevel ? `Grupo ${e.id_group}` : "—");
 
-                        return (
-                          <tr key={e.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)", opacity: isReadOnly ? 0.85 : 1 }}>
-                            <td style={{ padding: 12 }}>
-                              {isReadOnly ? (
-                                <span style={{ color: "var(--muted)", fontSize: 13 }}>{scopeLabel}</span>
-                              ) : (
-                                scopeLabel
-                              )}
-                            </td>
-                            <td style={{ padding: 12 }}>
-                              {isReadOnly ? (
-                                <span style={{ fontWeight: 500 }}>{getEvaluationListLabel(e)}</span>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => goToUpsertFromEvaluation(e)}
-                                  style={{
-                                    background: "transparent",
-                                    border: "none",
-                                    padding: 0,
-                                    margin: 0,
-                                    color: "var(--text)",
-                                    font: "inherit",
-                                    fontWeight: 500,
-                                    cursor: "pointer",
-                                    textAlign: "left",
-                                    textDecoration: "underline",
-                                    textUnderlineOffset: 3,
-                                  }}
-                                  title="Ir a cambiar nota de esta evaluación"
-                                >
-                                  {getEvaluationListLabel(e)}
-                                </button>
-                              )}
-                            </td>
-                            <td style={{ padding: "8px 12px" }}>
-                              {isReadOnly ? (
-                                <span style={{ color: "var(--muted)" }}>{e.percent}%</span>
-                              ) : (
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={100}
-                                  className="input"
-                                  style={{ textAlign: "center" }}
-                                  value={percentDraft[e.id] ?? String(e.percent)}
-                                  onChange={(ev) =>
-                                    setPercentDraft((p) => ({ ...p, [e.id]: ev.target.value }))
-                                  }
-                                />
-                              )}
-                            </td>
-                            <td style={{ padding: "8px 12px", textAlign: "center" }}>
-                              {isReadOnly ? (
-                                <span style={{ fontSize: 12, color: "var(--muted)" }}>Solo lectura</span>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className="btnLight"
-                                  style={{ fontSize: 12, padding: "4px 10px" }}
-                                  disabled={savingEvalRow[e.id]}
-                                  onClick={() => handleUpdateEvalRow(e.id)}
-                                >
-                                  {savingEvalRow[e.id] ? "..." : "Actualizar %"}
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
+                          return (
+                            <tr key={e.id} className="table-row-hover" data-editing="false" style={{ background: bg, opacity: isReadOnly ? 0.85 : 1 }}>
+                              <td style={{ padding: "6px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg, whiteSpace: "nowrap" }}>
+                                {levelName}
+                              </td>
+                              <td style={{ padding: "6px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg, whiteSpace: "nowrap" }}>
+                                {courseName}
+                              </td>
+                              <td style={{ padding: "6px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg }}>
+                                {modName}
+                              </td>
+                              <td style={{ padding: "6px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg }}>
+                                {isReadOnly ? (
+                                  <span style={{ color: "var(--muted)", fontSize: 13 }}>{className}</span>
+                                ) : (
+                                  className
+                                )}
+                              </td>
+                              <td style={{ padding: "6px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg }}>
+                                {isReadOnly ? (
+                                  <span style={{ fontWeight: 500 }}>{getEvaluationListLabel(e)}</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => goToUpsertFromEvaluation(e)}
+                                    style={{
+                                      background: "transparent",
+                                      border: "none",
+                                      padding: 0,
+                                      margin: 0,
+                                      color: "var(--text)",
+                                      font: "inherit",
+                                      fontWeight: 500,
+                                      cursor: "pointer",
+                                      textAlign: "left",
+                                      textDecoration: "underline",
+                                      textUnderlineOffset: 3,
+                                    }}
+                                    title="Ir a cambiar nota de esta evaluación"
+                                  >
+                                    {getEvaluationListLabel(e)}
+                                  </button>
+                                )}
+                              </td>
+                              <td style={{ padding: "4px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg }}>
+                                {isReadOnly ? (
+                                  <span style={{ color: "var(--muted)" }}>{e.percent}%</span>
+                                ) : (
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    className="input"
+                                    style={{ textAlign: "center", width: 72 }}
+                                    value={percentDraft[e.id] ?? String(e.percent)}
+                                    onChange={(ev) =>
+                                      setPercentDraft((p) => ({ ...p, [e.id]: ev.target.value }))
+                                    }
+                                  />
+                                )}
+                              </td>
+                              <td style={{ padding: "4px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg, textAlign: "center" }}>
+                                {isReadOnly ? (
+                                  <span style={{ fontSize: 12, color: "var(--muted)" }}>Solo lectura</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="btnLight"
+                                    style={{ fontSize: 12, padding: "4px 10px" }}
+                                    disabled={savingEvalRow[e.id]}
+                                    onClick={() => handleUpdateEvalRow(e.id)}
+                                  >
+                                    {savingEvalRow[e.id] ? "..." : "Actualizar %"}
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -1650,301 +2073,294 @@ export default function TeacherPage() {
               ================== */}
           {view === "CREATE" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Crear evaluación</h2>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <div><h2 style={{ margin: 0 }}>Crear evaluación</h2></div>
+              </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-                <div style={{ gridColumn: "1 / span 2" }}>
+              {/* Fila dropdowns */}
+              <div style={{ display: "flex", gap: 12, marginTop: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
+                {/* Nivel */}
+                <div style={{ flex: "1 1 140px" }}>
+                  <div className="label">Nivel</div>
+                  <select
+                    className="select"
+                    value={String(createLevelFilter)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCreateLevelFilter(v === "" ? "" : Number(v));
+                    }}
+                  >
+                    <option value="" disabled style={{ fontWeight: 700 }}>Nivel</option>
+                    {levels.map((lvl) => (
+                      <option key={lvl.id} value={String(lvl.id)}>{lvl.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Curso */}
+                <div style={{ flex: "1 1 140px" }}>
                   <div className="label">Curso</div>
                   <select
                     className="select"
                     value={cCourse}
+                    disabled={createLevelFilter === "" || loadingCourses}
                     onChange={(e) => setCCourse(e.target.value)}
-                    disabled={loadingCourses}
                   >
-                    <option value="">{loadingCourses ? "Cargando cursos..." : "Selecciona un curso"}</option>
-                    {courses.map((c) => (
-                      <option key={c.id} value={String(c.id)}>
-                        {c.name}
-                      </option>
+                    <option value="" style={{ fontWeight: 700 }}>{loadingCourses ? "Cargando..." : "Curso"}</option>
+                    {coursesForCreate.map((c) => (
+                      <option key={c.id} value={String(c.id)}>{c.name}</option>
                     ))}
                   </select>
-
-                  {selectedCreateCourse?.id && (
-                    <div style={{ marginTop: 8, color: "var(--muted)", fontSize: 13 }}>
-                      Año detectado: <b>{levelLabel(selectedCreateCourse.level, levelMap)}</b>
-                    </div>
-                  )}
                 </div>
 
-                <div style={{ gridColumn: "1 / span 2" }}>
+                {/* Módulo */}
+                <div style={{ flex: "1 1 140px" }}>
+                  <div className="label">Módulo</div>
+                  <select
+                    className="select"
+                    value={createModuleFilter}
+                    disabled={createLevelFilter === ""}
+                    onChange={(e) => setCreateModuleFilter(e.target.value)}
+                  >
+                    <option value="" style={{ fontWeight: 700 }}>Módulo</option>
+                    {createModuleOptions.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Materia */}
+                <div style={{ flex: "2 1 180px" }}>
                   <div className="label">Materia</div>
                   <select
                     className="select"
-                    value={createClassFilter}
+                    value={createClassFilter === "all" ? "all" : String(createClassFilter)}
+                    disabled={createLevelFilter === ""}
                     onChange={(e) =>
                       setCreateClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
                     }
-                    disabled={!cCourse}
                   >
-                    <option value="all">
-                      {!cCourse ? "Selecciona un curso primero" : "Selecciona una materia"}
-                    </option>
+                    <option value="all" style={{ fontWeight: 700 }}>Materia</option>
                     {createClassesFiltered.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
+                      <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
                 </div>
 
-                {/* EVALUACIONES EXISTENTES DE LA MATERIA */}
-                {createClassFilter !== "all" && (
-                  <div style={{ gridColumn: "1 / span 2" }}>
-                    {loadingCreateClassEvals ? (
-                      <div style={{ color: "var(--muted)", fontSize: 13 }}>Cargando evaluaciones...</div>
-                    ) : createClassEvals.length === 0 ? (
-                      <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                        Esta materia no tiene evaluaciones aún.
-                      </div>
-                    ) : (
-                      <div>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            marginBottom: 8,
-                          }}
-                        >
-                          <div className="label" style={{ margin: 0 }}>
-                            Evaluaciones existentes
-                          </div>
-                          <div style={{ fontSize: 13, color: "var(--muted)" }}>
-                            Total acumulado:{" "}
-                            <b>
-                              {createClassEvals.reduce((s, e) => s + Number(e.percent), 0)}%
-                            </b>
-                          </div>
-                        </div>
-                        <div
-                          style={{
-                            borderRadius: 14,
-                            border: "1px solid var(--stroke)",
-                            overflow: "hidden",
-                          }}
-                        >
-                          {/* encabezado */}
-                          <div
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "1fr 100px 80px 80px",
-                              padding: "8px 12px",
-                              background: "rgba(14,165,233,.06)",
-                              borderBottom: "1px solid var(--stroke)",
-                              fontWeight: 700,
-                              fontSize: 13,
-                            }}
-                          >
-                            <div style={{ color: "var(--label)" }}>Evaluación</div>
-                            <div style={{ textAlign: "center" }}>%</div>
-                            <div />
-                            <div />
-                          </div>
-                          {/* filas */}
-                          {createClassEvals.map((ev) => (
-                            <div
-                              key={ev.id}
-                              style={{
-                                display: "grid",
-                                gridTemplateColumns: "1fr 100px 80px 80px",
-                                padding: "8px 12px",
-                                alignItems: "center",
-                                borderBottom: "1px solid var(--stroke)",
-                                fontSize: 14,
-                              }}
-                            >
-                              <div style={{ fontWeight: 500 }}>
-                                {ev.title}
-                                {ev.evaluation_type?.type && (
-                                  <span style={{ color: "var(--muted)", fontWeight: 400, marginLeft: 6 }}>
-                                    ({ev.evaluation_type.type})
-                                  </span>
-                                )}
-                              </div>
-                              <div style={{ textAlign: "center" }}>
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={100}
-                                  className="input"
-                                  style={{ textAlign: "center", padding: "4px 6px", fontSize: 13 }}
-                                  value={editPercents[ev.id] ?? String(ev.percent)}
-                                  onChange={(e) =>
-                                    setEditPercents((p) => ({ ...p, [ev.id]: e.target.value }))
-                                  }
-                                />
-                              </div>
-                              <div style={{ textAlign: "center" }}>
-                                <button
-                                  type="button"
-                                  className="btnLight"
-                                  style={{ fontSize: 12, padding: "4px 10px" }}
-                                  disabled={savingEvalPercent[ev.id]}
-                                  onClick={() => handleSaveCreateEvalPercent(ev.id)}
-                                >
-                                  {savingEvalPercent[ev.id] ? "..." : "Guardar"}
-                                </button>
-                              </div>
-                              <div style={{ textAlign: "center" }}>
-                                <button
-                                  type="button"
-                                  className="btnLight"
-                                  style={{ fontSize: 12, padding: "4px 10px", background: "#ef4444", color: "#fff", borderColor: "#ef4444" }}
-                                  disabled={deletingEval[ev.id]}
-                                  onClick={() => handleDeleteCreateEval(ev.id)}
-                                >
-                                  {deletingEval[ev.id] ? "..." : "Eliminar"}
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* NUEVA EVALUACIÓN */}
-                <div style={{ gridColumn: "1 / span 2" }}>
-                  <div className="label" style={{ marginBottom: 8 }}>Nueva evaluación</div>
-                  <div
-                    style={{
-                      borderRadius: 14,
-                      border: "1px solid var(--stroke)",
-                      overflow: "hidden",
+                {/* Cancelar */}
+                <div style={{ display: "flex", alignItems: "flex-end" }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ background: isDarkTheme ? "#1f2937" : "#000", color: "#fff", borderColor: isDarkTheme ? "#1f2937" : "#000", whiteSpace: "nowrap", width: 120 }}
+                    onClick={() => {
+                      setCreateLevelFilter("");
+                      setCCourse("");
+                      setCreateModuleFilter("");
+                      setCreateClassFilter("all");
+                      setTitlePick("");
+                      setTitleOther("");
+                      setCPercent(0);
+                      setCreateClassEvals([]);
+                      setEditPercents({});
                     }}
                   >
-                    {/* encabezado de columnas */}
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr 120px 100px",
-                        padding: "8px 12px",
-                        background: "rgba(14,165,233,.06)",
-                        borderBottom: "1px solid var(--stroke)",
-                        fontWeight: 700,
-                        fontSize: 13,
-                      }}
-                    >
-                      <div style={{ color: "var(--label)" }}>Tipo</div>
-                      <div style={{ color: "var(--label)" }}>Título</div>
-                      <div style={{ textAlign: "center" }}>%</div>
-                      <div />
+                    Cancelar
+                  </button>
+
+                </div>
+              </div>
+
+              {/* NUEVA EVALUACIÓN */}
+              {createLevelFilter !== "" && (
+              <div style={{ marginTop: 16 }}>
+                  <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+                    {/* Tipo */}
+                    <div style={{ flex: "1 1 140px" }}>
+                      <div className="label">Tipo</div>
+                      <select
+                        className="select"
+                        value={cType}
+                        onChange={(e) => {
+                          setCType(e.target.value);
+                          if (e.target.value !== "__other__") setCTypeOther("");
+                        }}
+                        disabled={loadingTypes}
+                      >
+                        <option value="">{loadingTypes ? "Cargando..." : "Selecciona..."}</option>
+                        {types.map((t) => (
+                          <option key={t.id} value={String(t.id)}>{t.type}</option>
+                        ))}
+                        <option value="__other__">Otro...</option>
+                      </select>
+                      {cType === "__other__" && (
+                        <input
+                          className="input"
+                          style={{ marginTop: 8 }}
+                          value={cTypeOther}
+                          onChange={(e) => setCTypeOther(e.target.value)}
+                          placeholder="Ej: Taller, Quiz..."
+                        />
+                      )}
                     </div>
 
-                    {/* campos en fila */}
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr 120px 100px",
-                        gap: 12,
-                        padding: 12,
-                        alignItems: "start",
-                      }}
-                    >
-                      {/* Tipo */}
-                      <div>
-                        <select
-                          className="select"
-                          value={cType}
-                          onChange={(e) => {
-                            setCType(e.target.value);
-                            if (e.target.value !== "__other__") setCTypeOther("");
-                          }}
-                          disabled={loadingTypes}
-                        >
-                          <option value="">{loadingTypes ? "Cargando..." : "Selecciona..."}</option>
-                          {types.map((t) => (
-                            <option key={t.id} value={String(t.id)}>
-                              {t.type}
-                            </option>
-                          ))}
-                          <option value="__other__">Otro...</option>
-                        </select>
-                        {cType === "__other__" && (
-                          <div style={{ marginTop: 8 }}>
-                            <div className="label">Escribe el tipo</div>
-                            <input
-                              className="input"
-                              value={cTypeOther}
-                              onChange={(e) => setCTypeOther(e.target.value)}
-                              placeholder="Ej: Taller, Quiz..."
-                            />
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Título */}
-                      <div>
-                        <select
-                          className="select"
-                          value={titlePick}
-                          onChange={(e) => {
-                            setTitlePick(e.target.value);
-                            if (e.target.value !== "__other__") setTitleOther("");
-                          }}
-                          disabled={createClassFilter === "all"}
-                        >
-                          <option value="">
-                            {createClassFilter === "all" ? "Selecciona una materia primero" : "Selecciona..."}
-                          </option>
-                          {createTitleOptions.map((t) => (
-                            <option key={t} value={t}>
-                              {t}
-                            </option>
-                          ))}
-                          <option value="__other__">Otro...</option>
-                        </select>
-                        {titlePick === "__other__" && (
-                          <div style={{ marginTop: 8 }}>
-                            <input
-                              className="input"
-                              value={titleOther}
-                              onChange={(e) => setTitleOther(e.target.value)}
-                              placeholder="Escribe el título..."
-                            />
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Porcentaje */}
-                      <div>
+                    {/* Título */}
+                    <div style={{ flex: "2 1 180px" }}>
+                      <div className="label">Título</div>
+                      <select
+                        className="select"
+                        value={titlePick}
+                        onChange={(e) => {
+                          setTitlePick(e.target.value);
+                          if (e.target.value !== "__other__") setTitleOther("");
+                        }}
+                        disabled={createClassFilter === "all"}
+                      >
+                        <option value="">
+                          {createClassFilter === "all" ? "Selecciona una materia primero" : "Selecciona..."}
+                        </option>
+                        {createTitleOptions.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                        <option value="__other__">Otro...</option>
+                      </select>
+                      {titlePick === "__other__" && (
                         <input
-                          type="number"
-                          min={1}
-                          max={100}
                           className="input"
-                          style={{ textAlign: "center" }}
-                          value={cPercent}
-                          onChange={(e) => setCPercent(Number(e.target.value))}
+                          style={{ marginTop: 8 }}
+                          value={titleOther}
+                          onChange={(e) => setTitleOther(e.target.value)}
+                          placeholder="Escribe el título..."
                         />
-                      </div>
+                      )}
+                    </div>
 
-                      {/* Botón Crear */}
-                      <div style={{ display: "flex", alignItems: "flex-start" }}>
-                        <button
-                          className="btn"
-                          onClick={handleCreate}
-                          disabled={creating}
-                          style={{ width: "100%", padding: "12px 8px" }}
-                        >
-                          {creating ? "..." : "Crear"}
-                        </button>
-                      </div>
+                    {/* Porcentaje */}
+                    <div style={{ flex: "0 0 120px" }}>
+                      <div className="label">%</div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        className="input"
+                        style={{ textAlign: "center", width: "100%" }}
+                        value={cPercent}
+                        onChange={(e) => setCPercent(Number(e.target.value))}
+                      />
+                    </div>
+
+                    {/* Botón Crear */}
+                    <div style={{ flex: "0 0 120px" }}>
+                      <button
+                        className="btn"
+                        onClick={handleCreate}
+                        disabled={creating}
+                        style={{ width: "100%", padding: "12px 8px" }}
+                      >
+                        {creating ? "..." : "Crear"}
+                      </button>
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {/* EVALUACIONES EXISTENTES DE LA MATERIA */}
+              <div style={{ marginTop: 48, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <div className="label" style={{ width: "90%", marginBottom: 8 }}>Evaluaciones existentes</div>
+                  {(true) && (
+                    <div
+                      style={{
+                        borderRadius: 14,
+                        border: "1px solid var(--stroke)",
+                        overflow: "hidden",
+                        width: "90%",
+                      }}
+                    >
+                      {/* encabezado */}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "200px 1fr 100px 130px 130px",
+                          padding: "12px 16px",
+                          background: isDarkTheme ? GRILLA.headerBgDark : GRILLA.headerBgLight,
+                          borderBottom: "1px solid var(--stroke)",
+                          fontWeight: 800,
+                          fontSize: 13,
+                          color: isDarkTheme ? GRILLA.headerTextDark : GRILLA.headerTextLight,
+                          alignItems: "center",
+                        }}
+                      >
+                        <div style={{ textAlign: "center" }}>Tipo</div>
+                        <div style={{ textAlign: "left", paddingLeft: 160 }}>Titulo</div>
+                        <div style={{ textAlign: "left", marginLeft: -200 }}>%</div>
+                        <div />
+                        <div />
+                      </div>
+                      {/* filas */}
+                      {createClassFilter === "all" ? (
+                        <div style={{ padding: "14px 16px", color: "var(--muted)", fontSize: 13 }}>
+                          Selecciona una materia para ver sus evaluaciones.
+                        </div>
+                      ) : loadingCreateClassEvals ? (
+                        <div style={{ padding: "14px 16px", color: "var(--muted)", fontSize: 13 }}>Cargando evaluaciones...</div>
+                      ) : createClassEvals.length === 0 ? (
+                        <div style={{ padding: "14px 16px", color: "var(--muted)", fontSize: 13 }}>Esta materia no tiene evaluaciones aún.</div>
+                      ) : (
+                        createClassEvals.map((ev) => (
+                          <div
+                            key={ev.id}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "200px 1fr 100px 130px 130px",
+                              padding: "12px 16px",
+                              alignItems: "center",
+                              borderBottom: "1px solid var(--stroke)",
+                              fontSize: 14,
+                            }}
+                          >
+                            <div style={{ fontSize: 13, textAlign: "center" }}>
+                              {ev.evaluation_type?.type ?? "—"}
+                            </div>
+                            <div style={{ textAlign: "left", paddingLeft: 160 }}>{ev.title}</div>
+                            <div style={{ display: "flex", justifyContent: "flex-start", marginLeft: -200 }}>
+                              <input
+                                type="number"
+                                min={1}
+                                max={100}
+                                className="input"
+                                style={{ textAlign: "center", padding: "4px 8px", fontSize: 13, width: 72, borderRadius: 9999 }}
+                                value={editPercents[ev.id] ?? String(ev.percent)}
+                                onChange={(e) =>
+                                  setEditPercents((p) => ({ ...p, [ev.id]: e.target.value }))
+                                }
+                              />
+                            </div>
+                            <div style={{ marginLeft: -80, paddingRight: 6, width: 130 }}>
+                              <button
+                                type="button"
+                                style={{ fontSize: 13, padding: "6px 0", width: "100%", background: "#0ea5e9", color: "#fff", border: "none", borderRadius: 9999, fontWeight: 600, cursor: "pointer" }}
+                                disabled={savingEvalPercent[ev.id]}
+                                onClick={() => handleSaveCreateEvalPercent(ev.id)}
+                              >
+                                {savingEvalPercent[ev.id] ? "..." : "Guardar"}
+                              </button>
+                            </div>
+                            <div style={{ marginLeft: -80, width: 130 }}>
+                              <button
+                                type="button"
+                                style={{ fontSize: 13, padding: "6px 0", width: "100%", background: "#ef4444", color: "#fff", border: "none", borderRadius: 9999, fontWeight: 600, cursor: "pointer" }}
+                                disabled={deletingEval[ev.id]}
+                                onClick={() => handleDeleteCreateEval(ev.id)}
+                              >
+                                {deletingEval[ev.id] ? "..." : "Eliminar"}
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
             </div>
           )}
 
@@ -1953,40 +2369,17 @@ export default function TeacherPage() {
               ================== */}
           {view === "UPSERT" && (
             <div className="card" style={{ marginTop: 18, width: "100%" }}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 12,
-                  flexWrap: "wrap",
-                }}
-              >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <div>
-                  <h2 style={{ margin: 0 }}>Actualizar nota manual</h2>
+                  <h2 style={{ margin: 0 }}>Gestionar Notas Estudiantes</h2>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={loadGradeGrid}
-                  className="btnLight"
-                  disabled={upsertClassFilter === "all" || gLoadingRoster}
-                  style={{ width: 180, flexShrink: 0 }}
-                >
-                  {gLoadingRoster ? "Cargando..." : "Refrescar lista"}
-                </button>
               </div>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 12,
-                  marginTop: 14,
-                }}
-              >
-                <div>
-                  <div className="label">Año</div>
+              {/* Fila 1: dropdowns */}
+              <div style={{ display: "flex", gap: 12, marginTop: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
+                {/* Nivel */}
+                <div style={{ flex: "1 1 140px" }}>
+                  <div className="label">Nivel</div>
                   <select
                     className="select"
                     value={String(upsertLevelFilter)}
@@ -1995,486 +2388,329 @@ export default function TeacherPage() {
                       setUpsertLevelFilter(v === "" ? "" : Number(v));
                     }}
                   >
-                    <option value="">Selecciona un Año</option>
-                    {availableLevels.map((lvl) => (
-                      <option key={lvl} value={String(lvl)}>
-                        {lvl}
-                      </option>
+                    <option value="" disabled style={{ fontWeight: 700 }}>Nivel</option>
+                    {levels.map((lvl) => (
+                      <option key={lvl.id} value={String(lvl.id)}>{lvl.name}</option>
                     ))}
                   </select>
                 </div>
 
-                <div>
+                {/* Curso */}
+                <div style={{ flex: "1 1 140px" }}>
+                  <div className="label">Curso</div>
+                  <select
+                    className="select"
+                    value={upsertCourseFilter === "all" ? "all" : String(upsertCourseFilter)}
+                    disabled={upsertLevelFilter === ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setUpsertCourseFilter(v === "all" ? "all" : Number(v));
+                    }}
+                  >
+                    <option value="all" style={{ fontWeight: 700 }}>Curso</option>
+                    {coursesForUpsert.map((c) => (
+                      <option key={c.id} value={String(c.id)}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Módulo */}
+                <div style={{ flex: "1 1 140px" }}>
+                  <div className="label">Módulo</div>
+                  <select
+                    className="select"
+                    value={thFilterModule}
+                    disabled={upsertLevelFilter === ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setThFilterModule(v);
+                      setThFilterGroup("");
+                      setThFilterClass("");
+                    }}
+                  >
+                    <option value="" style={{ fontWeight: 700 }}>Módulo</option>
+                    {thModuleOptions.map((o) => (
+                      <option key={o.value} value={o.value} style={{ color: "#000" }}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Materia */}
+                <div style={{ flex: "2 1 180px" }}>
                   <div className="label">Materia</div>
                   <select
                     className="select"
-                    value={upsertClassFilter}
-                    onChange={(e) =>
-                      setUpsertClassFilter(
-                        e.target.value === "all" ? "all" : Number(e.target.value)
-                      )
-                    }
+                    value={thFilterClass}
                     disabled={upsertLevelFilter === ""}
+                    onChange={(e) => { setThFilterClass(e.target.value); }}
                   >
-                    <option value="all">
-                      {upsertLevelFilter === "" ? "Selecciona un Año" : "Selecciona una materia"}
-                    </option>
-                    {upsertClassesFiltered.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
+                    <option value="" style={{ fontWeight: 700 }}>Materia</option>
+                    {thClassOptions.map((o) => (
+                      <option key={o.value} value={o.value} style={{ color: "#000" }}>{o.label}</option>
                     ))}
                   </select>
                 </div>
-              </div>
 
-              {upsertClassFilter === "all" ? (
-                <div style={{ marginTop: 16, color: "var(--muted)" }}>
-                  Selecciona una materia para cargar todas sus evaluaciones y notas.
-                </div>
-              ) : (
-                <div style={{ marginTop: 16 }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "baseline",
-                      gap: 12,
-                      flexWrap: "wrap",
-                      marginBottom: 12,
+                {/* Cancelar */}
+                <div style={{ display: "flex", alignItems: "flex-end" }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ background: isDarkTheme ? "#1f2937" : "#000", color: "#fff", borderColor: isDarkTheme ? "#1f2937" : "#000", whiteSpace: "nowrap", width: 160 }}
+                    onClick={() => {
+                      setUpsertLevelFilter("");
+                      setUpsertCourseFilter("all");
+                      setThFilterModule("");
+                      setThFilterGroup("");
+                      setThFilterClass("");
+                      setThFilterCedula("");
+                      setThFilterName("");
+                      setAllSections([]);
+                      setGradeDraft({});
+                      setEditingRow({});
+                      setRowSnapshot({});
                     }}
                   >
-                    <div style={{ fontWeight: 900 }}>
-                      Materia: {gridClassInfo?.name ?? selectedUpsertClass?.name ?? "—"}
-                    </div>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
 
-                    {gEvaluations.length > 0 && (
-                      <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                        Haz clic en <b>Actualizar</b> para habilitar edición por fila.
-                      </div>
+              {upsertLevelFilter === "" ? null : (
+                <div style={{ marginTop: 16 }}>
+                  {/* Fila 2: label selección (izq) + Descargar (der) */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+                    <div style={{ fontWeight: 900 }}>
+                      {thFilterClass
+                        ? `Materia: ${thFilterClass}`
+                        : thFilterGroup
+                          ? `Grupo: ${thFilterGroup}${thFilterModule ? ` · ${thFilterModule}` : ""} — Todas las materias`
+                          : thFilterModule
+                            ? `Módulo: ${thFilterModule} — Todos los grupos — Todas las materias`
+                            : upsertCourseFilter !== "all"
+                              ? `Curso: ${coursesForUpsert.find(c => c.id === Number(upsertCourseFilter))?.name ?? "—"} — Todos`
+                              : `${levels.find(l => l.id === Number(upsertLevelFilter))?.name ?? `Nivel ${upsertLevelFilter}`} — Todos`}
+                    </div>
+                    {flatRowsFiltered.length > 0 && visibleEvals.length > 0 && (
+                      <button
+                        type="button"
+                        className="btnLight"
+                        onClick={downloadExcel}
+                        style={{
+                          background: "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)",
+                          border: "1px solid rgba(34,197,94,.8)",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          whiteSpace: "nowrap",
+                          boxShadow: "0 4px 12px rgba(34,197,94,.35)",
+                          width: 160,
+                          justifyContent: "center",
+                        }}
+                      >
+                        ↓&nbsp;&nbsp;Descargar&nbsp;
+                        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24">
+                          <path d="M4 2h9l5 5v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="#fff" stroke="#14532d" strokeWidth="1.2"/>
+                          <path d="M13 2v5h5" fill="none" stroke="#14532d" strokeWidth="1.2"/>
+                          <rect x="3" y="10" width="18" height="11" rx="1" fill="#16a34a" stroke="#14532d" strokeWidth="0.8"/>
+                          <text x="6.5" y="19.5" fontSize="9" fontWeight="bold" fill="#ffffff" fontFamily="Arial, sans-serif">xls</text>
+                        </svg>
+                      </button>
                     )}
                   </div>
 
-                  <div
-                    style={{
-                      borderRadius: GRILLA.radiusSecondary,
-                      overflow: "hidden",
-                      border: "1px solid color-mix(in srgb, var(--stroke) 100%, transparent)",
-                      background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)",
-                      boxShadow: "var(--shadow)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        overflowX: "auto",
-                        overflowY: "auto",
-                        maxHeight: "68vh",
-                        background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)",
-                      }}
-                    >
-                      <table
-                        className="teacher-solid-table"
-                        style={{
-                          width: "100%",
-                          minWidth: `${upsertDynamicMinWidth}px`,
-                          borderCollapse: "separate",
-                          borderSpacing: 0,
-                          tableLayout: "fixed",
-                          fontSize: 14,
-                          color: "var(--text)",
-                        }}
-                      >
-                        <colgroup>
-                          <col style={{ width: `${CEDULA_COL_W}px` }} />
-                          <col style={{ width: `${ALUMNO_COL_W}px` }} />
-                          {gEvaluations.map((ev) => (
-                            <col key={ev.id} style={{ width: `${EVAL_COL_W}px` }} />
-                          ))}
-                          <col style={{ width: `${ACTION_COL_W}px` }} />
-                        </colgroup>
+                  <div style={{ borderRadius: GRILLA.radiusSecondary, overflow: "hidden", border: "1px solid color-mix(in srgb, var(--stroke) 100%, transparent)", background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)", boxShadow: "var(--shadow)" }}>
+                    <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "68vh", minHeight: 200, background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)" }}>
+                      {(() => {
+                        const visibleEvalCountsMap = new Map<string, number>();
+                        for (const ev of visibleEvals) {
+                          const k = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim().toLowerCase();
+                          visibleEvalCountsMap.set(k, (visibleEvalCountsMap.get(k) || 0) + 1);
+                        }
+                        return (
+                          <table
+                            className="teacher-solid-table"
+                            style={{ width: "100%", minWidth: `${upsertDynamicMinWidth}px`, borderCollapse: "separate", borderSpacing: 0, tableLayout: "fixed", fontSize: 14, color: "var(--text)" }}
+                          >
+                            <colgroup>
+                              <col style={{ width: `${CEDULA_COL_W}px` }} />
+                              <col style={{ width: `${ALUMNO_COL_W}px` }} />
+                              {visibleEvals.map((ev) => (
+                                <col key={ev.id} style={{ width: `${EVAL_COL_W}px` }} />
+                              ))}
+                              <col style={{ width: `${ACTION_COL_W}px` }} />
+                            </colgroup>
 
-                        <thead>
-                          <tr>
-                            <th
-                              style={{
-                                textAlign: "left",
-                                padding: "8px 10px",
-                                borderBottom: GRILLA.headerBottomBorder,
-                                fontWeight: 800,
-                                position: "sticky",
-                                top: 0,
-                                left: 0,
-                                zIndex: 6,
-                                whiteSpace: "nowrap",
-                                boxShadow: "none",
-                              }}
-                            >
-                              Cédula
-                            </th>
-
-                            <th
-                              style={{
-                                textAlign: "left",
-                                padding: "8px 10px",
-                                borderBottom: GRILLA.headerBottomBorder,
-                                fontWeight: 800,
-                                position: "sticky",
-                                top: 0,
-                                left: STICKY_ALUMNO_LEFT,
-                                zIndex: 6,
-                                boxShadow: "none",
-                              }}
-                            >
-                              Alumno
-                            </th>
-
-                            {gEvaluations.map((ev) => (
-                              <th
-                                key={ev.id}
-                                style={{
-                                  textAlign: "left",
-                                  padding: "8px 10px",
-                                  borderBottom: GRILLA.headerBottomBorder,
-                                  fontWeight: 800,
-                                  position: "sticky",
-                                  top: 0,
-                                  zIndex: 5,
-                                  lineHeight: 1.2,
-                                }}
-                              >
-                                {getEvaluationColumnLabel(ev)}
-                              </th>
-                            ))}
-
-                            <th
-                              style={{
-                                textAlign: "center",
-                                padding: "8px 10px",
-                                borderBottom: GRILLA.headerBottomBorder,
-                                fontWeight: 800,
-                                position: "sticky",
-                                top: 0,
-                                zIndex: 5,
-                              }}
-                            >
-                              Acción
-                            </th>
-                          </tr>
-                        </thead>
-
-                        <tbody>
-                          {gLoadingRoster ? (
-                            <tr>
-                              <td
-                                colSpan={Math.max(3, gEvaluations.length + 3)}
-                                style={{
-                                  padding: 16,
-                                  color: "var(--muted)",
-                                  background: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)",
-                                }}
-                              >
-                                Cargando alumnos y notas...
-                              </td>
-                            </tr>
-                          ) : gRoster.length === 0 ? (
-                            <tr>
-                              <td
-                                colSpan={Math.max(3, gEvaluations.length + 3)}
-                                style={{
-                                  padding: 16,
-                                  color: "var(--muted)",
-                                  background: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)",
-                                }}
-                              >
-                                No se encontraron alumnos para esta materia.
-                              </td>
-                            </tr>
-                          ) : gEvaluations.length === 0 ? (
-                            <tr>
-                              <td
-                                colSpan={3}
-                                style={{
-                                  padding: 16,
-                                  color: "var(--muted)",
-                                  background: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)",
-                                }}
-                              >
-                                Esta materia aún no tiene evaluaciones creadas.
-                              </td>
-                            </tr>
-                          ) : (
-                            gRoster.map((st, rowIndex) => {
-                              const isEditing = !!editingRow[st.id];
-                              const isBusy = !!savingOne[st.id] || savingAll;
-
-                              const baseRowBg = getGrillaBaseRowBg(rowIndex, isDarkTheme);
-                              const activeRowBg = getGrillaActiveRowBg(isDarkTheme);
-                              const editableCellBg = getGrillaEditableCellBg(isDarkTheme);
-                              const disabledCellBg = getGrillaDisabledCellBg(isDarkTheme);
-                              const cellTextColor = getGrillaTextColor(isDarkTheme);
-
-                              return (
-                                <tr
-                                  key={st.id}
-                                  className="table-row-hover"
-                                  data-editing={isEditing ? "true" : "false"}
-                                  style={{
-                                    background: isEditing ? activeRowBg : baseRowBg,
-                                  }}
-                                >
-                                  <td
-                                    style={{
-                                      padding: "2px 10px",
-                                      borderBottom: GRILLA.rowBottomBorder,
-                                      fontWeight: 700,
-                                      background: isEditing ? activeRowBg : baseRowBg,
-                                      position: "sticky",
-                                      left: 0,
-                                      zIndex: 4,
-                                      whiteSpace: "nowrap",
-                                      lineHeight: 1.15,
-                                      boxShadow: "none",
-                                      color: cellTextColor,
-                                    }}
-                                  >
-                                    {st.cedula}
-                                  </td>
-
-                                  <td
-                                    style={{
-                                      padding: "2px 10px",
-                                      borderBottom: GRILLA.rowBottomBorder,
-                                      background: isEditing ? activeRowBg : baseRowBg,
-                                      position: "sticky",
-                                      left: STICKY_ALUMNO_LEFT,
-                                      zIndex: 4,
-                                      boxShadow: "none",
-                                      color: cellTextColor,
-                                    }}
-                                  >
-                                    <div style={{ fontWeight: 700, lineHeight: 1.15 }}>
-                                      {st.name}
-                                    </div>
-                                  </td>
-
-                                  {gEvaluations.map((ev) => {
-                                    const key = gradeCellKey(st.id, ev.id);
-                                    const enabledForCourse = isEvaluationApplicableToStudent(st, ev);
-                                    const editable = enabledForCourse && isEditing && !isBusy;
-                                    const gradeRecord = gGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
-                                    const attempts = gradeRecord?.attempts ?? 0;
-                                    const noPresentó = enabledForCourse && attempts === 0;
-
-                                    return (
-                                      <td
-                                        key={ev.id}
-                                        style={{
-                                          padding: 0,
-                                          borderBottom: GRILLA.rowBottomBorder,
-                                          background: enabledForCourse
-                                            ? isEditing
-                                              ? editableCellBg
-                                              : "transparent"
-                                            : disabledCellBg,
-                                          position: "relative",
-                                        }}
-                                      >
-                                        {noPresentó && !isEditing ? (
-                                          <div
-                                            style={{
-                                              display: "flex",
-                                              alignItems: "center",
-                                              justifyContent: "left",
-                                              height: 26,
-                                              padding: "0 6px",
-                                            }}
-                                          >
-                                            <span
-                                              style={{
-                                                display: "inline-block",
-                                                padding: "2px 10px",
-                                                borderRadius: 4,
-                                                fontSize: 11,
-                                                fontWeight: 700,
-                                                letterSpacing: 0.3,
-                                                background: isDarkTheme
-                                                  ? "rgba(239,68,68,0.15)"
-                                                  : "rgba(239,68,68,0.1)",
-                                                color: isDarkTheme ? "#fca5a5" : "#dc2626",
-                                                border: isDarkTheme
-                                                  ? "1px solid rgba(239,68,68,0.3)"
-                                                  : "1px solid rgba(239,68,68,0.25)",
-                                                whiteSpace: "nowrap",
-                                              }}
-                                            >
-                                              No Presentó
-                                            </span>
-                                          </div>
-                                        ) : (
-                                        <input
-                                          className="input"
-                                          inputMode="numeric"
-                                          value={gradeDraft[key] ?? ""}
-                                          readOnly={!editable}
-                                          disabled={!enabledForCourse || isBusy}
-                                          onChange={(e) => {
-                                            if (!editable) return;
-                                            const v = e.target.value;
-                                            if (v === "") {
-                                              return setGradeDraft((p) => ({
-                                                ...p,
-                                                [key]: "",
-                                              }));
-                                            }
-                                            if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
-                                            setGradeDraft((p) => ({ ...p, [key]: v }));
-                                          }}
-                                          placeholder={enabledForCourse ? "—" : "N/A"}
-                                          onFocus={(e) => {
-                                            if (editable) {
-                                              e.currentTarget.style.background = getGrillaFocusCellBg(isDarkTheme);
-                                              e.currentTarget.style.boxShadow =
-                                                "inset 0 0 0 1.5px #3b82f6";
-                                            }
-                                          }}
-                                          onBlur={(e) => {
-                                            e.currentTarget.style.background = editable
-                                              ? editableCellBg
-                                              : "transparent";
-                                            e.currentTarget.style.boxShadow = "none";
-                                          }}
-                                          style={{
-                                            width: "100%",
-                                            minWidth: 0,
-                                            height: 26,
-                                            border: "none",
-                                            borderRadius: 0,
-                                            outline: "none",
-                                            background: editable ? editableCellBg : "transparent",
-                                            boxShadow: "none",
-                                            padding: "0 10px",
-                                            fontSize: 13,
-                                            lineHeight: 1,
-                                            fontWeight: editable ? 700 : 500,
-                                            color: enabledForCourse
-                                              ? cellTextColor
-                                              : isDarkTheme
-                                                ? "var(--muted)"
-                                                : "#94a3b8",
-                                            cursor: editable ? "text" : "default",
-                                            opacity: enabledForCourse ? 1 : 0.6,
-                                          }}
-                                        />
-                                        )}
+                            <thead>
+                              {/* Subheader: nombres de materias cuando se muestran varias */}
+                              {!thFilterClass && visibleEvals.length > 0 && (() => {
+                                const groups: { classId: number; className: string; count: number }[] = [];
+                                for (const ev of visibleEvals) {
+                                  const cid = ev.id_class ?? 0;
+                                  const last = groups[groups.length - 1];
+                                  if (last && last.classId === cid) { last.count++; }
+                                  else groups.push({ classId: cid, className: ev.class?.name || `Clase ${cid}`, count: 1 });
+                                }
+                                if (groups.length <= 1) return null;
+                                return (
+                                  <tr>
+                                    <td colSpan={2} style={{ borderBottom: GRILLA.headerBottomBorder, background: GRILLA.headerBgLight, position: "sticky", top: 0, left: 0, zIndex: 7 }} />
+                                    {groups.map((g) => (
+                                      <td key={g.classId} colSpan={g.count} style={{ padding: "4px 10px", borderBottom: GRILLA.headerBottomBorder, fontSize: 11, textAlign: "center", background: GRILLA.headerBgLight, borderLeft: "1px solid var(--stroke)", position: "sticky", top: 0, zIndex: 5 }}>
+                                        {g.className}
                                       </td>
-                                    );
-                                  })}
-
-                                  <td
-                                    style={{
-                                      padding: "4px 8px",
-                                      borderBottom: GRILLA.rowBottomBorder,
-                                      background: isEditing ? activeRowBg : baseRowBg,
+                                    ))}
+                                    <td style={{ borderBottom: GRILLA.headerBottomBorder, background: GRILLA.headerBgLight, position: "sticky", top: 0, zIndex: 5 }} />
+                                  </tr>
+                                );
+                              })()}
+                              <tr>
+                                <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, position: "sticky", top: 0, left: 0, zIndex: 6, whiteSpace: "nowrap", boxShadow: "none" }}>
+                                  <select
+                                    className="select"
+                                    value={thFilterCedula}
+                                    onChange={(e) => {
+                                      setThFilterCedula(e.target.value);
+                                      if (e.target.value) setThFilterName("");
                                     }}
+                                    disabled={!!thFilterName}
+                                    style={{ fontSize: 13, padding: "4px 6px", fontWeight: 700, color: isDarkTheme ? GRILLA.headerTextDark : GRILLA.headerTextLight }}
                                   >
-                                    <div
-                                      style={{
-                                        display: "flex",
-                                        gap: 8,
-                                        justifyContent: "center",
-                                        alignItems: "center",
-                                      }}
-                                    >
-                                      <button
-                                        className="btn"
-                                        onClick={() => handleRowAction(st)}
-                                        disabled={isBusy}
-                                        style={{
-                                          minWidth: 104,
-                                          padding: "5px 10px",
-                                          background: isEditing
-                                            ? "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)"
-                                            : "linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%)",
-                                          border: isEditing
-                                            ? "1px solid rgba(34,197,94,.8)"
-                                            : "1px solid rgba(2,132,199,.8)",
-                                          color: "#fff",
-                                          boxShadow: isEditing
-                                            ? "0 5px 14px rgba(34,197,94,.18)"
-                                            : "0 5px 14px rgba(2,132,199,.16)",
-                                          fontSize: 13,
-                                        }}
-                                      >
-                                        {isBusy
-                                          ? "Actualizando..."
-                                          : isEditing
-                                            ? "Guardar"
-                                            : "Actualizar"}
-                                      </button>
+                                    <option value="" style={{ fontWeight: 900, color: "#000" }}>Cédula</option>
+                                    {thCedulaOptions.map((o) => (
+                                      <option key={o.value} value={o.value} style={{ color: "#000" }}>{o.label}</option>
+                                    ))}
+                                  </select>
+                                </th>
+                                <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, position: "sticky", top: 0, left: STICKY_ALUMNO_LEFT, zIndex: 6, boxShadow: "none" }}>
+                                  <select
+                                    className="select"
+                                    value={thFilterName}
+                                    onChange={(e) => {
+                                      setThFilterName(e.target.value);
+                                      if (e.target.value) setThFilterCedula("");
+                                    }}
+                                    disabled={!!thFilterCedula}
+                                    style={{ fontSize: 13, padding: "4px 6px", fontWeight: 700, color: isDarkTheme ? GRILLA.headerTextDark : GRILLA.headerTextLight }}
+                                  >
+                                    <option value="" style={{ fontWeight: 900, color: "#000" }}>Alumno</option>
+                                    {thNameOptions.map((o) => (
+                                      <option key={o.value} value={o.value} style={{ color: "#000" }}>{o.label}</option>
+                                    ))}
+                                  </select>
+                                </th>
+                                {visibleEvals.map((ev) => (
+                                  <th key={ev.id} style={{ textAlign: "left", padding: "8px 10px", borderBottom: GRILLA.headerBottomBorder, fontWeight: 800, position: "sticky", top: 0, zIndex: 5, lineHeight: 1.2 }}>
+                                    {getEvaluationColumnLabel(ev, visibleEvalCountsMap)}
+                                  </th>
+                                ))}
+                                <th style={{ textAlign: "center", padding: "8px 10px", borderBottom: GRILLA.headerBottomBorder, fontWeight: 800, position: "sticky", top: 0, zIndex: 5 }} />
+                              </tr>
+                            </thead>
 
-                                      {isEditing && (
-                                        <button
-                                          type="button"
-                                          className="btnLight"
-                                          onClick={() => cancelEdit(st)}
-                                          disabled={isBusy}
-                                          style={{
-                                            minWidth: 90,
-                                            padding: "5px 10px",
-                                            background: isDarkTheme
-                                              ? "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)"
-                                              : "#ffffff",
-                                            border:
-                                              "1px solid color-mix(in srgb, var(--stroke) 100%, transparent)",
-                                            color: isDarkTheme ? "var(--text)" : "#334155",
-                                            fontSize: 13,
-                                          }}
-                                        >
-                                          Cancelar
-                                        </button>
-                                      )}
-                                    </div>
+                            <tbody>
+                              {gLoadingRoster ? (
+                                <tr>
+                                  <td colSpan={Math.max(3, visibleEvals.length + 3)} style={{ padding: 32, minHeight: 120, textAlign: "center", fontSize: 14, color: "var(--muted)", background: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)" }}>
+                                    Cargando alumnos y notas...
                                   </td>
                                 </tr>
-                              );
-                            })
-                          )}
-                        </tbody>
-                      </table>
+                              ) : flatRowsFiltered.length === 0 ? (
+                                <tr>
+                                  <td colSpan={Math.max(3, visibleEvals.length + 3)} style={{ padding: 16, color: "var(--muted)", background: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)" }}>
+                                    {allSections.length === 0
+                                      ? "No se encontraron materias para los filtros seleccionados."
+                                      : "No hay alumnos que coincidan con los filtros."}
+                                  </td>
+                                </tr>
+                              ) : (
+                                flatRowsFiltered.map((row, rowIndex) => {
+                                  const st = row.student;
+                                  const isEditing = !!editingRow[st.id];
+                                  const isBusy = !!savingOne[st.id] || savingAll;
+                                  const baseRowBg = getGrillaBaseRowBg(rowIndex, isDarkTheme);
+                                  const activeRowBg = getGrillaActiveRowBg(isDarkTheme);
+                                  const editableCellBg = getGrillaEditableCellBg(isDarkTheme);
+                                  const disabledCellBg = getGrillaDisabledCellBg(isDarkTheme);
+                                  const cellTextColor = getGrillaTextColor(isDarkTheme);
+
+                                  return (
+                                    <tr key={`${row.classId}__${st.id}`} className="table-row-hover" data-editing={isEditing ? "true" : "false"} style={{ background: isEditing ? activeRowBg : baseRowBg }}>
+                                      <td style={{ padding: "2px 10px", borderBottom: GRILLA.rowBottomBorder, background: isEditing ? activeRowBg : baseRowBg, position: "sticky", left: 0, zIndex: 3, boxShadow: "none", color: cellTextColor, whiteSpace: "nowrap", fontSize: 13 }}>
+                                        {st.cedula}
+                                      </td>
+                                      <td style={{ padding: "2px 10px", borderBottom: GRILLA.rowBottomBorder, background: isEditing ? activeRowBg : baseRowBg, position: "sticky", left: CEDULA_COL_W, zIndex: 4, boxShadow: "none", color: cellTextColor }}>
+                                        <div style={{ lineHeight: 1.15 }}>{st.name}</div>
+                                      </td>
+
+                                      {visibleEvals.map((ev) => {
+                                        const key = gradeCellKey(st.id, ev.id);
+                                        const enabledForCourse = Number(st.id_course) === Number(ev.id_course);
+                                        const editable = enabledForCourse && isEditing && !isBusy;
+                                        const gradeRecord = row.sectionGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
+                                        const attempts = gradeRecord?.attempts ?? 0;
+                                        const gradeVal = gradeRecord?.grade ?? 0;
+                                        const noPresentó = enabledForCourse && attempts === 0 && gradeVal === 0;
+
+                                        return (
+                                          <td key={ev.id} style={{ padding: 0, borderBottom: GRILLA.rowBottomBorder, background: enabledForCourse ? (isEditing ? editableCellBg : "transparent") : disabledCellBg, position: "relative" }}>
+                                            {noPresentó && !isEditing ? (
+                                              <div style={{ display: "flex", alignItems: "center", justifyContent: "left", height: 26, padding: "0 6px" }}>
+                                                <span style={{ display: "inline-block", padding: "2px 4px", borderRadius: 4, fontSize: 8, fontWeight: 700, letterSpacing: 0.3, background: isDarkTheme ? "rgba(239,68,68,0.15)" : "rgba(239,68,68,0.1)", color: isDarkTheme ? "#fca5a5" : "#dc2626", border: isDarkTheme ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(239,68,68,0.25)", whiteSpace: "nowrap" }}>
+                                                  No Presentó
+                                                </span>
+                                              </div>
+                                            ) : (
+                                              <input
+                                                className="input"
+                                                inputMode="numeric"
+                                                value={gradeDraft[key] ?? ""}
+                                                readOnly={!editable}
+                                                disabled={!enabledForCourse || isBusy}
+                                                onChange={(e) => {
+                                                  if (!editable) return;
+                                                  const v = e.target.value;
+                                                  if (v === "") return setGradeDraft((p) => ({ ...p, [key]: "" }));
+                                                  if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
+                                                  setGradeDraft((p) => ({ ...p, [key]: v }));
+                                                }}
+                                                placeholder={enabledForCourse ? "—" : "-"}
+                                                onFocus={(e) => { if (editable) { e.currentTarget.style.background = getGrillaFocusCellBg(isDarkTheme); e.currentTarget.style.boxShadow = "inset 0 0 0 1.5px #3b82f6"; } }}
+                                                onBlur={(e) => { e.currentTarget.style.background = editable ? editableCellBg : "transparent"; e.currentTarget.style.boxShadow = "none"; }}
+                                                style={{ width: "100%", minWidth: 0, height: 26, border: "none", borderRadius: 0, outline: "none", background: editable ? editableCellBg : "transparent", boxShadow: "none", padding: "0 10px", fontSize: 13, lineHeight: 1, fontWeight: editable ? 700 : 500, color: enabledForCourse ? cellTextColor : isDarkTheme ? "var(--muted)" : "#94a3b8", cursor: editable ? "text" : "default", opacity: enabledForCourse ? 1 : 0.6 }}
+                                              />
+                                            )}
+                                          </td>
+                                        );
+                                      })}
+
+                                      <td style={{ padding: "4px 8px", borderBottom: GRILLA.rowBottomBorder, background: isEditing ? activeRowBg : baseRowBg }}>
+                                        <div style={{ display: "flex", gap: 8, justifyContent: "center", alignItems: "center" }}>
+                                          <button
+                                            className="btn"
+                                            onClick={() => handleRowAction(st, row.sectionEvals)}
+                                            disabled={isBusy}
+                                            style={{ minWidth: 104, padding: "5px 10px", background: isEditing ? "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)" : "linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%)", border: isEditing ? "1px solid rgba(34,197,94,.8)" : "1px solid rgba(2,132,199,.8)", color: "#fff", boxShadow: isEditing ? "0 5px 14px rgba(34,197,94,.18)" : "0 5px 14px rgba(2,132,199,.16)", fontSize: 13 }}
+                                          >
+                                            {isBusy ? "Actualizando..." : isEditing ? "Guardar" : "Actualizar"}
+                                          </button>
+                                          {isEditing && (
+                                            <button type="button" className="btnLight" onClick={() => cancelEdit(st)} disabled={isBusy} style={{ minWidth: 90, padding: "5px 10px", background: isDarkTheme ? "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)" : "#ffffff", border: "1px solid color-mix(in srgb, var(--stroke) 100%, transparent)", color: isDarkTheme ? "var(--text)" : "#334155", fontSize: 13 }}>
+                                              Cancelar
+                                            </button>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              )}
+                            </tbody>
+                          </table>
+                        );
+                      })()}
                     </div>
                   </div>
-
-                  {gEvaluations.length > 0 && gRoster.length > 0 && (
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: 12,
-                        marginTop: 12,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <div style={{ color: "var(--muted)", fontSize: 13 }}>
-                        Total estudiantes: <b>{gRoster.length}</b> · Total evaluaciones:{" "}
-                        <b>{gEvaluations.length}</b>
-                      </div>
-
-                      <button
-                        className="btn"
-                        onClick={saveAll}
-                        disabled={savingAll}
-                        style={{
-                          width: 220,
-                          background: "linear-gradient(180deg, #16a34a 0%, #15803d 100%)",
-                          color: "#fff",
-                          border: "1px solid #15803d",
-                        }}
-                      >
-                        {savingAll ? "Actualizando..." : "Actualizar todos"}
-                      </button>
-                    </div>
-                  )}
                 </div>
               )}
             </div>

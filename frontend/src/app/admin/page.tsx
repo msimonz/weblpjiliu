@@ -123,10 +123,10 @@ const GRILLA = {
   rowHoverBgDark: "#0b2236",
 
   stripeLightEven: "#ffffff",
-  stripeLightOdd: "#f9fdfd",
+  stripeLightOdd: "#edf5fb",
 
-  stripeDarkEven: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)",
-  stripeDarkOdd: "#051422",
+  stripeDarkEven: "#051422",
+  stripeDarkOdd: "#071e30",
 
   activeRowBgLight: "color-mix(in srgb, rgb(22,163,74) 10%, #ffffff 90%)",
   activeRowBgDark: "color-mix(in srgb, rgb(22,163,74) 14%, var(--card) 86%)",
@@ -265,6 +265,7 @@ export default function AdminPage() {
   // ===== UPSERT / CAMBIO DE NOTAS =====
   const [upsertLevelFilter, setUpsertLevelFilter] = useState<number | "">("");
   const [upsertCourseFilter, setUpsertCourseFilter] = useState<number | "all">("all");
+  const [upsertModuleFilter, setUpsertModuleFilter] = useState<number | "all">("all");
   const [upsertClassFilter, setUpsertClassFilter] = useState<number | "all">("all");
 
   const [gridClassInfo, setGridClassInfo] = useState<{
@@ -556,10 +557,25 @@ export default function AdminPage() {
     return courses.filter((c) => Number(c.level) === Number(upsertLevelFilter));
   }, [courses, upsertLevelFilter]);
 
+  const upsertModulesFiltered = useMemo(() => {
+    if (upsertLevelFilter === "" || upsertLevelFilter === 0) return modules;
+    const ids = new Set(
+      classes
+        .filter((c) => Number(c.level) === Number(upsertLevelFilter))
+        .map((c) => c.id_module)
+        .filter((x): x is number => x !== null && x !== undefined && x > 0)
+    );
+    return modules.filter((m) => ids.has(m.id));
+  }, [classes, modules, upsertLevelFilter]);
+
   const upsertClassesFiltered = useMemo(() => {
     if (upsertLevelFilter === "" || upsertLevelFilter === 0) return classes;
-    return classes.filter((c) => Number(c.level) === Number(upsertLevelFilter));
-  }, [classes, upsertLevelFilter]);
+    let filtered = classes.filter((c) => Number(c.level) === Number(upsertLevelFilter));
+    if (upsertModuleFilter !== "all") {
+      filtered = filtered.filter((c) => Number(c.id_module) === Number(upsertModuleFilter));
+    }
+    return filtered;
+  }, [classes, upsertLevelFilter, upsertModuleFilter]);
 
   const selectedUpsertClass = useMemo(() => {
     if (upsertClassFilter === "all") return null;
@@ -570,8 +586,9 @@ export default function AdminPage() {
     const cedulaW = 170;
     const alumnoW = 320;
     const evalW = 120;
+    const perdidasW = 90;
     const actionW = 180;
-    return cedulaW + alumnoW + actionW + gEvaluations.length * evalW;
+    return cedulaW + alumnoW + perdidasW + actionW + gEvaluations.length * evalW;
   }, [gEvaluations.length]);
 
   // ===== EVAL_CRUD memos =====
@@ -718,6 +735,7 @@ export default function AdminPage() {
   useEffect(() => { setTblFilterGroup(""); setTblFilterName(""); }, [tblFilterModule]);
   useEffect(() => { setTblFilterName(""); }, [tblFilterGroup]);
 
+
   // EVAL_CRUD: limpiar filtros de nivel inferior al cambiar nivel
   useEffect(() => {
     setEcModuleId("");
@@ -836,9 +854,9 @@ export default function AdminPage() {
 
     if (upsertLevelFilter === "") return;
 
-    loadGradeGridWith(upsertLevelFilter, upsertCourseFilter, upsertClassFilter);
+    loadGradeGridWith(upsertLevelFilter, upsertCourseFilter, upsertModuleFilter, upsertClassFilter);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [upsertLevelFilter, upsertCourseFilter, upsertClassFilter]);
+  }, [upsertLevelFilter, upsertCourseFilter, upsertModuleFilter, upsertClassFilter]);
 
   async function createCourse() {
     if (!newCourseLevel) return showErr("Selecciona un nivel.");
@@ -1352,6 +1370,7 @@ export default function AdminPage() {
   async function loadGradeGridWith(
     level: number | "",
     courseFilter: number | "all",
+    moduleFilter: number | "all",
     classFilter: number | "all"
   ) {
     setMsg(null);
@@ -1360,6 +1379,7 @@ export default function AdminPage() {
       const params = new URLSearchParams();
       if (level !== "" && Number(level) > 0) params.set("level", String(level));
       if (courseFilter !== "all") params.set("course_id", String(courseFilter));
+      if (moduleFilter !== "all") params.set("module_id", String(moduleFilter));
       if (classFilter !== "all") params.set("class_id", String(classFilter));
 
       const res: GradeGridResponse = await apiFetch(`/api/admin/grade-grid?${params.toString()}`);
@@ -1431,12 +1451,6 @@ export default function AdminPage() {
       setGLoadingRoster(false);
     }
   }
-
-  useEffect(() => {
-    if (upsertClassFilter === "all") return;
-    loadGradeGrid();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [upsertClassFilter]);
 
   function getEvaluationColumnLabel(ev: EvalItem) {
     const typeLabel = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim();
@@ -1570,7 +1584,8 @@ export default function AdminPage() {
           (g) => g.id_student === st.id && g.id_exam === ev.id
         );
         const attempts = gradeRecord?.attempts ?? 0;
-        if (attempts === 0) {
+        const gradeVal = gradeRecord?.grade ?? 0;
+        if (attempts === 0 && gradeVal === 0) {
           row[label] = "No Presentó";
         } else {
           const key = gradeCellKey(st.id, ev.id);
@@ -1699,7 +1714,8 @@ export default function AdminPage() {
 
         .teacher-solid-table thead,
         .teacher-solid-table thead tr,
-        .teacher-solid-table thead th {
+        .teacher-solid-table thead th,
+        .teacher-solid-table thead td {
           background-color: var(--table-head-bg) !important;
           background-image: none !important;
           color: var(--table-head-text) !important;
@@ -1718,8 +1734,6 @@ export default function AdminPage() {
       `}</style>
 
       <div
-        onMouseEnter={() => setSidebarOpen(true)}
-        onMouseLeave={() => setSidebarOpen(false)}
         style={{
           position: "fixed",
           top: 0,
@@ -1730,6 +1744,7 @@ export default function AdminPage() {
         }}
       >
         <div
+          onClick={() => setSidebarOpen((v) => !v)}
           style={{
             position: "absolute",
             left: hamLeft,
@@ -1778,8 +1793,6 @@ export default function AdminPage() {
       </div>
 
       <aside
-        onMouseEnter={() => setSidebarOpen(true)}
-        onMouseLeave={() => setSidebarOpen(false)}
         style={{
           position: "fixed",
           left: 0,
@@ -2014,10 +2027,10 @@ export default function AdminPage() {
                       ) : (
                         courses
                           .filter((c) => String(c.year) === newCourseYear)
-                          .map((c) => {
+                          .map((c, idx) => {
                             const hasUsers = (c.user_count ?? 0) > 0;
                             return (
-                              <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
+                              <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)", background: getGrillaBaseRowBg(idx, isDarkThemeEnabled()) }}>
                                 <td style={{ padding: 12, textAlign: "center" }}>{levels.find((l) => l.id === Number(c.level))?.name ?? c.level}</td>
                                 <td style={{ padding: 12, textAlign: "center" }}>{c.year ?? "—"}</td>
                                 <td style={{ padding: 12, textAlign: "center", fontWeight: 500 }}>{c.name}</td>
@@ -2204,8 +2217,8 @@ export default function AdminPage() {
                         </td>
                       </tr>
                     ) : (
-                      classesFiltered.map((c) => (
-                        <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
+                      classesFiltered.map((c, idx) => (
+                        <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)", background: getGrillaBaseRowBg(idx, isDarkThemeEnabled()) }}>
                           <td style={{ padding: 12 }}>{levels.find((l) => l.id === Number(c.level))?.name ?? c.level}</td>
                           <td style={{ padding: 12 }}>{c.module_name || "—"}</td>
                           <td style={{ padding: 12 }}>{c.groups?.length ? c.groups.map((g) => g.name).join(", ") : "—"}</td>
@@ -2618,10 +2631,10 @@ export default function AdminPage() {
                           </td>
                         </tr>
                       ) : (
-                        types.map((t) => {
+                        types.map((t, idx) => {
                           const inUse = (t.eval_count ?? 0) > 0;
                           return (
-                            <tr key={t.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)" }}>
+                            <tr key={t.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)", background: getGrillaBaseRowBg(idx, isDarkThemeEnabled()) }}>
                               <td style={{ padding: "12px 12px 12px 20px", textAlign: "left", fontWeight: 500 }}>{t.type}</td>
                               <td style={{ padding: "8px 12px", textAlign: "center" }}>
                                 <button
@@ -3097,7 +3110,10 @@ export default function AdminPage() {
                     value={String(upsertLevelFilter)}
                     onChange={(e) => {
                       const v = e.target.value;
-                      setUpsertLevelFilter(v === "" ? "" : Number(v)); // 0 = Todos
+                      setUpsertLevelFilter(v === "" ? "" : Number(v));
+                      setUpsertCourseFilter("all");
+                      setUpsertModuleFilter("all");
+                      setUpsertClassFilter("all");
                     }}
                   >
                     <option value="" disabled>Seleccionar año...</option>
@@ -3116,13 +3132,43 @@ export default function AdminPage() {
                   <select
                     className="select"
                     value={upsertCourseFilter === "all" ? "all" : String(upsertCourseFilter)}
-                    onChange={(e) =>
-                      setUpsertCourseFilter(e.target.value === "all" ? "all" : Number(e.target.value))
-                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "all") {
+                        setUpsertCourseFilter("all");
+                      } else {
+                        const courseId = Number(val);
+                        setUpsertCourseFilter(courseId);
+                        const selectedCourse = courses.find((c) => c.id === courseId);
+                        if (selectedCourse) {
+                          setUpsertLevelFilter(selectedCourse.level);
+                        }
+                      }
+                      setUpsertModuleFilter("all");
+                      setUpsertClassFilter("all");
+                    }}
                   >
                     <option value="all" style={{ fontWeight: 700 }}>Todos</option>
                     {upsertCoursesFiltered.map((c) => (
                       <option key={c.id} value={String(c.id)}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Módulo */}
+                <div style={{ flex: "1 1 140px" }}>
+                  <div className="label">Módulo</div>
+                  <select
+                    className="select"
+                    value={upsertModuleFilter === "all" ? "all" : String(upsertModuleFilter)}
+                    onChange={(e) => {
+                      setUpsertModuleFilter(e.target.value === "all" ? "all" : Number(e.target.value));
+                      setUpsertClassFilter("all");
+                    }}
+                  >
+                    <option value="all" style={{ fontWeight: 700 }}>Todos</option>
+                    {upsertModulesFiltered.map((m) => (
+                      <option key={m.id} value={String(m.id)}>{m.name}</option>
                     ))}
                   </select>
                 </div>
@@ -3188,13 +3234,27 @@ export default function AdminPage() {
                     }}
                   >
                     <div style={{ fontWeight: 900 }}>
-                      {upsertClassFilter !== "all"
-                        ? `Materia: ${gridClassInfo?.name ?? selectedUpsertClass?.name ?? "—"}`
-                        : String(upsertCourseFilter) !== "all"
-                          ? `Curso: ${courses.find(c => c.id === Number(upsertCourseFilter))?.name ?? "—"} — Todas las materias`
-                          : typeof upsertLevelFilter === "number" && upsertLevelFilter !== 0
-                            ? `${levels.find(l => l.id === upsertLevelFilter)?.name ?? `Nivel ${upsertLevelFilter}`} — Todos los cursos — Todas las materias`
-                            : "Todas las notas"}
+                      {(() => {
+                        const levelLabel = typeof upsertLevelFilter === "number" && upsertLevelFilter !== 0
+                          ? (levels.find(l => l.id === upsertLevelFilter)?.name ?? `Nivel ${upsertLevelFilter}`)
+                          : upsertLevelFilter === 0 ? "Todos los años" : null;
+                        const courseLabel = upsertCourseFilter !== "all"
+                          ? (courses.find(c => c.id === Number(upsertCourseFilter))?.name ?? "—")
+                          : null;
+                        const moduleLabel = upsertModuleFilter !== "all"
+                          ? (modules.find(m => m.id === Number(upsertModuleFilter))?.name ?? "—")
+                          : null;
+                        const classLabel = upsertClassFilter !== "all"
+                          ? (gridClassInfo?.name ?? selectedUpsertClass?.name ?? "—")
+                          : null;
+                        const parts = [
+                          levelLabel,
+                          courseLabel ?? (levelLabel ? "Todos los cursos" : null),
+                          moduleLabel ?? (levelLabel ? "Todos los módulos" : null),
+                          classLabel ?? (levelLabel ? "Todas las materias" : null),
+                        ].filter(Boolean);
+                        return parts.join(" › ") || "Todas las notas";
+                      })()}
                     </div>
 
                   </div>
@@ -3232,6 +3292,7 @@ export default function AdminPage() {
                         <colgroup>
                           <col style={{ width: `${CEDULA_COL_W}px` }} />
                           <col style={{ width: `${ALUMNO_COL_W}px` }} />
+                          <col style={{ width: `90px` }} />
                           {gEvaluations.map((ev) => (
                             <col key={`${ev.id}-grade`} style={{ width: `120px` }} />
                           ))}
@@ -3250,7 +3311,7 @@ export default function AdminPage() {
                             }
                             return (
                               <tr>
-                                <td colSpan={2} style={{ borderBottom: GRILLA.headerBottomBorder, background: GRILLA.headerBgLight, position: "sticky", top: 0, left: 0, zIndex: 7 }} />
+                                <td colSpan={3} style={{ borderBottom: GRILLA.headerBottomBorder, background: GRILLA.headerBgLight, position: "sticky", top: 0, left: 0, zIndex: 7 }} />
                                 {groups.map((g) => (
                                   <td
                                     key={g.classId}
@@ -3299,11 +3360,11 @@ export default function AdminPage() {
                                 style={{
                                   fontSize: 13,
                                   padding: "4px 6px",
-                                  fontWeight: gFilterCedula !== "all" ? 600 : 400,
-                                  color: gFilterCedula !== "all" ? "var(--text)" : "var(--muted)",
+                                  fontWeight: gFilterCedula !== "all" ? 600 : 700,
+                                  color: gFilterCedula !== "all" ? "var(--text)" : isDarkTheme ? "#fff" : "#000",
                                 }}
                               >
-                                <option value="all" style={{ fontWeight: 900, color: "#000" }}>Todos</option>
+                                <option value="all" style={{ fontWeight: 700, color: "#000" }}>Cédula</option>
                                 {sortedRoster.map((st) => (
                                   <option key={st.id} value={st.cedula} style={{ color: "#000" }}>{st.cedula}</option>
                                 ))}
@@ -3333,15 +3394,31 @@ export default function AdminPage() {
                                 style={{
                                   fontSize: 13,
                                   padding: "4px 6px",
-                                  fontWeight: gFilterName !== "all" ? 600 : 400,
-                                  color: gFilterName !== "all" ? "var(--text)" : "var(--muted)",
+                                  fontWeight: gFilterName !== "all" ? 600 : 700,
+                                  color: gFilterName !== "all" ? "var(--text)" : isDarkTheme ? "#fff" : "#000",
                                 }}
                               >
-                                <option value="all" style={{ fontWeight: 900, color: "#000" }}>Todos</option>
+                                <option value="all" style={{ fontWeight: 700, color: "#000" }}>Alumno</option>
                                 {sortedRoster.map((st) => (
                                   <option key={st.id} value={st.id} style={{ color: "#000" }}>{st.name}</option>
                                 ))}
                               </select>
+                            </th>
+
+                            <th
+                              style={{
+                                textAlign: "center",
+                                padding: "8px 10px",
+                                borderBottom: GRILLA.headerBottomBorder,
+                                position: "sticky",
+                                top: upsertClassFilter === "all" ? 33 : 0,
+                                zIndex: 5,
+                                whiteSpace: "nowrap",
+                                color: "#64748b",
+                                fontWeight: 700,
+                              }}
+                            >
+                              <span style={{ color: "#64748b", fontSize: 12 }}>No Aprobadas</span>
                             </th>
 
                             {gEvaluations.map((ev) => (
@@ -3379,7 +3456,7 @@ export default function AdminPage() {
                           {gLoadingRoster ? (
                             <tr>
                               <td
-                                colSpan={Math.max(3, gEvaluations.length + 3)}
+                                colSpan={Math.max(4, gEvaluations.length + 4)}
                                 style={{
                                   padding: 32,
                                   minHeight: 120,
@@ -3395,7 +3472,7 @@ export default function AdminPage() {
                           ) : gRoster.length === 0 ? (
                             <tr>
                               <td
-                                colSpan={Math.max(3, gEvaluations.length + 3)}
+                                colSpan={Math.max(4, gEvaluations.length + 4)}
                                 style={{
                                   padding: 16,
                                   color: "var(--muted)",
@@ -3408,7 +3485,7 @@ export default function AdminPage() {
                           ) : gEvaluations.length === 0 ? (
                             <tr>
                               <td
-                                colSpan={3}
+                                colSpan={4}
                                 style={{
                                   padding: 16,
                                   color: "var(--muted)",
@@ -3472,13 +3549,39 @@ export default function AdminPage() {
                                     </div>
                                   </td>
 
+                                  {(() => {
+                                    const perdidas = gEvaluations.filter((ev) => {
+                                      if (!isEvaluationApplicableToStudent(st, ev)) return false;
+                                      const gradeRecord = gGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
+                                      const gradeVal = gradeRecord?.grade ?? 0;
+                                      return gradeVal < 70;
+                                    }).length;
+                                    return (
+                                      <td
+                                        style={{
+                                          padding: "2px 10px",
+                                          borderBottom: GRILLA.rowBottomBorder,
+                                          background: isEditing ? activeRowBg : baseRowBg,
+                                          textAlign: "center",
+                                          fontWeight: 400,
+                                          fontSize: 13,
+                                          color: perdidas > 0 ? "#f87171" : cellTextColor,
+                                          whiteSpace: "nowrap",
+                                        }}
+                                      >
+                                        {perdidas > 0 ? perdidas : ""}
+                                      </td>
+                                    );
+                                  })()}
+
                                   {gEvaluations.map((ev) => {
                                     const key = gradeCellKey(st.id, ev.id);
                                     const enabledForCourse = isEvaluationApplicableToStudent(st, ev);
                                     const editable = enabledForCourse && isEditing && !isBusy;
                                     const gradeRecord = gGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
                                     const attempts = gradeRecord?.attempts ?? 0;
-                                    const noPresentó = enabledForCourse && attempts === 0;
+                                    const gradeVal = gradeRecord?.grade ?? 0;
+                                    const noPresentó = enabledForCourse && attempts === 0 && gradeVal === 0;
 
                                     return (
                                       <td
@@ -3572,7 +3675,7 @@ export default function AdminPage() {
                                               lineHeight: 1,
                                               fontWeight: editable ? 700 : 500,
                                               color: enabledForCourse
-                                                ? cellTextColor
+                                                ? (gradeDraft[key] !== "" && gradeDraft[key] !== undefined && Number(gradeDraft[key]) < 70 ? "#dc2626" : cellTextColor)
                                                 : isDarkTheme
                                                   ? "var(--muted)"
                                                   : "#94a3b8",

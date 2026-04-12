@@ -492,6 +492,28 @@ html[data-theme="dark"] .teacher-solid-table {
   line-height: 1.15;
   font-weight: 400;
 }
+.teacher-solid-table tbody tr.table-row-hover:nth-child(odd) > td {
+  background-color: #edf5fb;
+}
+.teacher-solid-table tbody tr.table-row-hover:nth-child(even) > td {
+  background-color: #ffffff;
+}
+html.dark .teacher-solid-table tbody tr.table-row-hover:nth-child(odd) > td,
+html[data-theme="dark"] .teacher-solid-table tbody tr.table-row-hover:nth-child(odd) > td {
+  background-color: #071e30;
+}
+html.dark .teacher-solid-table tbody tr.table-row-hover:nth-child(even) > td,
+html[data-theme="dark"] .teacher-solid-table tbody tr.table-row-hover:nth-child(even) > td {
+  background-color: #051422;
+}
+@media (prefers-color-scheme: dark) {
+  .teacher-solid-table tbody tr.table-row-hover:nth-child(odd) > td {
+    background-color: #071e30;
+  }
+  .teacher-solid-table tbody tr.table-row-hover:nth-child(even) > td {
+    background-color: #051422;
+  }
+}
 .teacher-solid-table tbody tr.table-row-hover:hover > td {
   background-color: var(--table-row-hover-bg) !important;
 }
