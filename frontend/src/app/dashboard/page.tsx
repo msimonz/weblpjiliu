@@ -256,8 +256,6 @@ export default function DashboardPage() {
       }}
     >
       <div
-        onMouseEnter={() => setSidebarOpen(true)}
-        onMouseLeave={() => setSidebarOpen(false)}
         style={{
           position: "fixed",
           top: 0,
@@ -268,6 +266,7 @@ export default function DashboardPage() {
         }}
       >
         <div
+          onClick={() => setSidebarOpen((v) => !v)}
           style={{
             position: "absolute",
             left: hamLeft,
@@ -316,8 +315,6 @@ export default function DashboardPage() {
       </div>
 
       <aside
-        onMouseEnter={() => setSidebarOpen(true)}
-        onMouseLeave={() => setSidebarOpen(false)}
         style={{
           position: "fixed",
           left: 0,
