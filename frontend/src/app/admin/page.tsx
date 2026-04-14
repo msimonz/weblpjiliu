@@ -9,6 +9,7 @@ import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
 import * as XLSX from "xlsx";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
+import CrearExamen, { type CrearExamenCtx, type ExamInitialData } from "./CrearExamen";
 
 type Course = { id: number; name: string; level: number; year: string | null; user_count?: number };
 
@@ -76,7 +77,7 @@ type GridGradeRow = {
   attempts?: number | null;
 };
 
-type AssignRow = { id_class: number; class_name: string; id_teacher: string | null; id_course: number; course_name: string };
+type AssignRow = { id_class: number; class_name: string; id_teacher: string | null; id_course: number; course_name: string; id_module: number | null; module_name: string | null };
 
 type GradeGridResponse = {
   class: { id: number; name: string; level: number } | null;
@@ -236,6 +237,7 @@ export default function AdminPage() {
   const [assignGrid, setAssignGrid] = useState<AssignRow[]>([]);
   const [assignMatFilter, setAssignMatFilter] = useState<string>("ALL");
   const [assignProfFilter, setAssignProfFilter] = useState<string>("ALL");
+  const [assignModFilter, setAssignModFilter] = useState<string>("ALL");
   const [assignEdits, setAssignEdits] = useState<Record<string, string>>({}); // key: `${id_class}_${id_course}`
   const [assignLoading, setAssignLoading] = useState(false);
   const [assignSaving, setAssignSaving] = useState(false);
@@ -342,6 +344,10 @@ export default function AdminPage() {
   const [ecSavingPercent, setEcSavingPercent] = useState<Record<number, boolean>>({});
   const [ecDeleting, setEcDeleting] = useState<Record<number, boolean>>({});
   const [ecCreating, setEcCreating] = useState(false);
+  const [showCrearExamen, setShowCrearExamen]         = useState(false);
+  const [crearExamenCtx, setCrearExamenCtx]           = useState<CrearExamenCtx | null>(null);
+  const [crearExamenInitialData, setCrearExamenInitialData] = useState<ExamInitialData | null>(null);
+  const [crearExamenExamId, setCrearExamenExamId]     = useState<number | null>(null);
 
   const CEDULA_COL_W = 150;
   const ALUMNO_COL_W = 260;
@@ -433,6 +439,7 @@ export default function AdminPage() {
 
   const assignVisibleRows = useMemo(() => {
     let rows = assignGrid;
+    if (assignModFilter !== "ALL") rows = rows.filter((r) => String(r.id_module) === assignModFilter);
     if (assignMatFilter === "WITH") rows = rows.filter((r) => r.id_teacher != null);
     else if (assignMatFilter === "WITHOUT") rows = rows.filter((r) => r.id_teacher == null);
     else if (assignMatFilter !== "ALL") rows = rows.filter((r) => String(r.id_class) === assignMatFilter);
@@ -440,7 +447,7 @@ export default function AdminPage() {
     else if (assignProfFilter === "WITHOUT") rows = [];
     else if (assignProfFilter !== "ALL") rows = rows.filter((r) => r.id_teacher === assignProfFilter);
     return rows;
-  }, [assignGrid, assignMatFilter, assignProfFilter]);
+  }, [assignGrid, assignModFilter, assignMatFilter, assignProfFilter]);
 
   const assignMultiCourse = useMemo(
     () => new Set(assignGrid.map((r) => r.id_course)).size > 1,
@@ -452,9 +459,10 @@ export default function AdminPage() {
     const orphans = teachers.filter((t) => !assignedIds.has(t.id));
     const showOrphans =
       (assignProfFilter === "ALL" || assignProfFilter === "WITHOUT") &&
-      assignMatFilter === "ALL";
+      assignMatFilter === "ALL" &&
+      assignModFilter === "ALL";
     return showOrphans ? orphans : [];
-  }, [assignGrid, assignProfFilter, assignMatFilter, teachers]);
+  }, [assignGrid, assignProfFilter, assignMatFilter, assignModFilter, teachers]);
 
   const availableModulesForCreate = useMemo(() => {
     return [...modules].sort((a, b) => a.name.localeCompare(b.name, "es"));
@@ -992,6 +1000,7 @@ export default function AdminPage() {
       setAssignEdits({});
       setAssignMatFilter("ALL");
       setAssignProfFilter("ALL");
+      setAssignModFilter("ALL");
     } catch (e: any) {
       showErr(e?.message || "Error cargando asignaciones");
     } finally {
@@ -1034,6 +1043,7 @@ export default function AdminPage() {
     setAssignEdits({});
     setAssignMatFilter("ALL");
     setAssignProfFilter("ALL");
+    setAssignModFilter("ALL");
   }
 
   async function ecHandleSavePercent(evalId: number) {
@@ -1082,6 +1092,33 @@ export default function AdminPage() {
     }
   }
 
+  async function ecHandleEditExam(ev: EvalItem) {
+    try {
+      const data = await apiFetch(`/api/admin/exams/${ev.id}`);
+      const course = courses.find(c => c.id === ev.id_course);
+      const cls    = classes.find(c => c.id === ev.id_class);
+      const mod    = cls?.id_module ? modules.find(m => m.id === cls.id_module) : null;
+      const lev    = levels.find(l => l.id === ecLevel);
+      setCrearExamenCtx({
+        id_course:  ev.id_course,
+        id_class:   ev.id_class,
+        id_module:  ev.id_module ?? null,
+        id_group:   ev.id_group  ?? null,
+        title:      ev.title,
+        percent:    Number(ev.percent),
+        courseName: course ? String(course.name) : String(ev.id_course),
+        className:  cls?.name ?? ev.class?.name ?? String(ev.id_class),
+        moduleName: mod?.name ?? ev.module?.name ?? null,
+        levelName:  lev?.name ?? null,
+      });
+      setCrearExamenInitialData(data.item);
+      setCrearExamenExamId(ev.id);
+      setShowCrearExamen(true);
+    } catch (e: any) {
+      showErr(e?.message || "Error cargando examen");
+    }
+  }
+
   async function ecHandleCreate() {
     setMsg(null);
     setOkMsg(null);
@@ -1119,6 +1156,34 @@ export default function AdminPage() {
       return showErr(
         `El porcentaje total superaría 100% (existente: ${totalExisting}%, nuevo: ${percent}%). Ajusta los porcentajes existentes antes de continuar.`
       );
+    }
+
+    // ── Examen: abrir interfaz CrearExamen en lugar del flujo normal ──
+    const selectedTypeName = (!isOtherType
+      ? types.find(t => t.id === id_type)?.type
+      : type_text) || "";
+    if (selectedTypeName === "Examen") {
+      if (ecMode !== "class") return showErr("Los exámenes se crean por Materia. Selecciona el modo 'Materia'.");
+      const id_class = Number(ecClassId);
+      if (!id_class) return showErr("Selecciona una materia.");
+      const course = courses.find(c => c.id === id_course);
+      const cls    = classes.find(c => c.id === id_class);
+      const mod    = cls?.id_module ? modules.find(m => m.id === cls.id_module) : null;
+      const lev    = levels.find(l => l.id === ecLevel);
+      setCrearExamenCtx({
+        id_course,
+        id_class,
+        id_module:  cls?.id_module  ?? null,
+        id_group:   null,
+        title,
+        percent,
+        courseName: course ? String(course.name) : String(id_course),
+        className:  cls?.name ?? String(id_class),
+        moduleName: mod?.name ?? cls?.module_name ?? null,
+        levelName:  lev?.name ?? null,
+      });
+      setShowCrearExamen(true);
+      return;
     }
 
     setEcCreating(true);
@@ -2389,7 +2454,13 @@ export default function AdminPage() {
                       <select
                         className="select"
                         value={ecClassId}
-                        onChange={(e) => setEcClassId(e.target.value)}
+                        onChange={(e) => {
+                          setEcClassId(e.target.value);
+                          if (types.find(t => String(t.id) === ecType)?.type === "Examen" && e.target.value) {
+                            const cls = classes.find(c => String(c.id) === e.target.value);
+                            if (cls) setEcTitle(cls.name);
+                          }
+                        }}
                         disabled={materiaDisabled}
                       >
                         <option value="" style={{ fontWeight: 700 }}>Todos</option>
@@ -2406,6 +2477,10 @@ export default function AdminPage() {
                         onChange={(e) => {
                           setEcType(e.target.value);
                           if (e.target.value !== "__other__") setEcTypeOther("");
+                          if (types.find(t => String(t.id) === e.target.value)?.type === "Examen" && ecClassId) {
+                            const cls = classes.find(c => String(c.id) === ecClassId);
+                            if (cls) setEcTitle(cls.name);
+                          }
                         }}
                         disabled={!ecLevel}
                       >
@@ -2534,23 +2609,35 @@ export default function AdminPage() {
                             min={1}
                             max={100}
                             className="input"
-                            style={{ textAlign: "center", padding: "4px 6px", fontSize: 13 }}
+                            style={{ textAlign: "center", padding: "4px 6px", fontSize: 13, opacity: ev.evaluation_type?.type === "Examen" ? 0.5 : 1 }}
                             value={ecEditPercents[ev.id] ?? String(ev.percent)}
+                            disabled={ev.evaluation_type?.type === "Examen"}
                             onChange={(e) =>
                               setEcEditPercents((p) => ({ ...p, [ev.id]: e.target.value }))
                             }
                           />
                         </div>
                         <div style={{ textAlign: "center" }}>
-                          <button
-                            type="button"
-                            className="btnLight"
-                            style={{ fontSize: 12, padding: "8px 14px", borderRadius: 8 }}
-                            disabled={ecSavingPercent[ev.id]}
-                            onClick={() => ecHandleSavePercent(ev.id)}
-                          >
-                            {ecSavingPercent[ev.id] ? "..." : "Guardar"}
-                          </button>
+                          {ev.evaluation_type?.type === "Examen" ? (
+                            <button
+                              type="button"
+                              className="btnLight"
+                              style={{ fontSize: 12, padding: "8px 14px", borderRadius: 8, width: "100%", background: "#1d4ed8", color: "#fff", borderColor: "#1d4ed8" }}
+                              onClick={() => ecHandleEditExam(ev)}
+                            >
+                              Editar
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btnLight"
+                              style={{ fontSize: 12, padding: "8px 14px", borderRadius: 8, width: "100%" }}
+                              disabled={ecSavingPercent[ev.id]}
+                              onClick={() => ecHandleSavePercent(ev.id)}
+                            >
+                              {ecSavingPercent[ev.id] ? "..." : "Guardar"}
+                            </button>
+                          )}
                         </div>
                         <div style={{ textAlign: "center", paddingLeft: 6 }}>
                           <button
@@ -3768,6 +3855,36 @@ export default function AdminPage() {
           )}
         </div>
       </main>
+
+      {/* Overlay Crear Examen */}
+      {showCrearExamen && crearExamenCtx && (
+        <CrearExamen
+          ctx={crearExamenCtx}
+          examId={crearExamenExamId ?? undefined}
+          initialData={crearExamenInitialData ?? undefined}
+          onSaved={() => {
+            const wasEditing = crearExamenExamId !== null;
+            setShowCrearExamen(false);
+            setCrearExamenCtx(null);
+            setCrearExamenInitialData(null);
+            setCrearExamenExamId(null);
+            if (!wasEditing) { setEcTitle(""); setEcPercent(30); setEcType(""); setEcTypeOther(""); }
+            showOk(wasEditing ? "✅ Examen actualizado correctamente" : "✅ Examen creado correctamente");
+            const reloadParams = new URLSearchParams();
+            if (ecLevel > 0) reloadParams.set("level", String(ecLevel));
+            if (ecCourseId)  reloadParams.set("course_id", ecCourseId);
+            apiFetch(`/api/admin/evaluations?${reloadParams.toString()}`)
+              .then((r: any) => setEcExisting(r?.items || []))
+              .catch(() => {});
+          }}
+          onCancel={() => {
+            setShowCrearExamen(false);
+            setCrearExamenCtx(null);
+            setCrearExamenInitialData(null);
+            setCrearExamenExamId(null);
+          }}
+        />
+      )}
 
       <Footer  />
     </div>

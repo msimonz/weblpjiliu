@@ -148,7 +148,8 @@ Ten encuenta los modos ligth y dark
 
      
 
- 
+ADmin > Asignar Materias a un profesor, label "Año" cambiar "Nivel". Adicionar izquierda columna "Modulo". Ttem "Todos" cambiar texto por nombre columna o dropdown. Encabezados de tabla en negrilla.
+Siempre tener en cuenta modos Dark y ligth 
 
 
 

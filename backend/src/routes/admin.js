@@ -1924,7 +1924,7 @@ adminRouter.get("/assignment-grid", requireAuth, requireAdmin, async (req, res) 
 
     // 2) Determine classes scope (union of all levels from selected courses)
     const levelSet = [...new Set(coursesList.map((c) => c.level))];
-    let classQuery = supabaseAdmin.from("class").select("id,name,level").order("name");
+    let classQuery = supabaseAdmin.from("class").select("id,name,level,id_module").order("name");
     if (levelSet.length === 1) classQuery = classQuery.eq("level", levelSet[0]);
     else classQuery = classQuery.in("level", levelSet);
 
@@ -1939,11 +1939,19 @@ adminRouter.get("/assignment-grid", requireAuth, requireAdmin, async (req, res) 
     if (clsErr) return res.status(500).json({ error: clsErr.message });
     if (ctErr)  return res.status(500).json({ error: ctErr.message });
 
-    // 3) Build key map: "id_class_id_course" -> id_teacher
+    // 3) Build module map
+    const moduleIds = [...new Set((classData || []).map((c) => c.id_module).filter(Boolean))];
+    const moduleMap = new Map();
+    if (moduleIds.length > 0) {
+      const { data: modData } = await supabaseAdmin.from("module").select("id,name").in("id", moduleIds);
+      for (const m of modData || []) moduleMap.set(m.id, m.name);
+    }
+
+    // 4) Build key map: "id_class_id_course" -> id_teacher
     const ctMap = new Map();
     for (const r of ctData || []) ctMap.set(`${r.id_class}_${r.id_course}`, r.id_teacher);
 
-    // 4) One row per (course × class) with matching level
+    // 5) One row per (course × class) with matching level
     const rows = [];
     for (const course of coursesList) {
       for (const cls of classData || []) {
@@ -1954,6 +1962,8 @@ adminRouter.get("/assignment-grid", requireAuth, requireAdmin, async (req, res) 
           id_teacher:  ctMap.get(`${cls.id}_${course.id}`) ?? null,
           id_course:   course.id,
           course_name: course.name,
+          id_module:   cls.id_module ?? null,
+          module_name: cls.id_module ? (moduleMap.get(cls.id_module) ?? null) : null,
         });
       }
     }
@@ -2008,5 +2018,489 @@ adminRouter.post("/save-assignment-grid", requireAuth, requireAdmin, async (req,
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error guardando asignaciones" });
+  }
+});
+
+// ============================================================================
+// TAREA 6 — POST /api/admin/exams
+// Crea examen maestro en evaluation + preguntas en examen_detalle
+// ============================================================================
+adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id_course      = toInt(req.body?.id_course);
+    const id_class       = toInt(req.body?.id_class);
+    const title          = cleanStr(req.body?.title);
+    const percent        = Number(req.body?.percent);
+    const tiempo_minutos = toInt(req.body?.tiempo_minutos);
+    const preguntas      = req.body?.preguntas;
+
+    if (!id_course) return res.status(400).json({ error: "id_course requerido" });
+    if (!id_class)  return res.status(400).json({ error: "id_class requerido" });
+    if (!title)     return res.status(400).json({ error: "title requerido" });
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100)
+      return res.status(400).json({ error: "percent inválido (1..100)" });
+    if (!tiempo_minutos || tiempo_minutos < 1)
+      return res.status(400).json({ error: "tiempo_minutos requerido (mínimo 1)" });
+    if (!Array.isArray(preguntas))
+      return res.status(400).json({ error: "preguntas debe ser un array" });
+
+    // Validar rango de preguntas
+    if (preguntas.length < 4 || preguntas.length > 20)
+      return res.status(400).json({ error: "El examen debe tener entre 4 y 20 preguntas" });
+
+    // Validar tipos permitidos
+    const TIPOS_VALIDOS = ["multiple_multi", "multiple_single", "falso_verdadero", "emparejamiento"];
+    for (let i = 0; i < preguntas.length; i++) {
+      const p = preguntas[i];
+      if (!TIPOS_VALIDOS.includes(p?.tipo))
+        return res.status(400).json({ error: `Pregunta ${i + 1}: tipo inválido ('${p?.tipo}')` });
+      if (!cleanStr(p?.enunciado))
+        return res.status(400).json({ error: `Pregunta ${i + 1}: enunciado requerido` });
+      const pts = Number(p?.puntos);
+      if (!Number.isFinite(pts) || pts <= 0)
+        return res.status(400).json({ error: `Pregunta ${i + 1}: puntos inválidos` });
+      if (!p?.opciones)
+        return res.status(400).json({ error: `Pregunta ${i + 1}: opciones requeridas` });
+      if (!p?.respuesta_correcta)
+        return res.status(400).json({ error: `Pregunta ${i + 1}: respuesta_correcta requerida` });
+
+      // Verificar que respuesta_correcta no esté vacía
+      const rc = p.respuesta_correcta;
+      const rcVacia =
+        (Array.isArray(rc) && rc.length === 0) ||
+        (typeof rc === "object" && !Array.isArray(rc) && Object.keys(rc).length === 0);
+      if (rcVacia)
+        return res.status(400).json({ error: `Pregunta ${i + 1}: debe tener al menos una respuesta correcta` });
+    }
+
+    // Validar suma de puntos = 100
+    const sumaPuntos = preguntas.reduce((acc, p) => acc + Number(p.puntos), 0);
+    if (Math.abs(sumaPuntos - 100) > 0.01)
+      return res.status(400).json({ error: `La suma de puntos debe ser 100 (actual: ${sumaPuntos})` });
+
+    // Verificar que la materia exista
+    const { data: cls, error: clsErr } = await supabaseAdmin
+      .from("class")
+      .select("id,name,level,id_module,id_group")
+      .eq("id", id_class)
+      .maybeSingle();
+    if (clsErr) return res.status(500).json({ error: clsErr.message });
+    if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
+
+    // Verificar que el curso exista y coincida con el nivel de la materia
+    const { data: course, error: cErr } = await supabaseAdmin
+      .from("course")
+      .select("id,name,level,year")
+      .eq("id", id_course)
+      .maybeSingle();
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
+    if (Number(course.level) !== Number(cls.level))
+      return res.status(400).json({ error: "El curso no corresponde al nivel de la materia" });
+
+    // Resolver id del tipo 'Examen'
+    const examenTypeId = await resolveEvaluationTypeId(null, "Examen");
+
+    // Insertar registro maestro en evaluation
+    const { data: evalData, error: evalErr } = await supabaseAdmin
+      .from("evaluation")
+      .insert({
+        id_course,
+        id_class,
+        id_teacher: req.auth.user.id,
+        id_type: examenTypeId,
+        percent,
+        title,
+        id_module: cls.id_module || null,
+        id_group:  cls.id_group  || null,
+        tiempo_minutos,
+      })
+      .select("id,title,percent,tiempo_minutos,created_at")
+      .maybeSingle();
+
+    if (evalErr) return res.status(500).json({ error: evalErr.message });
+
+    // Insertar preguntas en examen_detalle
+    const detalleRows = preguntas.map((p, idx) => ({
+      id_evaluation:     evalData.id,
+      orden:             idx + 1,
+      tipo:              p.tipo,
+      enunciado:         cleanStr(p.enunciado),
+      puntos:            Number(p.puntos),
+      opciones:          p.opciones,
+      respuesta_correcta: p.respuesta_correcta,
+    }));
+
+    const { error: detErr } = await supabaseAdmin
+      .from("examen_detalle")
+      .insert(detalleRows);
+
+    if (detErr) {
+      // Rollback: eliminar el evaluation recién creado
+      await supabaseAdmin.from("evaluation").delete().eq("id", evalData.id);
+      return res.status(500).json({ error: `Error guardando preguntas: ${detErr.message}` });
+    }
+
+    return res.status(201).json({ ok: true, item: evalData });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error creando examen" });
+  }
+});
+
+// ============================================================================
+// TAREA 7 — GET /api/admin/exams
+// Lista evaluaciones de tipo Examen con sus preguntas
+// Query params opcionales: id_course, id_class, id_module, id_group
+// ============================================================================
+adminRouter.get("/exams", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    // Resolver id del tipo 'Examen'
+    const examenTypeId = await resolveEvaluationTypeId(null, "Examen");
+
+    let q = supabaseAdmin
+      .from("evaluation")
+      .select(`
+        id, title, percent, tiempo_minutos, created_at,
+        id_course, id_class, id_module, id_group,
+        course:course(id,name,year,level),
+        class:class(id,name,level,id_module),
+        module:module(id,name),
+        group:group(id,name)
+      `)
+      .eq("id_type", examenTypeId)
+      .order("created_at", { ascending: false });
+
+    if (req.query.id_course) q = q.eq("id_course", toInt(req.query.id_course));
+    if (req.query.id_class)  q = q.eq("id_class",  toInt(req.query.id_class));
+    if (req.query.id_module) q = q.eq("id_module", toInt(req.query.id_module));
+    if (req.query.id_group)  q = q.eq("id_group",  toInt(req.query.id_group));
+
+    const { data: evals, error: evErr } = await q;
+    if (evErr) return res.status(500).json({ error: evErr.message });
+
+    if (!evals?.length) return res.json({ items: [] });
+
+    // Traer preguntas (sin respuesta_correcta para listado — solo metadatos)
+    const evalIds = evals.map((e) => e.id);
+    const { data: detalle, error: detErr } = await supabaseAdmin
+      .from("examen_detalle")
+      .select("id, id_evaluation, orden, tipo, enunciado, puntos, opciones, respuesta_correcta")
+      .in("id_evaluation", evalIds)
+      .order("id_evaluation")
+      .order("orden");
+
+    if (detErr) return res.status(500).json({ error: detErr.message });
+
+    const detalleMap = new Map();
+    for (const d of detalle || []) {
+      if (!detalleMap.has(d.id_evaluation)) detalleMap.set(d.id_evaluation, []);
+      detalleMap.get(d.id_evaluation).push(d);
+    }
+
+    const items = evals.map((e) => ({
+      ...e,
+      preguntas: detalleMap.get(e.id) || [],
+    }));
+
+    return res.json({ items });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error listando exámenes" });
+  }
+});
+
+// ============================================================================
+// TAREA 8 — DELETE /api/admin/exams/:id
+// Elimina examen maestro (cascade elimina examen_detalle y examen_programacion)
+// ============================================================================
+adminRouter.delete("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ error: "ID inválido" });
+
+    // Verificar que sea tipo Examen
+    const examenTypeId = await resolveEvaluationTypeId(null, "Examen");
+    const { data: ev, error: evErr } = await supabaseAdmin
+      .from("evaluation")
+      .select("id, id_type")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (evErr) return res.status(500).json({ error: evErr.message });
+    if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
+    if (ev.id_type !== examenTypeId)
+      return res.status(400).json({ error: "Esta evaluación no es de tipo Examen" });
+
+    const { error } = await supabaseAdmin.from("evaluation").delete().eq("id", id);
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error eliminando examen" });
+  }
+});
+
+// ============================================================================
+// GET /api/admin/exams/:id
+// Devuelve un examen con sus preguntas (incluye respuesta_correcta)
+// ============================================================================
+adminRouter.get("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ error: "ID inválido" });
+
+    const examenTypeId = await resolveEvaluationTypeId(null, "Examen");
+    const { data: ev, error: evErr } = await supabaseAdmin
+      .from("evaluation")
+      .select(`
+        id, title, percent, tiempo_minutos, created_at,
+        id_course, id_class, id_module, id_group,
+        course:course(id,name,year,level),
+        class:class(id,name,level),
+        module:module(id,name),
+        group:group(id,name)
+      `)
+      .eq("id", id)
+      .eq("id_type", examenTypeId)
+      .maybeSingle();
+
+    if (evErr) return res.status(500).json({ error: evErr.message });
+    if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
+
+    const { data: preguntas, error: detErr } = await supabaseAdmin
+      .from("examen_detalle")
+      .select("id, orden, tipo, enunciado, puntos, opciones, respuesta_correcta")
+      .eq("id_evaluation", id)
+      .order("orden");
+
+    if (detErr) return res.status(500).json({ error: detErr.message });
+
+    return res.json({ item: { ...ev, preguntas: preguntas || [] } });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error cargando examen" });
+  }
+});
+
+// ============================================================================
+// PUT /api/admin/exams/:id
+// Reemplaza tiempo_minutos y preguntas de un examen existente
+// ============================================================================
+adminRouter.put("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ error: "ID inválido" });
+
+    const tiempo_minutos = toInt(req.body?.tiempo_minutos);
+    const percent        = Number(req.body?.percent);
+    const preguntas      = req.body?.preguntas;
+
+    if (!tiempo_minutos || tiempo_minutos < 1)
+      return res.status(400).json({ error: "tiempo_minutos requerido (mínimo 1)" });
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100)
+      return res.status(400).json({ error: "percent inválido (1..100)" });
+    if (!Array.isArray(preguntas))
+      return res.status(400).json({ error: "preguntas debe ser un array" });
+    if (preguntas.length < 4 || preguntas.length > 20)
+      return res.status(400).json({ error: "El examen debe tener entre 4 y 20 preguntas" });
+
+    const TIPOS_VALIDOS = ["multiple_multi", "multiple_single", "falso_verdadero", "emparejamiento"];
+    for (let i = 0; i < preguntas.length; i++) {
+      const p = preguntas[i];
+      if (!TIPOS_VALIDOS.includes(p?.tipo))
+        return res.status(400).json({ error: `Pregunta ${i + 1}: tipo inválido` });
+      if (!cleanStr(p?.enunciado))
+        return res.status(400).json({ error: `Pregunta ${i + 1}: enunciado requerido` });
+      const pts = Number(p?.puntos);
+      if (!Number.isFinite(pts) || pts <= 0)
+        return res.status(400).json({ error: `Pregunta ${i + 1}: puntos inválidos` });
+      if (!p?.opciones)
+        return res.status(400).json({ error: `Pregunta ${i + 1}: opciones requeridas` });
+      if (!p?.respuesta_correcta)
+        return res.status(400).json({ error: `Pregunta ${i + 1}: respuesta_correcta requerida` });
+      const rc = p.respuesta_correcta;
+      const rcVacia =
+        (Array.isArray(rc) && rc.length === 0) ||
+        (typeof rc === "object" && !Array.isArray(rc) && Object.keys(rc).length === 0);
+      if (rcVacia)
+        return res.status(400).json({ error: `Pregunta ${i + 1}: debe tener al menos una respuesta correcta` });
+    }
+
+    const sumaPuntos = preguntas.reduce((acc, p) => acc + Number(p.puntos), 0);
+    if (Math.abs(sumaPuntos - 100) > 0.01)
+      return res.status(400).json({ error: `La suma de puntos debe ser 100 (actual: ${sumaPuntos})` });
+
+    // Verificar que sea tipo Examen
+    const examenTypeId = await resolveEvaluationTypeId(null, "Examen");
+    const { data: ev, error: evErr } = await supabaseAdmin
+      .from("evaluation")
+      .select("id, id_type")
+      .eq("id", id)
+      .maybeSingle();
+    if (evErr) return res.status(500).json({ error: evErr.message });
+    if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
+    if (ev.id_type !== examenTypeId)
+      return res.status(400).json({ error: "Esta evaluación no es de tipo Examen" });
+
+    // Actualizar tiempo_minutos y percent en evaluation
+    const { error: updErr } = await supabaseAdmin
+      .from("evaluation")
+      .update({ tiempo_minutos, percent })
+      .eq("id", id);
+    if (updErr) return res.status(500).json({ error: updErr.message });
+
+    // Reemplazar preguntas: delete + insert
+    const { error: delErr } = await supabaseAdmin
+      .from("examen_detalle")
+      .delete()
+      .eq("id_evaluation", id);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+
+    const detalleRows = preguntas.map((p, idx) => ({
+      id_evaluation:      id,
+      orden:              idx + 1,
+      tipo:               p.tipo,
+      enunciado:          cleanStr(p.enunciado),
+      puntos:             Number(p.puntos),
+      opciones:           p.opciones,
+      respuesta_correcta: p.respuesta_correcta,
+    }));
+
+    const { error: insErr } = await supabaseAdmin
+      .from("examen_detalle")
+      .insert(detalleRows);
+    if (insErr) return res.status(500).json({ error: `Error actualizando preguntas: ${insErr.message}` });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error actualizando examen" });
+  }
+});
+
+// ============================================================================
+// TAREA 9 — GET /api/admin/exam-schedules
+// Lista todas las programaciones con joins a evaluation y course
+// ============================================================================
+adminRouter.get("/exam-schedules", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    let q = supabaseAdmin
+      .from("examen_programacion")
+      .select(`
+        id, year, fecha_ini, fecha_fin, habilitado, created_at,
+        id_evaluation, id_course,
+        evaluation:evaluation(
+          id, title, percent, tiempo_minutos,
+          id_module, id_group, id_class,
+          module:module(id,name),
+          group:group(id,name),
+          class:class(id,name)
+        ),
+        course:course(id,name,year,level)
+      `)
+      .order("created_at", { ascending: false });
+
+    if (req.query.id_evaluation) q = q.eq("id_evaluation", toInt(req.query.id_evaluation));
+    if (req.query.id_course)     q = q.eq("id_course",     toInt(req.query.id_course));
+    if (req.query.habilitado !== undefined)
+      q = q.eq("habilitado", req.query.habilitado === "true");
+
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.json({ items: data || [] });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error listando programaciones" });
+  }
+});
+
+// ============================================================================
+// TAREA 10 — POST /api/admin/exam-schedules
+// Crea una nueva programación (habilita examen para curso + año + fechas)
+// ============================================================================
+adminRouter.post("/exam-schedules", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id_evaluation = toInt(req.body?.id_evaluation);
+    const id_course     = toInt(req.body?.id_course);
+    const year          = toInt(req.body?.year);
+    const fecha_ini     = req.body?.fecha_ini || null;
+    const fecha_fin     = req.body?.fecha_fin || null;
+    const habilitado    = Boolean(req.body?.habilitado ?? false);
+
+    if (!id_evaluation) return res.status(400).json({ error: "id_evaluation requerido" });
+    if (!id_course)     return res.status(400).json({ error: "id_course requerido" });
+    if (!year)          return res.status(400).json({ error: "year requerido" });
+
+    // Verificar que el examen exista y sea de tipo Examen
+    const examenTypeId = await resolveEvaluationTypeId(null, "Examen");
+    const { data: ev, error: evErr } = await supabaseAdmin
+      .from("evaluation")
+      .select("id, id_type")
+      .eq("id", id_evaluation)
+      .maybeSingle();
+
+    if (evErr) return res.status(500).json({ error: evErr.message });
+    if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
+    if (ev.id_type !== examenTypeId)
+      return res.status(400).json({ error: "La evaluación no es de tipo Examen" });
+
+    // Verificar que el curso exista
+    const { data: course, error: cErr } = await supabaseAdmin
+      .from("course")
+      .select("id")
+      .eq("id", id_course)
+      .maybeSingle();
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
+
+    const { data, error } = await supabaseAdmin
+      .from("examen_programacion")
+      .insert({ id_evaluation, id_course, year, fecha_ini, fecha_fin, habilitado })
+      .select("id, id_evaluation, id_course, year, fecha_ini, fecha_fin, habilitado, created_at")
+      .maybeSingle();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.status(201).json({ ok: true, item: data });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error creando programación" });
+  }
+});
+
+// ============================================================================
+// TAREA 11 — PATCH /api/admin/exam-schedules/:id
+// Actualiza fecha_ini, fecha_fin y/o habilitado de una programación
+// ============================================================================
+adminRouter.patch("/exam-schedules/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ error: "ID inválido" });
+
+    const { data: prog, error: pErr } = await supabaseAdmin
+      .from("examen_programacion")
+      .select("id")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (pErr) return res.status(500).json({ error: pErr.message });
+    if (!prog?.id) return res.status(404).json({ error: "Programación no existe" });
+
+    const payload = {};
+    if (req.body?.fecha_ini !== undefined) payload.fecha_ini = req.body.fecha_ini || null;
+    if (req.body?.fecha_fin !== undefined) payload.fecha_fin = req.body.fecha_fin || null;
+    if (req.body?.habilitado !== undefined) payload.habilitado = Boolean(req.body.habilitado);
+
+    if (Object.keys(payload).length === 0)
+      return res.status(400).json({ error: "No hay campos para actualizar" });
+
+    const { data, error } = await supabaseAdmin
+      .from("examen_programacion")
+      .update(payload)
+      .eq("id", id)
+      .select("id, id_evaluation, id_course, year, fecha_ini, fecha_fin, habilitado")
+      .maybeSingle();
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.json({ ok: true, item: data });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error actualizando programación" });
   }
 });
