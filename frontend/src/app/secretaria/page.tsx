@@ -84,6 +84,7 @@ export default function SecretariaPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [me,          setMe]          = useState<any>(null);
   const [meLoading,   setMeLoading]   = useState(true);
+  const [logoUrl,     setLogoUrl]     = useState<string>("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [msg,         setMsg]         = useState<string | null>(null);
 
@@ -117,6 +118,11 @@ export default function SecretariaPage() {
   const [gGrades,        setGGrades]        = useState<GradeRow[]>([]);
   const [gradeDraft,     setGradeDraft]     = useState<Record<string, string>>({});
   const [gridClassInfo,  setGridClassInfo]  = useState<GridClassInfo>(null);
+
+  useEffect(() => {
+    const { data } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
+    setLogoUrl(data.publicUrl);
+  }, []);
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -486,8 +492,19 @@ export default function SecretariaPage() {
           {/* Topbar */}
           <div className="topbar dashboard-topbar" style={{ alignItems: "center" }}>
             <div className="brand">
-              <div style={{ fontSize: 18 }}>SOFIA · La Promesa</div>
-              <div style={{ color: "var(--muted)" }}>Secretaría</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {logoUrl && (
+                  <img
+                    src={logoUrl}
+                    alt="logo"
+                    style={{ width: 34, height: 34, objectFit: "contain", borderRadius: 999 }}
+                  />
+                )}
+                <div>
+                  <div style={{ fontSize: 18 }}>SOFIA · La Promesa</div>
+                  <div style={{ color: "var(--muted)" }}>Secretaría</div>
+                </div>
+              </div>
             </div>
             <div className="topbarUserText">
               Secretaría · {me?.profile?.name ?? me?.user?.user_metadata?.full_name ?? me?.user?.email ?? "—"}

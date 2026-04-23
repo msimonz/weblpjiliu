@@ -208,6 +208,7 @@ export default function TeacherPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [me, setMe] = useState<any>(null);
   const [loadingMe, setLoadingMe] = useState(true);
+  const [logoUrl, setLogoUrl] = useState<string>("");
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [view, setView] = useState<TeacherView>("");
@@ -382,6 +383,11 @@ export default function TeacherPage() {
     if (msgTimer.current) window.clearTimeout(msgTimer.current);
     msgTimer.current = window.setTimeout(() => setMsg(null), 3000);
   }
+
+  useEffect(() => {
+    const { data } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
+    setLogoUrl(data.publicUrl);
+  }, []);
 
   // auth guard
   useEffect(() => {
@@ -1353,14 +1359,26 @@ export default function TeacherPage() {
       return;
     }
 
+    // Only save evaluations that have a value entered — skip empty cells
+    const evalsToSave = applicableEvals.filter((ev) => {
+      const key = gradeCellKey(student.id, ev.id);
+      return (gradeDraft[key] ?? "").trim() !== "";
+    });
+
+    if (evalsToSave.length === 0) {
+      setMsg(`No hay notas ingresadas para ${student.name}`);
+      flash("❌ No hay notas para guardar", "err");
+      return;
+    }
+
     setSavingOne((prev) => ({ ...prev, [student.id]: true }));
     setMsg(null);
 
     try {
-      for (const ev of applicableEvals) {
+      for (const ev of evalsToSave) {
         const key = gradeCellKey(student.id, ev.id);
         const draft = (gradeDraft[key] ?? "").trim();
-        const grade = draft === "" ? NaN : Number(draft);
+        const grade = Number(draft);
 
         if (!Number.isFinite(grade) || grade < 0 || grade > 100) {
           throw new Error(
@@ -1370,13 +1388,14 @@ export default function TeacherPage() {
       }
 
       await Promise.all(
-        applicableEvals.map((ev) => {
+        evalsToSave.map((ev) => {
           const key = gradeCellKey(student.id, ev.id);
           return apiFetch("/api/teacher/grades", {
             method: "POST",
             body: JSON.stringify({
               exam_id: ev.id,
               student_cedula: student.cedula,
+              student_id: student.id,
               grade: Number(gradeDraft[key]),
             }),
           });
@@ -1386,7 +1405,7 @@ export default function TeacherPage() {
       // Patch allSections in-place so noPresentó updates immediately without a reload
       setAllSections((prev) => prev.map((section) => {
         const sectionEvalIds = new Set((section.evaluations || []).map((e) => e.id));
-        const applicableHere = applicableEvals.filter((ev) => sectionEvalIds.has(ev.id));
+        const applicableHere = evalsToSave.filter((ev) => sectionEvalIds.has(ev.id));
         if (applicableHere.length === 0) return section;
         const patchedGrades = [...(section.grades || [])];
         for (const ev of applicableHere) {
@@ -1428,7 +1447,7 @@ export default function TeacherPage() {
     setMsg(null);
 
     try {
-      const payloads: Array<{ exam_id: number; student_cedula: string; grade: number }> = [];
+      const payloads: Array<{ exam_id: number; student_cedula: string | null; student_id: string; grade: number }> = [];
 
       for (const section of allSections) {
         for (const st of section.students || []) {
@@ -1448,6 +1467,7 @@ export default function TeacherPage() {
             payloads.push({
               exam_id: ev.id,
               student_cedula: st.cedula,
+              student_id: st.id,
               grade: n,
             });
           }
@@ -1696,8 +1716,19 @@ export default function TeacherPage() {
         <div className="container">
           <div className="topbar" style={{ alignItems: "center" }}>
             <div className="brand">
-              <div style={{ fontWeight: 900, fontSize: 18 }}>SOFIA · La Promesa</div>
-              <div style={{ color: "var(--muted)" }}>Panel Profesor</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {logoUrl && (
+                  <img
+                    src={logoUrl}
+                    alt="logo"
+                    style={{ width: 34, height: 34, objectFit: "contain", borderRadius: 999 }}
+                  />
+                )}
+                <div>
+                  <div style={{ fontWeight: 900, fontSize: 18 }}>SOFIA · La Promesa</div>
+                  <div style={{ color: "var(--muted)" }}>Panel Profesor</div>
+                </div>
+              </div>
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>

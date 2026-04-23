@@ -660,13 +660,14 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
  */
 teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
   const teacherId = req.auth.user.id;
-  const { exam_id, student_cedula, grade } = req.body || {};
+  const { exam_id, student_cedula, student_id, grade } = req.body || {};
 
   const examId = Number(exam_id);
   if (!examId) return res.status(400).json({ error: "exam_id requerido" });
 
   const ced = String(student_cedula || "").trim();
-  if (!ced) return res.status(400).json({ error: "student_cedula requerida" });
+  const stId = String(student_id || "").trim();
+  if (!ced && !stId) return res.status(400).json({ error: "student_cedula o student_id requerido" });
 
   const g = Number(grade);
   if (!Number.isFinite(g) || g < 0 || g > 100) {
@@ -685,14 +686,16 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
     return res.status(403).json({ error: "No es tu evaluación" });
   }
 
-  const { data: st, error: stErr } = await supabaseAdmin
-    .from("users")
-    .select("id,cedula,name,email,id_course")
-    .eq("cedula", ced)
-    .maybeSingle();
+  let stQuery = supabaseAdmin.from("users").select("id,cedula,name,email,id_course");
+  if (ced) {
+    stQuery = stQuery.eq("cedula", ced);
+  } else {
+    stQuery = stQuery.eq("id", stId);
+  }
+  const { data: st, error: stErr } = await stQuery.maybeSingle();
 
   if (stErr) return res.status(500).json({ error: stErr.message });
-  if (!st?.id) return res.status(404).json({ error: "No existe estudiante con esa cédula" });
+  if (!st?.id) return res.status(404).json({ error: ced ? "No existe estudiante con esa cédula" : "No existe estudiante con ese id" });
 
   if (Number(st.id_course) !== Number(ev.id_course)) {
     return res.status(400).json({ error: "El estudiante no pertenece al curso de esta evaluación" });

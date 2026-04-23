@@ -202,6 +202,7 @@ export default function AdminPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [me, setMe] = useState<any>(null);
   const [loadingMe, setLoadingMe] = useState(true);
+  const [logoUrl, setLogoUrl] = useState<string>("");
 
   const [msg, setMsg] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
@@ -396,6 +397,11 @@ export default function AdminPage() {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 1600);
   }
+
+  useEffect(() => {
+    const { data } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
+    setLogoUrl(data.publicUrl);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -2005,8 +2011,19 @@ export default function AdminPage() {
             }}
           >
             <div className="brand">
-              <div style={{ fontSize: 18 }}>SOFIA · La Promesa</div>
-              <div style={{ color: "var(--muted)" }}>Panel Admin</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {logoUrl && (
+                  <img
+                    src={logoUrl}
+                    alt="logo"
+                    style={{ width: 34, height: 34, objectFit: "contain", borderRadius: 999 }}
+                  />
+                )}
+                <div>
+                  <div style={{ fontSize: 18 }}>SOFIA · La Promesa</div>
+                  <div style={{ color: "var(--muted)" }}>Panel Admin</div>
+                </div>
+              </div>
             </div>
 
             {/* <div className="topbarUserText">Estudiante · {me?.user?.email}</div> */}

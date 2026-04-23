@@ -62,7 +62,7 @@ export default function Header({
           />
 
           <div style={{ fontWeight: 950, fontSize: 18, letterSpacing: "-0.01em" }}>
-            {titleRight ?? "SOFIA"}
+            {titleRight ?? "SOFIA · La Promesa"}
           </div>
         </div>
 

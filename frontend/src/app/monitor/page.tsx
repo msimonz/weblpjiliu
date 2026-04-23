@@ -18,6 +18,12 @@ export default function MonitorPage() {
   const [meLoading, setMeLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [view, setView]       = useState<MonitorView>("");
+  const [logoUrl, setLogoUrl] = useState<string>("");
+
+  useEffect(() => {
+    const { data } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
+    setLogoUrl(data.publicUrl);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -100,8 +106,19 @@ export default function MonitorPage() {
           {/* Top bar */}
           <div className="topbar dashboard-topbar" style={{ alignItems: "center" }}>
             <div className="brand">
-              <div style={{ fontSize: 18 }}>SOFIA · La Promesa</div>
-              <div style={{ color: "var(--muted)" }}>Panel Monitor</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {logoUrl && (
+                  <img
+                    src={logoUrl}
+                    alt="logo"
+                    style={{ width: 34, height: 34, objectFit: "contain", borderRadius: 999 }}
+                  />
+                )}
+                <div>
+                  <div style={{ fontSize: 18 }}>SOFIA · La Promesa</div>
+                  <div style={{ color: "var(--muted)" }}>Panel Monitor</div>
+                </div>
+              </div>
             </div>
             <div className="topbarUserText">
               Monitor · {profile.name ?? meUser.email ?? "—"}

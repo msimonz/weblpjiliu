@@ -58,6 +58,7 @@ export default function DashboardPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [me, setMe] = useState<any>(null);
   const [meLoading, setMeLoading] = useState(true);
+  const [logoUrl, setLogoUrl] = useState<string>("");
 
   const [level, setLevel] = useState<number>(1);
 
@@ -124,6 +125,11 @@ export default function DashboardPage() {
   const [verExamenInfo, setVerExamenInfo]     = useState<ExamAvailableItem | null>(null);
   const [verExamenEvalId, setVerExamenEvalId] = useState<number | null>(null);
   const [examLinkMsg, setExamLinkMsg]         = useState<string | null>(null);
+
+  useEffect(() => {
+    const { data: logoData } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
+    setLogoUrl(logoData.publicUrl);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -488,8 +494,19 @@ export default function DashboardPage() {
             }}
           >
             <div className="brand">
-              <div style={{ fontSize: 18 }}>SOFIA · La Promesa</div>
-              <div style={{ color: "var(--muted)" }}>Notas y asignaciones</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {logoUrl && (
+                  <img
+                    src={logoUrl}
+                    alt="logo"
+                    style={{ width: 34, height: 34, objectFit: "contain", borderRadius: 999 }}
+                  />
+                )}
+                <div>
+                  <div style={{ fontSize: 18 }}>SOFIA · La Promesa</div>
+                  <div style={{ color: "var(--muted)" }}>Notas y asignaciones</div>
+                </div>
+              </div>
             </div>
 
             <div className="topbarUserText">
