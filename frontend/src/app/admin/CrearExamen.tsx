@@ -99,7 +99,8 @@ function apiToState(p: ApiPregunta): PreguntaState {
     return { ...base, opciones: [{ id: "V", texto: "Verdadero" }, { id: "F", texto: "Falso" }], respuestaFV: Array.isArray(p.respuesta_correcta) ? (p.respuesta_correcta[0] as "V" | "F") : "" };
   }
   if (p.tipo === "emparejamiento") {
-    return { ...base, izquierda: Array.isArray(p.opciones?.izquierda) ? p.opciones.izquierda : [], derecha: Array.isArray(p.opciones?.derecha) ? p.opciones.derecha : [], mapeo: (typeof p.respuesta_correcta === "object" && !Array.isArray(p.respuesta_correcta)) ? p.respuesta_correcta : {} };
+    const opc = p.opciones as { izquierda?: unknown[]; derecha?: unknown[] } | null | undefined;
+    return { ...base, izquierda: Array.isArray(opc?.izquierda) ? opc!.izquierda as string[] : [], derecha: Array.isArray(opc?.derecha) ? opc!.derecha as string[] : [], mapeo: (typeof p.respuesta_correcta === "object" && !Array.isArray(p.respuesta_correcta)) ? p.respuesta_correcta as Record<string, string> : {} };
   }
   return base;
 }
