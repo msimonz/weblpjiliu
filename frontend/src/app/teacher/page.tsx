@@ -9,6 +9,7 @@ import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 import * as XLSX from "xlsx";
+import CrearExamen, { type CrearExamenCtx, type ExamInitialData } from "../admin/CrearExamen";
 
 type TeacherClass = {
   id: number;
@@ -245,6 +246,12 @@ export default function TeacherPage() {
   const [createModuleFilter, setCreateModuleFilter] = useState<string>("");
   const [createClassFilter, setCreateClassFilter] = useState<number | "all">("all");
 
+  // CrearExamen overlay
+  const [showCrearExamen, setShowCrearExamen]             = useState(false);
+  const [crearExamenCtx, setCrearExamenCtx]               = useState<CrearExamenCtx | null>(null);
+  const [crearExamenInitialData, setCrearExamenInitialData] = useState<ExamInitialData | null>(null);
+  const [crearExamenExamId, setCrearExamenExamId]         = useState<number | null>(null);
+
   // UPSERT
   const [upsertLevelFilter, setUpsertLevelFilter] = useState<LevelValue>("");
   const [upsertCourseFilter, setUpsertCourseFilter] = useState<number | "all">("all");
@@ -266,7 +273,6 @@ export default function TeacherPage() {
   const [loadingTypes, setLoadingTypes] = useState(false);
 
   // título
-  const [titlePick, setTitlePick] = useState<string>("");
   const [titleOther, setTitleOther] = useState<string>("");
 
   // crear evaluación
@@ -325,7 +331,6 @@ export default function TeacherPage() {
         setCCourse("");
         setCType("");
         setCTypeOther("");
-        setTitlePick("");
         setTitleOther("");
         setCPercent(0);
         setEditPercents({});
@@ -807,7 +812,7 @@ export default function TeacherPage() {
     setCCourse("");
     setCreateModuleFilter("");
     setCreateClassFilter("all");
-    setTitlePick("");
+
     setTitleOther("");
     setCPercent(0);
     setEditPercents({});
@@ -819,7 +824,7 @@ export default function TeacherPage() {
 
   useEffect(() => {
     setCreateClassFilter("all");
-    setTitlePick("");
+
     setTitleOther("");
     setCPercent(0);
     setEditPercents({});
@@ -835,21 +840,21 @@ export default function TeacherPage() {
     return filtered;
   }, [items, createLevelFilter, cCourse, createModuleFilter, createClassFilter]);
 
-  const createTitleOptions = useMemo(() => {
-    if (createClassFilter === "all") return [];
-    const list = items.filter((x) => x.id_class === Number(createClassFilter));
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const it of list) {
-      const t = String(it.title || "").trim();
-      if (!t) continue;
-      const key = t.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(t);
+
+  // Auto-rellena el título con el nombre de la materia cuando tipo = "Examen"
+  const selectedTypeNameForCreate = useMemo(() => {
+    if (cType === "__other__") return cTypeOther.trim();
+    return types.find(t => String(t.id) === cType)?.type || "";
+  }, [cType, cTypeOther, types]);
+
+  useEffect(() => {
+    if (selectedTypeNameForCreate === "Examen" && createClassFilter !== "all") {
+      const cls = createClassesFiltered.find(c => c.id === Number(createClassFilter));
+      if (cls) setTitleOther(cls.name);
+    } else if (selectedTypeNameForCreate !== "Examen") {
+      setTitleOther("");
     }
-    return out;
-  }, [items, createClassFilter]);
+  }, [selectedTypeNameForCreate, createClassFilter, createClassesFiltered]);
 
   async function handleSaveCreateEvalPercent(evalId: number) {
     const val = Number(editPercents[evalId]);
@@ -886,6 +891,33 @@ export default function TeacherPage() {
     }
   }
 
+  async function handleEditExam(ev: EvalItem) {
+    try {
+      const data = await apiFetch(`/api/teacher/exams/${ev.id}`);
+      const course = coursesForCreate.find(c => c.id === ev.id_course);
+      const cls    = createClassesFiltered.find(c => c.id === ev.id_class)
+                  ?? myClasses.find(c => c.id === ev.id_class);
+      const lev    = levels.find(l => l.id === Number(createLevelFilter));
+      setCrearExamenCtx({
+        id_course:  ev.id_course ?? 0,
+        id_class:   ev.id_class  ?? 0,
+        id_module:  ev.id_module ?? null,
+        id_group:   ev.id_group  ?? null,
+        title:      ev.title,
+        percent:    Number(ev.percent),
+        courseName: course ? String(course.name) : String(ev.id_course),
+        className:  cls?.name ?? ev.class?.name ?? String(ev.id_class),
+        moduleName: cls?.module?.name ?? ev.module?.name ?? null,
+        levelName:  lev?.name ?? null,
+      });
+      setCrearExamenInitialData(data.item);
+      setCrearExamenExamId(ev.id);
+      setShowCrearExamen(true);
+    } catch (e) {
+      flash((e as { message?: string })?.message || "Error cargando examen", "err");
+    }
+  }
+
   async function handleCreate() {
     setMsg(null);
 
@@ -905,8 +937,8 @@ export default function TeacherPage() {
     if (!id_type && !isOtherType) return setMsg("Selecciona un tipo.");
     if (isOtherType && !type_text) return setMsg("Escribe el tipo (Otro).");
 
-    const title = titlePick && titlePick !== "__other__" ? titlePick.trim() : titleOther.trim();
-    if (!title) return setMsg("Selecciona o escribe un título.");
+    const title = titleOther.trim();
+    if (!title) return setMsg("Escribe un título.");
 
     const percent = Number(cPercent);
     if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
@@ -920,6 +952,30 @@ export default function TeacherPage() {
       return setMsg(
         `El porcentaje total superaría 100% (existente: ${totalExisting}%, nuevo: ${percent}%). Ajusta los porcentajes antes de continuar.`
       );
+    }
+
+    // ── Tipo Examen: abrir CrearExamen en lugar del flujo normal ──
+    const selectedTypeName = (!isOtherType ? types.find(t => t.id === Number(cType))?.type : type_text) || "";
+    if (selectedTypeName === "Examen") {
+      const course = coursesForCreate.find(c => c.id === id_course);
+      const cls    = createClassesFiltered.find(c => c.id === id_class);
+      const lev    = levels.find(l => l.id === Number(createLevelFilter));
+      setCrearExamenCtx({
+        id_course,
+        id_class,
+        id_module:  cls?.id_module  ?? null,
+        id_group:   null,
+        title,
+        percent,
+        courseName: course ? String(course.name) : String(id_course),
+        className:  cls?.name ?? String(id_class),
+        moduleName: cls?.module?.name ?? null,
+        levelName:  lev?.name ?? null,
+      });
+      setCrearExamenExamId(null);
+      setCrearExamenInitialData(null);
+      setShowCrearExamen(true);
+      return;
     }
 
     setCreating(true);
@@ -952,7 +1008,7 @@ export default function TeacherPage() {
 
       setCType("");
       setCTypeOther("");
-      setTitlePick("");
+  
       setTitleOther("");
       setCPercent(0);
 
@@ -1718,6 +1774,7 @@ export default function TeacherPage() {
             <div className="brand">
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {logoUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={logoUrl}
                     alt="logo"
@@ -2281,7 +2338,7 @@ export default function TeacherPage() {
                       setCCourse("");
                       setCreateModuleFilter("");
                       setCreateClassFilter("all");
-                      setTitlePick("");
+                  
                       setTitleOther("");
                       setCPercent(0);
                       setEditPercents({});
@@ -2329,32 +2386,13 @@ export default function TeacherPage() {
                     {/* Título */}
                     <div style={{ flex: "2 1 180px" }}>
                       <div className="label">Título</div>
-                      <select
-                        className="select"
-                        value={titlePick}
-                        onChange={(e) => {
-                          setTitlePick(e.target.value);
-                          if (e.target.value !== "__other__") setTitleOther("");
-                        }}
+                      <input
+                        className="input"
+                        value={titleOther}
+                        onChange={(e) => setTitleOther(e.target.value)}
+                        placeholder="Escribe el título de la evaluación..."
                         disabled={createClassFilter === "all"}
-                      >
-                        <option value="">
-                          {createClassFilter === "all" ? "Selecciona una materia primero" : "Selecciona..."}
-                        </option>
-                        {createTitleOptions.map((t) => (
-                          <option key={t} value={t}>{t}</option>
-                        ))}
-                        <option value="__other__">Otro...</option>
-                      </select>
-                      {titlePick === "__other__" && (
-                        <input
-                          className="input"
-                          style={{ marginTop: 8 }}
-                          value={titleOther}
-                          onChange={(e) => setTitleOther(e.target.value)}
-                          placeholder="Escribe el título..."
-                        />
-                      )}
+                      />
                     </div>
 
                     {/* Porcentaje */}
@@ -2402,7 +2440,7 @@ export default function TeacherPage() {
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "200px 1fr 100px 130px 130px",
+                          gridTemplateColumns: "200px 1fr 100px 130px 130px 130px",
                           padding: "12px 16px",
                           background: isDarkTheme ? GRILLA.headerBgDark : GRILLA.headerBgLight,
                           borderBottom: "1px solid var(--stroke)",
@@ -2417,6 +2455,7 @@ export default function TeacherPage() {
                         <div style={{ textAlign: "left", marginLeft: -200 }}>%</div>
                         <div />
                         <div />
+                        <div />
                       </div>
                       {/* filas */}
                       {createLevelFilter === "" ? (
@@ -2426,12 +2465,14 @@ export default function TeacherPage() {
                       ) : createEvalsFiltered.length === 0 ? (
                         <div style={{ padding: "14px 16px", color: "var(--muted)", fontSize: 13 }}>No hay evaluaciones para la selección actual.</div>
                       ) : (
-                        createEvalsFiltered.map((ev) => (
+                        createEvalsFiltered.map((ev) => {
+                          const isExamen = ev.evaluation_type?.type === "Examen";
+                          return (
                           <div
                             key={ev.id}
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "200px 1fr 100px 130px 130px",
+                              gridTemplateColumns: "200px 1fr 100px 130px 130px 130px",
                               padding: "12px 16px",
                               alignItems: "center",
                               borderBottom: "1px solid var(--stroke)",
@@ -2448,8 +2489,9 @@ export default function TeacherPage() {
                                 min={1}
                                 max={100}
                                 className="input"
-                                style={{ textAlign: "center", padding: "4px 8px", fontSize: 13, width: 72, borderRadius: 9999 }}
+                                style={{ textAlign: "center", padding: "4px 8px", fontSize: 13, width: 72, borderRadius: 9999, opacity: isExamen ? 0.5 : 1 }}
                                 value={editPercents[ev.id] ?? String(ev.percent)}
+                                disabled={isExamen}
                                 onChange={(e) =>
                                   setEditPercents((p) => ({ ...p, [ev.id]: e.target.value }))
                                 }
@@ -2458,12 +2500,23 @@ export default function TeacherPage() {
                             <div style={{ marginLeft: -80, paddingRight: 6, width: 130 }}>
                               <button
                                 type="button"
-                                style={{ fontSize: 13, padding: "6px 0", width: "100%", background: "#0ea5e9", color: "#fff", border: "none", borderRadius: 9999, fontWeight: 600, cursor: "pointer" }}
-                                disabled={savingEvalPercent[ev.id]}
+                                style={{ fontSize: 13, padding: "6px 0", width: "100%", background: "#0ea5e9", color: "#fff", border: "none", borderRadius: 9999, fontWeight: 600, cursor: "pointer", opacity: isExamen ? 0.4 : 1 }}
+                                disabled={savingEvalPercent[ev.id] || isExamen}
                                 onClick={() => handleSaveCreateEvalPercent(ev.id)}
                               >
                                 {savingEvalPercent[ev.id] ? "..." : "Guardar"}
                               </button>
+                            </div>
+                            <div style={{ marginLeft: -80, paddingRight: 6, width: 130 }}>
+                              {isExamen && (
+                                <button
+                                  type="button"
+                                  style={{ fontSize: 13, padding: "6px 0", width: "100%", background: "#8b5cf6", color: "#fff", border: "none", borderRadius: 9999, fontWeight: 600, cursor: "pointer" }}
+                                  onClick={() => handleEditExam(ev)}
+                                >
+                                  Editar
+                                </button>
+                              )}
                             </div>
                             <div style={{ marginLeft: -80, width: 130 }}>
                               <button
@@ -2476,7 +2529,8 @@ export default function TeacherPage() {
                               </button>
                             </div>
                           </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   )}
@@ -2845,6 +2899,31 @@ export default function TeacherPage() {
       </main>
 
       <Footer rightText="Hecho para la Iglesia La Promesa." />
+
+      {/* Overlay Crear / Editar Examen */}
+      {showCrearExamen && crearExamenCtx && (
+        <CrearExamen
+          ctx={crearExamenCtx}
+          examId={crearExamenExamId ?? undefined}
+          initialData={crearExamenInitialData ?? undefined}
+          apiBase="/api/teacher"
+          onSaved={() => {
+            const wasEditing = crearExamenExamId !== null;
+            setShowCrearExamen(false);
+            setCrearExamenCtx(null);
+            setCrearExamenInitialData(null);
+            setCrearExamenExamId(null);
+            loadEvaluations(teacherYear);
+            flash(wasEditing ? "✅ Examen actualizado correctamente" : "✅ Examen creado correctamente", "ok");
+          }}
+          onCancel={() => {
+            setShowCrearExamen(false);
+            setCrearExamenCtx(null);
+            setCrearExamenInitialData(null);
+            setCrearExamenExamId(null);
+          }}
+        />
+      )}
     </div>
   );
 }

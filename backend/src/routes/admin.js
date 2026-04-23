@@ -1193,10 +1193,11 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
   try {
     const examId = toInt(req.body?.exam_id);
     const ced = cleanStr(req.body?.student_cedula);
+    const stId = cleanStr(req.body?.student_id);
     const grade = Number(req.body?.grade);
 
     if (!examId) return res.status(400).json({ error: "exam_id requerido" });
-    if (!ced) return res.status(400).json({ error: "student_cedula requerida" });
+    if (!ced && !stId) return res.status(400).json({ error: "student_cedula o student_id requerido" });
     if (!Number.isFinite(grade) || grade < 0 || grade > 100) {
       return res.status(400).json({ error: "grade inválida (0..100)" });
     }
@@ -1210,14 +1211,16 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
     if (evErr) return res.status(500).json({ error: evErr.message });
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
 
-    const { data: st, error: stErr } = await supabaseAdmin
-      .from("users")
-      .select("id,cedula,name,email,id_course")
-      .eq("cedula", ced)
-      .maybeSingle();
+    let stQuery = supabaseAdmin.from("users").select("id,cedula,name,email,id_course");
+    if (ced) {
+      stQuery = stQuery.eq("cedula", ced);
+    } else {
+      stQuery = stQuery.eq("id", stId);
+    }
+    const { data: st, error: stErr } = await stQuery.maybeSingle();
 
     if (stErr) return res.status(500).json({ error: stErr.message });
-    if (!st?.id) return res.status(404).json({ error: "No existe estudiante con esa cédula" });
+    if (!st?.id) return res.status(404).json({ error: ced ? "No existe estudiante con esa cédula" : "No existe estudiante con ese id" });
 
     if (Number(st.id_course) !== Number(ev.id_course)) {
       return res.status(400).json({ error: "El estudiante no pertenece al curso de esta evaluación" });

@@ -65,6 +65,7 @@ interface Props {
   initialData?:  ExamInitialData;
   onSaved:       () => void;
   onCancel:      () => void;
+  apiBase?:      string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -121,7 +122,7 @@ function apiToState(p: ApiPregunta): PreguntaState {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function CrearExamen({ ctx, examId, initialData, onSaved, onCancel }: Props) {
+export default function CrearExamen({ ctx, examId, initialData, onSaved, onCancel, apiBase = "/api/admin" }: Props) {
   const [percent, setPercent]             = useState<string>(() => String(ctx.percent));
   const [tiempoMinutos, setTiempoMinutos] = useState<string>(() => initialData ? String(initialData.tiempo_minutos) : "");
   const [preguntas, setPreguntas]         = useState<PreguntaState[]>(() =>
@@ -274,7 +275,7 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
           respuesta_correcta: p.respuestaMulti,
         };
       });
-      await apiFetch(examId ? `/api/admin/exams/${examId}` : "/api/admin/exams", {
+      await apiFetch(examId ? `${apiBase}/exams/${examId}` : `${apiBase}/exams`, {
         method: examId ? "PUT" : "POST",
         body: JSON.stringify(examId ? {
           percent:        Number(percent),

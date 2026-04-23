@@ -108,6 +108,7 @@ export default function MonitorPage() {
             <div className="brand">
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {logoUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={logoUrl}
                     alt="logo"

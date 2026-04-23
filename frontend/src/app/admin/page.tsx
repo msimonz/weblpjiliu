@@ -1656,14 +1656,25 @@ export default function AdminPage() {
       return;
     }
 
+    // Solo guardar evaluaciones con valor ingresado — ignorar celdas vacías
+    const evalsToSave = applicableEvals.filter((ev) => {
+      const key = gradeCellKey(student.id, ev.id);
+      return (gradeDraft[key] ?? "").trim() !== "";
+    });
+
+    if (evalsToSave.length === 0) {
+      showErr(`No hay notas ingresadas para ${student.name}`);
+      return;
+    }
+
     setSavingOne((prev) => ({ ...prev, [student.id]: true }));
     setMsg(null);
 
     try {
-      for (const ev of applicableEvals) {
+      for (const ev of evalsToSave) {
         const key = gradeCellKey(student.id, ev.id);
         const draft = (gradeDraft[key] ?? "").trim();
-        const grade = draft === "" ? NaN : Number(draft);
+        const grade = Number(draft);
 
         if (!Number.isFinite(grade) || grade < 0 || grade > 100) {
           throw new Error(
@@ -1673,13 +1684,14 @@ export default function AdminPage() {
       }
 
       await Promise.all(
-        applicableEvals.map((ev) => {
+        evalsToSave.map((ev) => {
           const key = gradeCellKey(student.id, ev.id);
           return apiFetch("/api/admin/grades", {
             method: "POST",
             body: JSON.stringify({
               exam_id: ev.id,
               student_cedula: student.cedula,
+              student_id: student.id,
               grade: Number(gradeDraft[key]),
             }),
           });
@@ -1696,7 +1708,7 @@ export default function AdminPage() {
       // Actualizar gGrades localmente para reflejar las notas guardadas
       setGGrades((prev) => {
         const updated = [...prev];
-        for (const ev of applicableEvals) {
+        for (const ev of evalsToSave) {
           const key = gradeCellKey(student.id, ev.id);
           const newGrade = Number(gradeDraft[key]);
           const idx = updated.findIndex((g) => g.id_student === student.id && g.id_exam === ev.id);
@@ -2013,6 +2025,7 @@ export default function AdminPage() {
             <div className="brand">
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {logoUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={logoUrl}
                     alt="logo"

@@ -917,3 +917,254 @@ teacherRouter.get("/grade-grids-batch", requireAuth, requireTeacher, async (req,
     return res.status(500).json({ error: error.message });
   }
 });
+
+// ============================================================================
+// EXÁMENES ONLINE — endpoints para profesores
+// ============================================================================
+
+async function resolveExamenTypeId(year) {
+  const { data: existing } = await supabaseAdmin
+    .from("evaluation_type")
+    .select("id")
+    .eq("type", "Examen")
+    .eq("year", year)
+    .maybeSingle();
+  if (existing?.id) return existing.id;
+
+  const { data: created, error } = await supabaseAdmin
+    .from("evaluation_type")
+    .insert({ type: "Examen", year })
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return created.id;
+}
+
+async function getExamenTypeIds() {
+  const { data } = await supabaseAdmin
+    .from("evaluation_type")
+    .select("id")
+    .eq("type", "Examen");
+  return (data || []).map((r) => r.id);
+}
+
+const TIPOS_VALIDOS_EXAMEN = ["multiple_multi", "multiple_single", "falso_verdadero", "emparejamiento"];
+
+function validatePreguntas(preguntas) {
+  if (!Array.isArray(preguntas)) return "preguntas debe ser un array";
+  if (preguntas.length < 4 || preguntas.length > 20)
+    return "El examen debe tener entre 4 y 20 preguntas";
+  for (let i = 0; i < preguntas.length; i++) {
+    const p = preguntas[i]; const n = i + 1;
+    if (!TIPOS_VALIDOS_EXAMEN.includes(p?.tipo))
+      return `Pregunta ${n}: tipo inválido ('${p?.tipo}')`;
+    if (!String(p?.enunciado || "").trim())
+      return `Pregunta ${n}: enunciado requerido`;
+    const pts = Number(p?.puntos);
+    if (!Number.isFinite(pts) || pts <= 0)
+      return `Pregunta ${n}: puntos inválidos`;
+    if (!p?.opciones)
+      return `Pregunta ${n}: opciones requeridas`;
+    if (!p?.respuesta_correcta)
+      return `Pregunta ${n}: respuesta_correcta requerida`;
+    const rc = p.respuesta_correcta;
+    const rcVacia =
+      (Array.isArray(rc) && rc.length === 0) ||
+      (typeof rc === "object" && !Array.isArray(rc) && Object.keys(rc).length === 0);
+    if (rcVacia)
+      return `Pregunta ${n}: debe tener al menos una respuesta correcta`;
+  }
+  const suma = preguntas.reduce((acc, p) => acc + Number(p.puntos), 0);
+  if (Math.abs(suma - 100) > 0.01)
+    return `La suma de puntos debe ser 100 (actual: ${suma})`;
+  return null;
+}
+
+/**
+ * POST /api/teacher/exams — Crear examen
+ */
+teacherRouter.post("/exams", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacherId      = req.auth.user.id;
+    const id_course      = Number(req.body?.id_course);
+    const id_class       = Number(req.body?.id_class);
+    const title          = String(req.body?.title || "").trim();
+    const percent        = Number(req.body?.percent);
+    const tiempo_minutos = Number(req.body?.tiempo_minutos);
+    const preguntas      = req.body?.preguntas;
+
+    if (!id_course)       return res.status(400).json({ error: "id_course requerido" });
+    if (!id_class)        return res.status(400).json({ error: "id_class requerido" });
+    if (!title)           return res.status(400).json({ error: "title requerido" });
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100)
+      return res.status(400).json({ error: "percent inválido (1..100)" });
+    if (!tiempo_minutos || tiempo_minutos < 1)
+      return res.status(400).json({ error: "tiempo_minutos requerido (mínimo 1)" });
+
+    const pregErr = validatePreguntas(preguntas);
+    if (pregErr) return res.status(400).json({ error: pregErr });
+
+    const allowed = await teacherHasClass(teacherId, id_class);
+    if (!allowed) return res.status(403).json({ error: "La materia no está asignada a este profesor" });
+
+    const { data: cls, error: clsErr } = await supabaseAdmin
+      .from("class")
+      .select("id,name,level,id_module,id_group")
+      .eq("id", id_class)
+      .maybeSingle();
+    if (clsErr) return res.status(500).json({ error: clsErr.message });
+    if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
+
+    const { data: course, error: cErr } = await supabaseAdmin
+      .from("course")
+      .select("id,name,level,year")
+      .eq("id", id_course)
+      .maybeSingle();
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
+    if (Number(course.level) !== Number(cls.level))
+      return res.status(400).json({ error: "El curso no corresponde al nivel de la materia" });
+
+    try { await requireAnioVigenteForCourse(id_course); }
+    catch (err) { return handleYearError(res, err); }
+
+    const examenTypeId = await resolveExamenTypeId(course.year);
+
+    const { data: evalData, error: evalErr } = await supabaseAdmin
+      .from("evaluation")
+      .insert({
+        id_course,
+        id_class,
+        id_teacher:     teacherId,
+        id_type:        examenTypeId,
+        percent,
+        title,
+        id_module:      cls.id_module || null,
+        id_group:       cls.id_group  || null,
+        tiempo_minutos,
+      })
+      .select("id,title,percent,tiempo_minutos,created_at")
+      .maybeSingle();
+    if (evalErr) return res.status(500).json({ error: evalErr.message });
+
+    const detalleRows = preguntas.map((p, idx) => ({
+      id_evaluation:      evalData.id,
+      orden:              idx + 1,
+      tipo:               p.tipo,
+      enunciado:          String(p.enunciado || "").trim(),
+      puntos:             Number(p.puntos),
+      opciones:           p.opciones,
+      respuesta_correcta: p.respuesta_correcta,
+    }));
+
+    const { error: detErr } = await supabaseAdmin.from("examen_detalle").insert(detalleRows);
+    if (detErr) {
+      await supabaseAdmin.from("evaluation").delete().eq("id", evalData.id);
+      return res.status(500).json({ error: `Error guardando preguntas: ${detErr.message}` });
+    }
+
+    return res.status(201).json({ ok: true, item: evalData });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error creando examen" });
+  }
+});
+
+/**
+ * GET /api/teacher/exams/:id — Cargar examen para editar
+ */
+teacherRouter.get("/exams/:id", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacherId = req.auth.user.id;
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: "ID inválido" });
+
+    const examenTypeIds = await getExamenTypeIds();
+
+    const { data: ev, error: evErr } = await supabaseAdmin
+      .from("evaluation")
+      .select("id,title,percent,tiempo_minutos,id_course,id_class,id_module,id_group,id_teacher")
+      .eq("id", id)
+      .in("id_type", examenTypeIds)
+      .maybeSingle();
+    if (evErr) return res.status(500).json({ error: evErr.message });
+    if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
+    if (ev.id_teacher !== teacherId) return res.status(403).json({ error: "No es tu examen" });
+
+    const { data: preguntas, error: detErr } = await supabaseAdmin
+      .from("examen_detalle")
+      .select("id,orden,tipo,enunciado,puntos,opciones,respuesta_correcta")
+      .eq("id_evaluation", id)
+      .order("orden");
+    if (detErr) return res.status(500).json({ error: detErr.message });
+
+    return res.json({ item: { ...ev, preguntas: preguntas || [] } });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error cargando examen" });
+  }
+});
+
+/**
+ * PUT /api/teacher/exams/:id — Actualizar examen
+ */
+teacherRouter.put("/exams/:id", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacherId      = req.auth.user.id;
+    const id             = Number(req.params.id);
+    const tiempo_minutos = Number(req.body?.tiempo_minutos);
+    const percent        = Number(req.body?.percent);
+    const preguntas      = req.body?.preguntas;
+
+    if (!id) return res.status(400).json({ error: "ID inválido" });
+    if (!tiempo_minutos || tiempo_minutos < 1)
+      return res.status(400).json({ error: "tiempo_minutos requerido (mínimo 1)" });
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100)
+      return res.status(400).json({ error: "percent inválido (1..100)" });
+
+    const pregErr = validatePreguntas(preguntas);
+    if (pregErr) return res.status(400).json({ error: pregErr });
+
+    const examenTypeIds = await getExamenTypeIds();
+    const { data: ev, error: evErr } = await supabaseAdmin
+      .from("evaluation")
+      .select("id,id_teacher,id_course,id_type")
+      .eq("id", id)
+      .maybeSingle();
+    if (evErr) return res.status(500).json({ error: evErr.message });
+    if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
+    if (!examenTypeIds.includes(ev.id_type))
+      return res.status(400).json({ error: "Esta evaluación no es de tipo Examen" });
+    if (ev.id_teacher !== teacherId) return res.status(403).json({ error: "No es tu examen" });
+
+    try { await requireAnioVigenteForCourse(ev.id_course); }
+    catch (err) { return handleYearError(res, err); }
+
+    const { error: updErr } = await supabaseAdmin
+      .from("evaluation")
+      .update({ tiempo_minutos, percent })
+      .eq("id", id);
+    if (updErr) return res.status(500).json({ error: updErr.message });
+
+    const { error: delErr } = await supabaseAdmin
+      .from("examen_detalle")
+      .delete()
+      .eq("id_evaluation", id);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+
+    const detalleRows = preguntas.map((p, idx) => ({
+      id_evaluation:      id,
+      orden:              idx + 1,
+      tipo:               p.tipo,
+      enunciado:          String(p.enunciado || "").trim(),
+      puntos:             Number(p.puntos),
+      opciones:           p.opciones,
+      respuesta_correcta: p.respuesta_correcta,
+    }));
+
+    const { error: insErr } = await supabaseAdmin.from("examen_detalle").insert(detalleRows);
+    if (insErr) return res.status(500).json({ error: `Error actualizando preguntas: ${insErr.message}` });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error actualizando examen" });
+  }
+});
