@@ -86,7 +86,8 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
   // para que VerExamen muestre las mismas letras que el estudiante vio al tomar el examen.
   const shuffledDerMap = useMemo(() => {
     const map = new Map<number, OpcionItem[]>();
-    const studentId = String(me?.user?.id ?? "");
+    const user = me?.user as { id?: unknown } | undefined;
+    const studentId = String(user?.id ?? "");
     for (const p of preguntas) {
       if (p.tipo === "emparejamiento") {
         const opc = p.opciones as OpcionesEmparejamiento | null;
