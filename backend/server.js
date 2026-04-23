@@ -14,12 +14,9 @@ import { secretariaRouter } from './src/routes/secretaria.js';
 import { startSchedulers } from './src/schedulers.js';
 
 const app = express();
+const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'https://sofialapromesa.onrender.com',
-    'https://qa-sofialapromesa.onrender.com',
-  ],
+  origin: corsOrigins,
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
