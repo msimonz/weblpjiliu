@@ -8,6 +8,8 @@ import { teacherRouter } from './src/routes/teacher.js';
 import { studentRouter } from './src/routes/student.js';
 import { authRouter } from './src/routes/auth.js';
 import { healthRouter } from './src/routes/health.js';
+import { monitorRouter } from './src/routes/monitor.js';
+import { secretariaRouter } from './src/routes/secretaria.js';
 
 import { startSchedulers } from './src/schedulers.js';
 
@@ -31,6 +33,8 @@ app.use('/api/auth', authRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/teacher', teacherRouter);
 app.use('/api/student', studentRouter);
+app.use('/api/monitor', monitorRouter);
+app.use('/api/secretaria', secretariaRouter);
 app.use('/api/health', healthRouter);
 const port = Number(process.env.PORT || 3001);
 

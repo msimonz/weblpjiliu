@@ -10,6 +10,10 @@
   --stroke:rgba(2,132,199,.16);
   --stroke2:rgba(2,132,199,.22);
 
+  --group-col-bg: rgba(59,130,246,0.06);
+  --group-col-bg-th: rgba(59,130,246,0.10);
+  --group-col-text: inherit;
+
   --text:#0f172a;
   --muted:rgba(15,23,42,.72);
 
@@ -71,6 +75,10 @@
 
     --stroke: rgba(56,189,248,.22);
     --stroke2: rgba(56,189,248,.16);
+
+    --group-col-bg: rgba(59,130,246,0.12);
+    --group-col-bg-th: rgba(59,130,246,0.20);
+    --group-col-text: rgba(255,255,255,0.90);
 
     /* Mantengo tu identidad pero un poquito más luminosa en dark */
     --sky:#38bdf8;
@@ -277,6 +285,53 @@ button{
   box-shadow: 0 0 0 6px var(--focus-ring);
 }
 
+/* ── Checkbox verde (asistencia) ── */
+.check-asistencia {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(34,197,94,.5);
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  flex-shrink: 0;
+  position: relative;
+}
+.check-asistencia:checked {
+  background: #22c55e;
+  border-color: #16a34a;
+}
+.check-asistencia:checked::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 8px;
+  border: 1.5px solid #fff;
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg);
+}
+.check-asistencia:hover {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34,197,94,.18);
+}
+.check-asistencia:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(34,197,94,.25);
+}
+.check-asistencia:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.check-asistencia:disabled:hover {
+  border-color: rgba(34,197,94,.5);
+  box-shadow: none;
+}
+
 /* ✅ Botón primario (gradiente): texto blanco SIEMPRE */
 .btn{
   margin-top: 4px;
@@ -436,6 +491,23 @@ button{
 .btn-compact{
   padding: 10px 12px;
   border-radius: 14px;
+}
+
+.btnRegresar {
+  margin-top: 4px;
+  border: 0;
+  border-radius: 16px;
+  padding: 8px 20px;
+  cursor: pointer;
+  color: white;
+  font-weight: 800;
+  background: linear-gradient(180deg, #9ca3af, #6b7280);
+  box-shadow: 0 14px 26px rgba(107,114,128,.35);
+}
+
+.btnRegresar:disabled {
+  opacity: .7;
+  cursor: not-allowed;
 }
 
 /* En global.css */

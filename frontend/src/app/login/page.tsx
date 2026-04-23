@@ -35,6 +35,8 @@ export default function LoginPage() {
   const roleToRoute = (role: RoleCode) => {
     if (role === "A") return "/admin";
     if (role === "T") return "/teacher";
+    if (role === "M") return "/monitor";
+    if (role === "E") return "/secretaria";
     return "/dashboard";
   };
 
@@ -81,10 +83,10 @@ export default function LoginPage() {
         throw new Error(`No tienes el rol "${roleLabelFromRole(rolePick)}" asignado.`);
       }
 
-      localStorage.setItem("active_role", rolePick);
+      sessionStorage.setItem("active_role", rolePick);
       router.replace(roleToRoute(rolePick));
-    } catch (err: any) {
-      setError(err?.message || "No fue posible iniciar sesión");
+    } catch (err) {
+      setError((err as { message?: string })?.message || "No fue posible iniciar sesión");
     } finally {
       setLoading(false);
     }
@@ -129,8 +131,8 @@ export default function LoginPage() {
       const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
       if (resetErr) throw resetErr;
       setShowForgotModal(false);
-    } catch (e: any) {
-      setResetEmailError(e?.message || "No fue posible enviar el correo de recuperación");
+    } catch (e) {
+      setResetEmailError((e as { message?: string })?.message || "No fue posible enviar el correo de recuperación");
     } finally {
       setSendingReset(false);
     }
@@ -247,7 +249,9 @@ export default function LoginPage() {
                 >
                   <option value="S">Estudiante</option>
                   <option value="T">Profesor</option>
+                  <option value="M">Monitor</option>
                   <option value="A">Admin</option>
+                  <option value="E">Secretaría</option>
                 </select>
               </div>
 

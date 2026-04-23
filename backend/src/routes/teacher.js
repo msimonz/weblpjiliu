@@ -1,6 +1,11 @@
 import { Router } from "express";
 import { requireAuth } from "../middlewares/auth.js";
 import { supabaseAdmin } from "../supabase.js";
+import {
+  getAnioLectivoVigente,
+  requireAnioVigenteForCourse,
+  handleYearError,
+} from "../lib/anioLectivo.js";
 
 export const teacherRouter = Router();
 
@@ -12,11 +17,10 @@ function requireTeacher(req, res, next) {
   return next();
 }
 
-async function getLevelMap() {
-  const { data } = await supabaseAdmin
-    .from("level")
-    .select("id,name")
-    .order("id", { ascending: true });
+async function getLevelMap(year) {
+  let q = supabaseAdmin.from("level").select("id,name").order("id", { ascending: true });
+  if (year) q = q.eq("year", year);
+  const { data } = await q;
   const map = {};
   for (const l of data || []) map[l.id] = l.name;
   return map;
@@ -26,16 +30,22 @@ function levelLabel(level, levelMap = {}) {
   return levelMap[Number(level)] ?? `Año ${level ?? "—"}`;
 }
 
-async function getTeacherClasses(teacherId) {
-  const { data, error } = await supabaseAdmin
+async function getTeacherClasses(teacherId, year) {
+  let q = supabaseAdmin
     .from("class_teacher")
-    .select("id_class, class:class(id,name,level,id_module,id_group,module:module(id,name))")
+    .select("id_class, id_course, class:class(id,name,level,id_module,id_group,module:module(id,name)), course:course(id,year)")
     .eq("id_teacher", teacherId)
     .order("id_class", { ascending: true });
 
+  const { data, error } = await q;
   if (error) throw error;
 
-  const classes = (data || []).map((r) => r.class).filter(Boolean);
+  // Filter by year if provided (via course.year)
+  const filtered = year
+    ? (data || []).filter((r) => Number(r.course?.year) === Number(year))
+    : (data || []);
+
+  const classes = filtered.map((r) => r.class).filter(Boolean);
 
   // id_group en class no tiene FK a group; resolvemos nombres por separado
   const groupIds = [...new Set(classes.map((c) => Number(c.id_group)).filter(Boolean))];
@@ -118,16 +128,18 @@ async function getStudentsByCourseIds(courseIds) {
 teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) => {
   try {
     const teacherId = req.auth.user.id;
+    const vigente = await getAnioLectivoVigente();
+    const year = req.query.year ? Number(req.query.year) : vigente;
 
     const [teacherClasses, levelMap, assignData] = await Promise.all([
-      getTeacherClasses(teacherId),
-      getLevelMap(),
+      getTeacherClasses(teacherId, year),
+      getLevelMap(year),
       supabaseAdmin
         .from("class_teacher")
-        .select("id_class, id_course, course:course(id,name), class:class(id,name,level,id_module,module:module(id,name))")
+        .select("id_class, id_course, course:course(id,name,year), class:class(id,name,level,id_module,module:module(id,name))")
         .eq("id_teacher", teacherId)
         .order("id_class", { ascending: true })
-        .then(({ data }) => data || []),
+        .then(({ data }) => (data || []).filter((r) => Number(r.course?.year) === Number(year))),
     ]);
     const cleanClasses = (teacherClasses || []).filter(Boolean);
 
@@ -161,28 +173,19 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
     const levels = [...new Set(cleanClasses.map((c) => Number(c.level)).filter(Boolean))];
 
     let totalStudents = 0;
-    let academicYear = new Date().getFullYear();
+    const academicYear = year;
 
     if (levels.length > 0) {
       const { data: courses, error: cErr } = await supabaseAdmin
         .from("course")
         .select("id,year,level")
         .in("level", levels)
+        .eq("year", year)
         .order("level", { ascending: true });
 
       if (cErr) return res.status(500).json({ error: cErr.message });
 
       const courseIds = (courses || []).map((c) => Number(c.id)).filter(Boolean);
-
-      if (courses?.length) {
-        const years = courses
-          .map((c) => Number(c.year))
-          .filter((y) => Number.isFinite(y) && y > 0);
-
-        if (years.length > 0) {
-          academicYear = Math.max(...years);
-        }
-      }
 
       const students = await getStudentsByCourseIds(courseIds);
       const studentList = students || [];
@@ -244,7 +247,8 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
 teacherRouter.get("/classes", requireAuth, requireTeacher, async (req, res) => {
   try {
     const teacherId = req.auth.user.id;
-    const items = await getTeacherClasses(teacherId);
+    const year = req.query.year ? Number(req.query.year) : null;
+    const items = await getTeacherClasses(teacherId, year);
     return res.json({ items });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -288,19 +292,24 @@ teacherRouter.get("/courses", requireAuth, requireTeacher, async (req, res) => {
       return res.json({ items: courses || [] });
     }
 
-    const teacherClasses = await getTeacherClasses(teacherId);
+    const year = req.query.year ? Number(req.query.year) : null;
+    const teacherClasses = await getTeacherClasses(teacherId, year);
     const levels = [...new Set((teacherClasses || []).map((c) => Number(c.level)).filter(Boolean))];
 
     if (levels.length === 0) {
       return res.json({ items: [] });
     }
 
-    const { data: courses, error: cErr } = await supabaseAdmin
+    let cq = supabaseAdmin
       .from("course")
       .select("id,name,level,year")
       .in("level", levels)
       .order("level", { ascending: true })
       .order("id", { ascending: true });
+
+    if (year) cq = cq.eq("year", year);
+
+    const { data: courses, error: cErr } = await cq;
 
     if (cErr) return res.status(500).json({ error: cErr.message });
 
@@ -362,6 +371,7 @@ teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) 
     const teacherId = req.auth.user.id;
     const classId = req.query.class_id ? Number(req.query.class_id) : null;
     const level = req.query.level ? Number(req.query.level) : null;
+    const year = req.query.year ? Number(req.query.year) : null;
 
     let q = supabaseAdmin
       .from("evaluation")
@@ -393,6 +403,10 @@ teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) 
 
     if (level) {
       items = items.filter((it) => Number(it?.class?.level ?? 0) === level);
+    }
+
+    if (year) {
+      items = items.filter((it) => Number(it?.course?.year ?? 0) === year);
     }
 
     return res.json({ items });
@@ -586,6 +600,9 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
       });
     }
 
+    try { await requireAnioVigenteForCourse(courseIdNum); }
+    catch (err) { return handleYearError(res, err); }
+
     let typeId = Number(id_type || 0);
 
     if (!typeId) {
@@ -596,6 +613,7 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
         .from("evaluation_type")
         .select("id,type")
         .eq("type", raw)
+        .eq("year", course.year)
         .maybeSingle();
 
       if (exErr) return res.status(500).json({ error: exErr.message });
@@ -605,7 +623,7 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
       } else {
         const { data: created, error: crErr } = await supabaseAdmin
           .from("evaluation_type")
-          .insert({ type: raw })
+          .insert({ type: raw, year: course.year })
           .select("id,type")
           .maybeSingle();
 
@@ -680,6 +698,9 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
     return res.status(400).json({ error: "El estudiante no pertenece al curso de esta evaluación" });
   }
 
+  try { await requireAnioVigenteForCourse(ev.id_course); }
+  catch (err) { return handleYearError(res, err); }
+
   const payload = {
     id_exam: examId,
     id_student: st.id,
@@ -718,7 +739,7 @@ teacherRouter.patch("/evaluations/:id", requireAuth, requireTeacher, async (req,
 
     const { data: ev, error: evErr } = await supabaseAdmin
       .from("evaluation")
-      .select("id,id_teacher")
+      .select("id,id_teacher,id_course")
       .eq("id", id)
       .maybeSingle();
 
@@ -727,6 +748,9 @@ teacherRouter.patch("/evaluations/:id", requireAuth, requireTeacher, async (req,
     if (ev.id_teacher !== teacherId) {
       return res.status(403).json({ error: "No puedes editar esta evaluación" });
     }
+
+    try { await requireAnioVigenteForCourse(ev.id_course); }
+    catch (err) { return handleYearError(res, err); }
 
     const { data, error } = await supabaseAdmin
       .from("evaluation")
@@ -755,7 +779,7 @@ teacherRouter.delete("/evaluations/:id", requireAuth, requireTeacher, async (req
 
     const { data: ev, error: evErr } = await supabaseAdmin
       .from("evaluation")
-      .select("id,id_teacher")
+      .select("id,id_teacher,id_course")
       .eq("id", id)
       .maybeSingle();
 
@@ -764,6 +788,9 @@ teacherRouter.delete("/evaluations/:id", requireAuth, requireTeacher, async (req
     if (ev.id_teacher !== teacherId) {
       return res.status(403).json({ error: "No puedes eliminar esta evaluación" });
     }
+
+    try { await requireAnioVigenteForCourse(ev.id_course); }
+    catch (err) { return handleYearError(res, err); }
 
     const { error } = await supabaseAdmin.from("evaluation").delete().eq("id", id);
     if (error) return res.status(500).json({ error: error.message });

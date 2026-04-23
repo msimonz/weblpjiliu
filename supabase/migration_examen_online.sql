@@ -1,4 +1,4 @@
--- ============================================================
+﻿-- ============================================================
 -- MIGRACIÓN: Módulo Exámenes Online
 -- Ejecutar en Supabase SQL Editor (en orden)
 -- ============================================================
@@ -20,11 +20,41 @@ CREATE TABLE IF NOT EXISTS public.examen_programacion (
   id_evaluation bigint NOT NULL REFERENCES public.evaluation(id) ON DELETE CASCADE,
   id_course    bigint NOT NULL REFERENCES public.course(id) ON DELETE CASCADE,
   year         smallint NOT NULL,
-  fecha_ini    timestamptz,
-  fecha_fin    timestamptz,
-  habilitado   boolean NOT NULL DEFAULT false,
-  created_at   timestamptz DEFAULT now()
+  fecha_ini         timestamptz,
+  fecha_fin         timestamptz,
+  fecha_limite_ver  timestamptz,
+  habilitado        boolean NOT NULL DEFAULT false,
+  created_at        timestamptz DEFAULT now()
 );
+
+-- Agregar fecha_limite_ver si la tabla ya existe (idempotente)
+ALTER TABLE public.examen_programacion
+  ADD COLUMN IF NOT EXISTS fecha_limite_ver timestamptz;
+
+-- Renombrar columna fecha_ver → fecha_limite_ver (idempotente vía DO block)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name   = 'examen_programacion'
+      AND column_name  = 'fecha_ver'
+  ) THEN
+    ALTER TABLE public.examen_programacion
+      RENAME COLUMN fecha_ver TO fecha_limite_ver;
+  END IF;
+END $$;
+
+
+-- ------------------------------------------------------------
+-- FK rta_examen → examen_programacion con ON DELETE SET NULL
+-- ------------------------------------------------------------
+ALTER TABLE public.rta_examen
+  DROP CONSTRAINT IF EXISTS rta_examen_id_programacion_fkey,
+  ADD CONSTRAINT rta_examen_id_programacion_fkey
+    FOREIGN KEY (id_programacion)
+    REFERENCES public.examen_programacion(id)
+    ON DELETE SET NULL;
 
 CREATE INDEX IF NOT EXISTS idx_examen_prog_evaluation
   ON public.examen_programacion (id_evaluation);
@@ -92,11 +122,15 @@ CREATE TABLE IF NOT EXISTS public.rta_examen (
   calificacion   numeric(5,2),
   iniciado_at    timestamptz,
   finalizado_at  timestamptz,
+  pregunta_actual integer NOT NULL DEFAULT 0,
   created_at     timestamptz DEFAULT now(),
   UNIQUE (id_student, id_evaluation),
   FOREIGN KEY (id_student, id_evaluation)
     REFERENCES public.grades(id_student, id_exam)
 );
+
+-- Agregar pregunta_actual a tablas existentes (idempotente)
+ALTER TABLE public.rta_examen ADD COLUMN IF NOT EXISTS pregunta_actual integer NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_rta_examen_student
   ON public.rta_examen (id_student, id_evaluation);

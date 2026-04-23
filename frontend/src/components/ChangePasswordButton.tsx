@@ -44,8 +44,8 @@ export default function ChangePasswordButton({
       if (error) throw error;
 
       showToast("✅ Te envié un correo para cambiar la contraseña", "ok");
-    } catch (e: any) {
-      showToast(e?.message || "❌ Error enviando correo de cambio de contraseña", "err");
+    } catch (e) {
+      showToast((e as { message?: string })?.message || "❌ Error enviando correo de cambio de contraseña", "err");
     } finally {
       setSending(false);
     }

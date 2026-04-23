@@ -41,6 +41,7 @@ export default function Header({
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           {logoUrl ? (
             // ✅ logo desde URL pública (no Next/Image para evitar config de domains)
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={logoUrl}
               alt="logo"

@@ -43,8 +43,8 @@ type ApiPregunta = {
   tipo: TipoPregunta;
   enunciado: string;
   puntos: number;
-  opciones: any;
-  respuesta_correcta: any;
+  opciones: unknown;
+  respuesta_correcta: unknown;
 };
 
 export type ExamInitialData = {
@@ -185,7 +185,7 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
     setPreguntas(prev => prev.map(p => p._key !== key ? p :
       { ...p, derecha: p.derecha.map(o => o.id === opId ? { ...o, texto } : o) }));
   }
-  function setMapeo(key: string, leftId: string, rightId: string) {
+  function _setMapeo(key: string, leftId: string, rightId: string) {
     setPreguntas(prev => prev.map(p => p._key !== key ? p :
       { ...p, mapeo: { ...p.mapeo, [leftId]: rightId } }));
   }
@@ -197,7 +197,7 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
     if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return "Porcentaje inválido (1..100)";
     const mins = Number(tiempoMinutos);
     if (!mins || mins < 1) return "Tiempo en minutos requerido (mínimo 1)";
-    if (preguntas.length < 4)  return "Mínimo 4 preguntas";
+    if (preguntas.length < 1)  return "El examen debe tener al menos 1 pregunta";
     if (preguntas.length > 20) return "Máximo 20 preguntas";
     let suma = 0;
     for (let i = 0; i < preguntas.length; i++) {
@@ -222,8 +222,6 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
         if (p.derecha.length < 2)   return `Pregunta ${n}: mínimo 2 elementos en columna derecha`;
         if (p.izquierda.some(o => !o.texto.trim())) return `Pregunta ${n}: todos los elementos izquierda necesitan texto`;
         if (p.derecha.some(o => !o.texto.trim()))   return `Pregunta ${n}: todos los elementos derecha necesitan texto`;
-        if (Object.keys(p.mapeo).length !== p.izquierda.length)
-          return `Pregunta ${n}: asigna respuesta correcta a cada elemento de la columna izquierda`;
       }
     }
     if (Math.abs(suma - 100) > 0.01)
@@ -245,11 +243,16 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
           opciones: [{ id: "V", texto: "Verdadero" }, { id: "F", texto: "Falso" }],
           respuesta_correcta: [p.respuestaFV],
         };
-        if (p.tipo === "emparejamiento") return {
-          tipo: p.tipo, enunciado: p.enunciado.trim(), puntos: Number(p.puntos),
-          opciones: { izquierda: p.izquierda, derecha: p.derecha },
-          respuesta_correcta: p.mapeo,
-        };
+        if (p.tipo === "emparejamiento") {
+          const mapeo: Record<string, string> = {};
+          const pairs = Math.min(p.izquierda.length, p.derecha.length);
+          for (let i = 0; i < pairs; i++) mapeo[p.izquierda[i].id] = p.derecha[i].id;
+          return {
+            tipo: p.tipo, enunciado: p.enunciado.trim(), puntos: Number(p.puntos),
+            opciones: { izquierda: p.izquierda, derecha: p.derecha },
+            respuesta_correcta: mapeo,
+          };
+        }
         return {
           tipo: p.tipo, enunciado: p.enunciado.trim(), puntos: Number(p.puntos),
           opciones: p.opciones,
@@ -272,8 +275,8 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
         }),
       });
       onSaved();
-    } catch (e: any) {
-      setErrMsg(e?.message || "Error guardando examen");
+    } catch (e) {
+      setErrMsg((e as { message?: string })?.message || "Error guardando examen");
     } finally {
       setSaving(false);
     }
@@ -351,78 +354,75 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
   }
 
   function renderEmparejamiento(p: PreguntaState) {
+    const maxRows = Math.max(p.izquierda.length, p.derecha.length);
     return (
       <div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-          {/* Izquierda */}
-          <div>
-            <div className="label" style={{ fontWeight: 400 }}>Columna izquierda</div>
-            {p.izquierda.map((item, ii) => (
-              <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                <span style={{ minWidth: 20, fontSize: 13, color: "var(--muted)", flexShrink: 0 }}>{ii + 1}.</span>
-                <input className="input" style={{ flex: 1, fontWeight: 400 }}
-                  placeholder={`Elemento ${ii + 1}`}
-                  value={item.texto}
-                  onChange={e => updIzq(p._key, item.id, e.target.value)}
-                />
-                {p.izquierda.length > 2 && (
-                  <button style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 20, lineHeight: 1, padding: 0 }}
-                    onClick={() => removeIzq(p._key, item.id)}>×</button>
-                )}
-              </div>
-            ))}
-            <button style={{ fontSize: 12, background: "none", border: "1px dashed var(--stroke)", borderRadius: 6, padding: "4px 12px", cursor: "pointer", color: "var(--muted)" }}
-              onClick={() => addIzq(p._key)}>+ Elemento</button>
+        {/* Encabezados */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 6 }}>
+          <div className="label" style={{ fontWeight: 400 }}>
+            Columna izquierda
+            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400, marginLeft: 6 }}>({p.izquierda.length})</span>
           </div>
-          {/* Derecha */}
-          <div>
-            <div className="label" style={{ fontWeight: 400 }}>Columna derecha</div>
-            {p.derecha.map((item, di) => (
-              <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                <span style={{ minWidth: 20, fontSize: 13, color: "var(--muted)", flexShrink: 0 }}>{String.fromCharCode(97 + di)}.</span>
-                <input className="input" style={{ flex: 1, fontWeight: 400 }}
-                  placeholder={`Elemento ${String.fromCharCode(97 + di)}`}
-                  value={item.texto}
-                  onChange={e => updDer(p._key, item.id, e.target.value)}
-                />
-                {p.derecha.length > 2 && (
-                  <button style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 20, lineHeight: 1, padding: 0 }}
-                    onClick={() => removeDer(p._key, item.id)}>×</button>
-                )}
-              </div>
-            ))}
-            <button style={{ fontSize: 12, background: "none", border: "1px dashed var(--stroke)", borderRadius: 6, padding: "4px 12px", cursor: "pointer", color: "var(--muted)" }}
-              onClick={() => addDer(p._key)}>+ Elemento</button>
+          <div className="label" style={{ fontWeight: 400 }}>
+            Columna derecha
+            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400, marginLeft: 6 }}>({p.derecha.length})</span>
           </div>
         </div>
 
-        {/* Mapeo — respuestas correctas */}
-        <div>
-          <div className="label" style={{ marginBottom: 6, fontWeight: 400 }}>
-            Respuesta correcta&nbsp;
-            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400 }}>(relaciona izquierda → derecha)</span>
-          </div>
-          {p.izquierda.map((leftItem, li) => (
-            <div key={leftItem.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <span style={{ fontSize: 13, minWidth: 20, flexShrink: 0 }}>{li + 1}.</span>
-              <span style={{ fontSize: 13, flex: 1, color: leftItem.texto ? "var(--text)" : "var(--muted)" }}>
-                {leftItem.texto || `Elemento ${li + 1}`}
-              </span>
-              <span style={{ fontSize: 13, color: "var(--muted)", flexShrink: 0 }}>→</span>
-              <select className="select" style={{ flex: 1, maxWidth: 220, fontWeight: 400 }}
-                value={p.mapeo[leftItem.id] || ""}
-                onChange={e => setMapeo(p._key, leftItem.id, e.target.value)}
-              >
-                <option value="">Seleccionar...</option>
-                {p.derecha.map((rightItem, ri) => (
-                  <option key={rightItem.id} value={rightItem.id}>
-                    {String.fromCharCode(97 + ri)}. {rightItem.texto || `Elemento ${String.fromCharCode(97 + ri)}`}
-                  </option>
-                ))}
-              </select>
+        {/* Filas: izq input | der input */}
+        {Array.from({ length: maxRows }).map((_, idx) => {
+          const leftItem  = p.izquierda[idx];
+          const rightItem = p.derecha[idx];
+          const isPaired  = !!leftItem && !!rightItem;
+          return (
+            <div key={idx} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 6, alignItems: "center" }}>
+              {/* Celda izquierda */}
+              {leftItem ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ minWidth: 20, fontSize: 13, color: isPaired ? "var(--text)" : "#ea580c", flexShrink: 0, fontWeight: 700 }}>{idx + 1}.</span>
+                  <input className="input" style={{ flex: 1, fontWeight: 400 }}
+                    placeholder={`Elemento ${idx + 1}`}
+                    value={leftItem.texto}
+                    onChange={e => updIzq(p._key, leftItem.id, e.target.value)}
+                  />
+                  {p.izquierda.length > 2 && (
+                    <button style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 20, lineHeight: 1, padding: 0, flexShrink: 0 }}
+                      onClick={() => removeIzq(p._key, leftItem.id)}>×</button>
+                  )}
+                </div>
+              ) : <div />}
+
+              {/* Celda derecha */}
+              {rightItem ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ minWidth: 20, fontSize: 13, color: isPaired ? "var(--text)" : "#ea580c", flexShrink: 0, fontWeight: 700 }}>{String.fromCharCode(65 + idx)}.</span>
+                  <input className="input" style={{ flex: 1, fontWeight: 400 }}
+                    placeholder={`Elemento ${String.fromCharCode(65 + idx)}`}
+                    value={rightItem.texto}
+                    onChange={e => updDer(p._key, rightItem.id, e.target.value)}
+                  />
+                  {p.derecha.length > 2 && (
+                    <button style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 20, lineHeight: 1, padding: 0, flexShrink: 0 }}
+                      onClick={() => removeDer(p._key, rightItem.id)}>×</button>
+                  )}
+                </div>
+              ) : <div />}
             </div>
-          ))}
+          );
+        })}
+
+        {/* Botones agregar */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 4 }}>
+          <button style={{ fontSize: 12, background: "none", border: "1px dashed var(--stroke)", borderRadius: 6, padding: "4px 12px", cursor: "pointer", color: "var(--muted)" }}
+            onClick={() => addIzq(p._key)}>+ Izquierda</button>
+          <button style={{ fontSize: 12, background: "none", border: "1px dashed var(--stroke)", borderRadius: 6, padding: "4px 12px", cursor: "pointer", color: "var(--muted)" }}
+            onClick={() => addDer(p._key)}>+ Derecha</button>
         </div>
+        {p.izquierda.length !== p.derecha.length && (
+          <div style={{ fontSize: 11, color: "#ea580c", marginTop: 6 }}>
+            Los ítems sin pareja ({Math.abs(p.izquierda.length - p.derecha.length)}) serán respuestas trampa.
+          </div>
+        )}
       </div>
     );
   }
@@ -436,7 +436,7 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
         <div style={{ maxWidth: 860, margin: "28px auto 60px", padding: "0 24px", boxSizing: "border-box" }}>
 
           {/* ── Único contenedor general ── */}
-          <div className="card" style={{ padding: 0 }}>
+          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
 
             {/* Encabezado sticky dentro del card */}
             <div style={{

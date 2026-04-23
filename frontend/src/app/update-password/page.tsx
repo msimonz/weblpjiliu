@@ -56,8 +56,8 @@ export default function UpdatePasswordPage() {
       // opcional: cerrar sesión por seguridad
       await supabase.auth.signOut();
       setTimeout(() => router.replace("/login"), 900);
-    } catch (e: any) {
-      setMsg(e?.message || "No se pudo actualizar la contraseña.");
+    } catch (e) {
+      setMsg((e as { message?: string })?.message || "No se pudo actualizar la contraseña.");
     }
   }
 

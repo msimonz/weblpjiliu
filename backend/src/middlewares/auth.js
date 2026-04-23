@@ -29,8 +29,12 @@ async function loadProfileAndRoles(user) {
     ? "A"
     : roles.includes("T")
     ? "T"
+    : roles.includes("M")
+    ? "M"
     : roles.includes("S")
     ? "S"
+    : roles.includes("E")
+    ? "E"
     : null;
 
   return {

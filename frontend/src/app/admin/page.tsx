@@ -10,8 +10,9 @@ import Footer from "@/components/Footer";
 import * as XLSX from "xlsx";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 import CrearExamen, { type CrearExamenCtx, type ExamInitialData } from "./CrearExamen";
+import HabilitarExamenes from "./HabilitarExamenes";
 
-type Course = { id: number; name: string; level: number; year: string | null; user_count?: number };
+type Course = { id: number; name: string; level: number; year: string | null; user_count?: number; id_monitor?: string | null; monitor_name?: string | null };
 
 type GroupMini = {
   id: number;
@@ -35,6 +36,7 @@ type ClassItem = {
 
 type EvalType = { id: number; type: string; eval_count?: number };
 type LevelItem = { id: number; name: string };
+type AnioLectivoItem = { year: number; nombre: string; activo: boolean };
 
 type UserMini = {
   id: string;
@@ -97,7 +99,9 @@ type AdminView =
   | "ASSIGN_TEACHER"
   | "USERS"
   | "UPSERT"
-  | "EVAL_CRUD";
+  | "EVAL_CRUD"
+  | "HABILITAR_EXAMENES"
+  | "ANIO_LECTIVO";
 
 type EvalCrudMode = "class" | "module" | "group";
 
@@ -106,14 +110,15 @@ const ROLE_OPTIONS = [
   { value: "M", label: "Monitor" },
   { value: "T", label: "Profesor" },
   { value: "A", label: "Admin" },
+  { value: "E", label: "Secretaría" },
 ] as const;
 
-const TEMPLATE_PUBLIC_URL =
+const _TEMPLATE_PUBLIC_URL =
   process.env.NEXT_PUBLIC_USERS_TEMPLATE_URL ||
   "https://xujejxbzeexqagotdvdi.supabase.co/storage/v1/object/public/assets/utilities/CargaEstudiantesJILIU.xlsx";
 
-const TEMPLATE_BUCKET = process.env.NEXT_PUBLIC_TEMPLATES_BUCKET || "";
-const TEMPLATE_PATH = process.env.NEXT_PUBLIC_USERS_TEMPLATE_PATH || "";
+const _TEMPLATE_BUCKET = process.env.NEXT_PUBLIC_TEMPLATES_BUCKET || "";
+const _TEMPLATE_PATH = process.env.NEXT_PUBLIC_USERS_TEMPLATE_PATH || "";
 
 const GRILLA = {
   headerBgLight: "#d9edf7",
@@ -194,6 +199,7 @@ function getGrillaTextColor(isDarkTheme: boolean) {
 export default function AdminPage() {
   const router = useRouter();
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [me, setMe] = useState<any>(null);
   const [loadingMe, setLoadingMe] = useState(true);
 
@@ -207,22 +213,33 @@ export default function AdminPage() {
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [types, setTypes] = useState<EvalType[]>([]);
   const [teachers, setTeachers] = useState<UserMini[]>([]);
-  const [students, setStudents] = useState<UserMini[]>([]);
+  const [_students, setStudents] = useState<UserMini[]>([]);
   const [modules, setModules] = useState<ModuleItem[]>([]);
   const [groups, setGroups] = useState<GroupMini[]>([]);
   const [levels, setLevels] = useState<LevelItem[]>([]);
   const [loadingData, setLoadingData] = useState(false);
 
+  const [anioLectivoItems, setAnioLectivoItems] = useState<AnioLectivoItem[]>([]);
+  const [adminYear, setAdminYear] = useState<number | null>(null);
+  const adminYearActivo = useMemo(() => anioLectivoItems.find(a => a.activo)?.year ?? null, [anioLectivoItems]);
+  const isHistoricalYear = adminYear !== null && adminYear !== adminYearActivo;
+
   const [newCourseName, setNewCourseName] = useState("");
   const [newCourseLevel, setNewCourseLevel] = useState<number>(1);
   const [newCourseYear, setNewCourseYear] = useState<string>("");
+
+  // Monitor assignment
+  const [monitorEditCourseId, setMonitorEditCourseId] = useState<number | null>(null);
+  const [monitorStudents, setMonitorStudents] = useState<UserMini[]>([]);
+  const [monitorSelectedId, setMonitorSelectedId] = useState<string>("");
+  const [monitorLoading, setMonitorLoading] = useState(false);
 
   const [newClassName, setNewClassName] = useState("");
   const [newClassLevel, setNewClassLevel] = useState<number>(0);
   const [newClassModuleId, setNewClassModuleId] = useState<string>("");
   const [newClassGroupId, setNewClassGroupId] = useState<string>("");
   const [newModuleName, setNewModuleName] = useState("");
-  const [newGroupName, setNewGroupName] = useState("");
+  const [_newGroupName, setNewGroupName] = useState("");
   const [tblFilterLevel, setTblFilterLevel] = useState<string>("");
   const [tblFilterModule, setTblFilterModule] = useState<string>("");
   const [tblFilterGroup, setTblFilterGroup] = useState<string>("");
@@ -244,7 +261,7 @@ export default function AdminPage() {
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [showMasivo, setShowMasivo] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [uploadReport, setUploadReport] = useState<any>(null);
   const [uploadFileName, setUploadFileName] = useState<string>("");
   const [templateLoading, setTemplateLoading] = useState(false);
@@ -255,12 +272,12 @@ export default function AdminPage() {
   const [uCodeJiliu, setUCodeJiliu] = useState("");
   const [uCourseId, setUCourseId] = useState<string>("");
   const [uLevelId, setULevelId] = useState<string>("");
-  const [uRoles, setURoles] = useState<Record<"S" | "T" | "A" | "M", boolean>>({
-    S: false, T: false, A: false, M: false,
+  const [uRoles, setURoles] = useState<Record<"S" | "T" | "A" | "M" | "E", boolean>>({
+    S: false, T: false, A: false, M: false, E: false,
   });
   const [uSearching, setUSearching] = useState(false);
   const [uFoundUser, setUFoundUser] = useState(false);
-  const [uNotFound, setUNotFound] = useState(false);
+  const [_uNotFound, setUNotFound] = useState(false);
   const [creatingUser, setCreatingUser] = useState(false);
 
 
@@ -304,7 +321,7 @@ export default function AdminPage() {
     });
   }, [sortedRoster, gFilterCedula, gFilterName]);
 
-  function toggleGrillaSort(key: "cedula" | "name") {
+  function _toggleGrillaSort(key: "cedula" | "name") {
     if (grillaSortKey === key) {
       setGrillaSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
@@ -342,16 +359,24 @@ export default function AdminPage() {
   const [ecEditPercents, setEcEditPercents] = useState<Record<number, string>>({});
   const [ecEditTeachers, setEcEditTeachers] = useState<Record<number, string>>({});
   const [ecSavingPercent, setEcSavingPercent] = useState<Record<number, boolean>>({});
-  const [ecDeleting, setEcDeleting] = useState<Record<number, boolean>>({});
+  const [ecDeleting,        setEcDeleting]        = useState<Record<number, boolean>>({});
+  const [ecConfirmDeleteId, setEcConfirmDeleteId] = useState<number | null>(null);
   const [ecCreating, setEcCreating] = useState(false);
   const [showCrearExamen, setShowCrearExamen]         = useState(false);
   const [crearExamenCtx, setCrearExamenCtx]           = useState<CrearExamenCtx | null>(null);
   const [crearExamenInitialData, setCrearExamenInitialData] = useState<ExamInitialData | null>(null);
   const [crearExamenExamId, setCrearExamenExamId]     = useState<number | null>(null);
 
+  // ===== AÑO LECTIVO =====
+  const [alNewYear, setAlNewYear]     = useState<string>("");
+  const [alNewNombre, setAlNewNombre] = useState<string>("");
+  const [alCreating, setAlCreating]   = useState(false);
+  const [alActivating, setAlActivating] = useState<number | null>(null);
+  const [alConfirmActivate, setAlConfirmActivate] = useState<number | null>(null);
+
   const CEDULA_COL_W = 150;
   const ALUMNO_COL_W = 260;
-  const EVAL_COL_W = 170;
+  const _EVAL_COL_W = 170;
   const ACTION_COL_W = 160;
   const STICKY_ALUMNO_LEFT = CEDULA_COL_W;
 
@@ -392,20 +417,21 @@ export default function AdminPage() {
     })();
   }, [router]);
 
-  async function loadAll() {
+  async function loadAll(year?: number | null) {
     setMsg(null);
     setOkMsg(null);
     setLoadingData(true);
+    const ySuffix = year ? `?year=${year}` : "";
     try {
       const [c1, c2, c3, t1, s1, m1, g1, l1] = await Promise.all([
-        apiFetch("/api/admin/courses"),
-        apiFetch("/api/admin/classes"),
-        apiFetch("/api/admin/evaluation-types"),
+        apiFetch(`/api/admin/courses${ySuffix}`),
+        apiFetch(`/api/admin/classes${ySuffix}`),
+        apiFetch(`/api/admin/evaluation-types${ySuffix}`),
         apiFetch("/api/admin/teachers"),
         apiFetch("/api/admin/students"),
-        apiFetch("/api/admin/modules"),
-        apiFetch("/api/admin/groups"),
-        apiFetch("/api/admin/levels"),
+        apiFetch(`/api/admin/modules${ySuffix}`),
+        apiFetch(`/api/admin/groups${ySuffix}`),
+        apiFetch(`/api/admin/levels${ySuffix}`),
       ]);
 
       setCourses(c1?.items || []);
@@ -416,15 +442,25 @@ export default function AdminPage() {
       setModules(m1?.items || []);
       setGroups(g1?.items || []);
       setLevels(l1?.items || []);
-    } catch (e: any) {
-      showErr(e?.message || "Error cargando datos del admin");
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error cargando datos del admin");
     } finally {
       setLoadingData(false);
     }
   }
 
   useEffect(() => {
-    if (!loadingMe) loadAll();
+    if (loadingMe) return;
+    apiFetch("/api/admin/anio-lectivo")
+      .then((res) => {
+        const items: AnioLectivoItem[] = res?.items || [];
+        setAnioLectivoItems(items);
+        const activo = items.find(i => i.activo);
+        if (activo) setAdminYear(activo.year);
+        loadAll(activo?.year ?? null);
+      })
+      .catch(() => loadAll(null));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingMe]);
 
   const coursesForLevel = useMemo(() => {
@@ -468,7 +504,7 @@ export default function AdminPage() {
     return [...modules].sort((a, b) => a.name.localeCompare(b.name, "es"));
   }, [modules]);
 
-  const classesByLevelAndModule = useMemo(() => {
+  const _classesByLevelAndModule = useMemo(() => {
     return classes.filter((c) => {
       if (Number(c.level) !== Number(newClassLevel)) return false;
       if (newClassModuleId && newClassModuleId !== OTHER_OPTION && Number(c.id_module) !== Number(newClassModuleId)) return false;
@@ -684,17 +720,14 @@ export default function AdminPage() {
     if (ecClassId) {
       items = items.filter((ev) => String(ev.id_class) === ecClassId);
     }
-    if (ecType && ecType !== "__other__") {
-      items = items.filter((ev) => String(ev.id_type) === ecType);
-    }
     return items;
-  }, [ecExisting, ecModuleId, ecGroupId, ecClassId, ecType]);
+  }, [ecExisting, ecModuleId, ecGroupId, ecClassId]);
 
   const ecLevelLabel = useMemo(() => {
     return levels.find((l) => l.id === ecLevel)?.name ?? `Nivel ${ecLevel}`;
   }, [ecLevel, levels]);
 
-  const ecScopeBreadcrumb = useMemo(() => {
+  const _ecScopeBreadcrumb = useMemo(() => {
     const parts: string[] = [ecLevelLabel];
     if (ecModuleId) {
       const m = modules.find((x) => x.id === Number(ecModuleId));
@@ -753,7 +786,7 @@ export default function AdminPage() {
   }, [ecLevel]);
 
   // Helper: construir params de profesores según cascada
-  function buildTeacherParams(opts: { withMode?: boolean } = {}) {
+  function buildTeacherParams(_opts: { withMode?: boolean } = {}) {
     const params = new URLSearchParams();
     if (ecClassId)       params.set("class_id",  ecClassId);
     else if (ecGroupId)  params.set("group_id",  ecGroupId);
@@ -794,7 +827,7 @@ export default function AdminPage() {
 
   // EVAL_CRUD: limpiar mensajes al cambiar cualquier filtro o modo
   useEffect(() => { setMsg(null); setOkMsg(null); },
-    [ecLevel, ecCourseId, ecModuleId, ecGroupId, ecClassId, ecType, ecMode]); // eslint-disable-line react-hooks/exhaustive-deps
+    [ecLevel, ecCourseId, ecModuleId, ecGroupId, ecClassId, ecType, ecMode]);
 
   // EVAL_CRUD: reset completo al cambiar modo
   useEffect(() => {
@@ -843,7 +876,7 @@ export default function AdminPage() {
         setEcEditPercents(initP);
         setEcEditTeachers(initT);
       })
-      .catch((e: any) => { if (!cancelled) { setEcExisting([]); setMsg(e?.message || "Error cargando evaluaciones"); } })
+      .catch((e) => { if (!cancelled) { setEcExisting([]); setMsg((e as { message?: string })?.message || "Error cargando evaluaciones"); } })
       .finally(() => { if (!cancelled) setEcLoadingExisting(false); });
 
     return () => { cancelled = true; };
@@ -882,9 +915,9 @@ export default function AdminPage() {
       });
       setNewCourseName("");
       showOk("✅ Curso creado");
-      await loadAll();
-    } catch (e: any) {
-      showErr(e?.message || "Error creando curso");
+      await loadAll(adminYear);
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error creando curso");
     }
   }
 
@@ -892,9 +925,41 @@ export default function AdminPage() {
     try {
       await apiFetch(`/api/admin/courses/${id}`, { method: "DELETE" });
       flash("✅ Curso eliminado", "ok");
-      await loadAll();
-    } catch (e: any) {
-      flash(e?.message || "Error eliminando curso", "err");
+      await loadAll(adminYear);
+    } catch (e) {
+      flash((e as { message?: string })?.message || "Error eliminando curso", "err");
+    }
+  }
+
+  async function openMonitorEdit(courseId: number) {
+    setMonitorEditCourseId(courseId);
+    setMonitorSelectedId("");
+    setMonitorStudents([]);
+    setMonitorLoading(true);
+    try {
+      const res = await apiFetch(`/api/admin/courses/${courseId}/students`);
+      setMonitorStudents(res?.items || []);
+      const current = courses.find((c) => c.id === courseId);
+      setMonitorSelectedId(current?.id_monitor ?? "");
+    } catch (e) {
+      flash((e as { message?: string })?.message || "Error cargando estudiantes", "err");
+      setMonitorEditCourseId(null);
+    } finally {
+      setMonitorLoading(false);
+    }
+  }
+
+  async function saveMonitor(courseId: number) {
+    try {
+      await apiFetch(`/api/admin/courses/${courseId}/monitor`, {
+        method: "PUT",
+        body: JSON.stringify({ id_monitor: monitorSelectedId || null }),
+      });
+      flash("✅ Monitor actualizado", "ok");
+      setMonitorEditCourseId(null);
+      await loadAll(adminYear);
+    } catch (e) {
+      flash((e as { message?: string })?.message || "Error asignando monitor", "err");
     }
   }
 
@@ -935,9 +1000,9 @@ export default function AdminPage() {
       setNewGroupName("");
 
       flash("✅ Materia creada", "ok");
-      await loadAll();
-    } catch (e: any) {
-      flash(e?.message || "Error creando materia", "err");
+      await loadAll(adminYear);
+    } catch (e) {
+      flash((e as { message?: string })?.message || "Error creando materia", "err");
     }
   }
 
@@ -952,9 +1017,9 @@ export default function AdminPage() {
       });
       setNewType("");
       showOk("✅ Tipo creado");
-      await loadAll();
-    } catch (e: any) {
-      showErr(e?.message || "Error creando tipo");
+      await loadAll(adminYear);
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error creando tipo");
     }
   }
 
@@ -962,13 +1027,13 @@ export default function AdminPage() {
     try {
       await apiFetch(`/api/admin/evaluation-types/${id}`, { method: "DELETE" });
       flash("✅ Tipo eliminado", "ok");
-      await loadAll();
-    } catch (e: any) {
-      flash(e?.message || "Error eliminando tipo", "err");
+      await loadAll(adminYear);
+    } catch (e) {
+      flash((e as { message?: string })?.message || "Error eliminando tipo", "err");
     }
   }
 
-  async function assignTeacher() {
+  async function _assignTeacher() {
     const id_teacher = selTeacher;
     const id_class = Number(selClass);
 
@@ -984,8 +1049,8 @@ export default function AdminPage() {
       showOk("✅ Materia Asignada al Profesor");
       setSelTeacher("");
       setSelClass("");
-    } catch (e: any) {
-      showErr(e?.message || "Error asignando teacher");
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error asignando teacher");
     }
   }
 
@@ -1001,8 +1066,8 @@ export default function AdminPage() {
       setAssignMatFilter("ALL");
       setAssignProfFilter("ALL");
       setAssignModFilter("ALL");
-    } catch (e: any) {
-      showErr(e?.message || "Error cargando asignaciones");
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error cargando asignaciones");
     } finally {
       setAssignLoading(false);
     }
@@ -1029,8 +1094,8 @@ export default function AdminPage() {
       });
       showOk("✅ Asignaciones guardadas");
       await loadAssignmentGrid(selAssignCourse, selAssignLevel);
-    } catch (e: any) {
-      showErr(e?.message || "Error guardando asignaciones");
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error guardando asignaciones");
     } finally {
       setAssignSaving(false);
     }
@@ -1071,22 +1136,23 @@ export default function AdminPage() {
         })
       );
       showOk("✅ Evaluación actualizada");
-    } catch (e: any) {
-      showErr(e?.message || "Error al actualizar");
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error al actualizar");
     } finally {
       setEcSavingPercent((p) => ({ ...p, [evalId]: false }));
     }
   }
 
   async function ecHandleDelete(evalId: number) {
+    setEcConfirmDeleteId(null);
     setEcDeleting((p) => ({ ...p, [evalId]: true }));
     try {
       await apiFetch(`/api/admin/evaluations/${evalId}`, { method: "DELETE" });
       setEcExisting((prev) => prev.filter((e) => e.id !== evalId));
       setEcEditPercents((p) => { const n = { ...p }; delete n[evalId]; return n; });
       showOk("✅ Evaluación eliminada");
-    } catch (e: any) {
-      showErr(e?.message || "Error al eliminar");
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error al eliminar");
     } finally {
       setEcDeleting((p) => ({ ...p, [evalId]: false }));
     }
@@ -1114,8 +1180,8 @@ export default function AdminPage() {
       setCrearExamenInitialData(data.item);
       setCrearExamenExamId(ev.id);
       setShowCrearExamen(true);
-    } catch (e: any) {
-      showErr(e?.message || "Error cargando examen");
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error cargando examen");
     }
   }
 
@@ -1129,7 +1195,7 @@ export default function AdminPage() {
     const id_teacher = ecTeacherId;
     if (ecMode !== "class" && !id_teacher) return showErr("Selecciona un profesor.");
 
-    let id_type = Number(ecType);
+    const id_type = Number(ecType);
     const isOtherType = ecType === "__other__";
     const type_text = isOtherType ? ecTypeOther.trim() : "";
 
@@ -1234,8 +1300,8 @@ export default function AdminPage() {
       evs.forEach((e) => { initP[e.id] = String(e.percent); initT[e.id] = e.teacher?.id ?? ""; });
       setEcEditPercents(initP);
       setEcEditTeachers(initT);
-    } catch (e: any) {
-      showErr(e?.message || "Error creando evaluación");
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error creando evaluación");
     } finally {
       setEcCreating(false);
     }
@@ -1270,7 +1336,7 @@ export default function AdminPage() {
     setUCodeJiliu("");
     setUCourseId("");
     setULevelId("");
-    setURoles({ S: false, T: false, A: false, M: false });
+    setURoles({ S: false, T: false, A: false, M: false, E: false });
     setUFoundUser(false);
     setUNotFound(false);
     setUSearching(false);
@@ -1282,9 +1348,9 @@ export default function AdminPage() {
       await apiFetch(`/api/admin/delete-user?cedula=${encodeURIComponent(uCedula)}`, { method: "DELETE" });
       showOk("✅ Persona eliminada");
       resetManualUserForm();
-      await loadAll();
-    } catch (e: any) {
-      showErr(e?.message || "Error eliminando persona");
+      await loadAll(adminYear);
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error eliminando persona");
     }
   }
 
@@ -1310,19 +1376,19 @@ export default function AdminPage() {
         setULevelId("");
         setUCourseId("");
       }
-      const roleMap: Record<string, boolean> = { S: false, T: false, A: false, M: false };
+      const roleMap: Record<string, boolean> = { S: false, T: false, A: false, M: false, E: false };
       (u.roles || []).forEach((r: string) => { if (r in roleMap) roleMap[r] = true; });
-      setURoles(roleMap as Record<"S" | "T" | "A" | "M", boolean>);
+      setURoles(roleMap as Record<"S" | "T" | "A" | "M" | "E", boolean>);
       setUFoundUser(true);
-    } catch (e: any) {
-      if (e?.message?.includes("404") || e?.message?.includes("No encontrado")) {
+    } catch (e) {
+      if ((e as { message?: string })?.message?.includes("404") || (e as { message?: string })?.message?.includes("No encontrado")) {
         setUFoundUser(false);
         setUNotFound(true);
         setUName(""); setUEmail(""); setUCodeJiliu(""); setUCourseId(""); setULevelId("");
-        setURoles({ S: false, T: false, A: false, M: false });
+        setURoles({ S: false, T: false, A: false, M: false, E: false });
         showErr("Persona no encontrada");
       } else {
-        showErr(e?.message || "Error buscando persona");
+        showErr((e as { message?: string })?.message || "Error buscando persona");
       }
     } finally {
       setUSearching(false);
@@ -1344,7 +1410,7 @@ export default function AdminPage() {
     if (needsStudentFields && !uCodeJiliu.trim())     return showErr("Código Jiliu requerido para Estudiante/Monitor.");
     if (needsStudentFields && !uCourseId)             return showErr("Curso requerido para Estudiante/Monitor.");
 
-    const payload: any = { email, name, cedula, roles };
+    const payload: Record<string, unknown> = { email, name, cedula, roles };
     if (needsStudentFields) {
       payload.code_jiliu = uCodeJiliu.trim();
       payload.id_course  = Number(uCourseId);
@@ -1361,9 +1427,9 @@ export default function AdminPage() {
       });
       showOk(uFoundUser ? "✅ Persona actualizada" : "✅ Persona creada");
       resetManualUserForm();
-      await loadAll();
-    } catch (e: any) {
-      showErr(e?.message || "Error guardando persona");
+      await loadAll(adminYear);
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error guardando persona");
     } finally {
       setCreatingUser(false);
     }
@@ -1386,8 +1452,8 @@ export default function AdminPage() {
       a.download = "plantilla_personas.xlsx";
       a.click();
       URL.revokeObjectURL(url);
-    } catch (e: any) {
-      showErr(e?.message || "Error descargando plantilla");
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error descargando plantilla");
     } finally {
       setTemplateLoading(false);
     }
@@ -1424,9 +1490,9 @@ export default function AdminPage() {
       setUploadReport(json?.results || null);
       showOk("✅ Excel procesado");
       if (fileRef.current) fileRef.current.value = "";
-      await loadAll();
-    } catch (e: any) {
-      showErr(e?.message || "Error procesando excel");
+      await loadAll(adminYear);
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error procesando excel");
     } finally {
       setUploading(false);
     }
@@ -1464,14 +1530,14 @@ export default function AdminPage() {
           g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
       }
       setGradeDraft(drafts);
-    } catch (e: any) {
-      showErr(e?.message || "Error cargando notas");
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error cargando notas");
     } finally {
       setGLoadingRoster(false);
     }
   }
 
-  async function loadGradeGrid() {
+  async function _loadGradeGrid() {
     setMsg(null);
     setGLoadingRoster(true);
     setGridClassInfo(null);
@@ -1505,8 +1571,8 @@ export default function AdminPage() {
           g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
       }
       setGradeDraft(drafts);
-    } catch (e: any) {
-      setMsg(e?.message || "Error cargando alumnos/notas");
+    } catch (e) {
+      setMsg((e as { message?: string })?.message || "Error cargando alumnos/notas");
       setGridClassInfo(null);
       setGEvaluations([]);
       setGRoster([]);
@@ -1539,8 +1605,7 @@ export default function AdminPage() {
   function beginEdit(student: StudentRow) {
     const applicableEvals = getStudentApplicableEvaluations(student);
     if (applicableEvals.length === 0) {
-      setMsg(`No hay evaluaciones aplicables para ${student.name}`);
-      flash("❌ No hay evaluaciones para actualizar", "err");
+      showErr(`No hay evaluaciones aplicables para ${student.name}`);
       return;
     }
 
@@ -1581,8 +1646,7 @@ export default function AdminPage() {
     const applicableEvals = getStudentApplicableEvaluations(student);
 
     if (applicableEvals.length === 0) {
-      setMsg(`No hay evaluaciones aplicables para ${student.name}`);
-      flash("❌ No hay evaluaciones para actualizar", "err");
+      showErr(`No hay evaluaciones aplicables para ${student.name}`);
       return;
     }
 
@@ -1623,17 +1687,32 @@ export default function AdminPage() {
         return next;
       });
 
-      flash(`✅ Notas guardadas: ${student.name}`, "ok");
-    } catch (e: any) {
-      setMsg(e?.message || `Error guardando notas de ${student.name}`);
-      flash(`❌ Error guardando: ${student.name}`, "err");
+      // Actualizar gGrades localmente para reflejar las notas guardadas
+      setGGrades((prev) => {
+        const updated = [...prev];
+        for (const ev of applicableEvals) {
+          const key = gradeCellKey(student.id, ev.id);
+          const newGrade = Number(gradeDraft[key]);
+          const idx = updated.findIndex((g) => g.id_student === student.id && g.id_exam === ev.id);
+          if (idx !== -1) {
+            updated[idx] = { ...updated[idx], grade: newGrade, attempts: (updated[idx].attempts ?? 0) + 1 };
+          } else {
+            updated.push({ id_student: student.id, id_exam: ev.id, grade: newGrade, attempts: 1 });
+          }
+        }
+        return updated;
+      });
+
+      showOk(`✅ Notas guardadas: ${student.name}`);
+    } catch (e) {
+      showErr((e as { message?: string })?.message || `Error guardando notas de ${student.name}`);
     } finally {
       setSavingOne((prev) => ({ ...prev, [student.id]: false }));
     }
   }
 
   function downloadExcel() {
-    const materia = gridClassInfo?.name ?? selectedUpsertClass?.name ?? "Grilla";
+    const _materia = gridClassInfo?.name ?? selectedUpsertClass?.name ?? "Grilla";
     const rows = sortedRoster.map((st) => {
       const row: Record<string, string | number> = {
         Cédula: st.cedula,
@@ -1664,10 +1743,10 @@ export default function AdminPage() {
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Notas");
-    XLSX.writeFile(wb, `${materia}.xlsx`);
+    XLSX.writeFile(wb, "consulta_de_notas.xlsx");
   }
 
-  async function saveAll() {
+  async function _saveAll() {
     if (gRoster.length === 0 || gEvaluations.length === 0) return;
 
     setSavingAll(true);
@@ -1707,10 +1786,9 @@ export default function AdminPage() {
         )
       );
 
-      flash("✅ Notas actualizadas para toda la materia", "ok");
-    } catch (e: any) {
-      setMsg(e?.message || "Error actualizando todas las notas");
-      flash("❌ Error actualizando todas", "err");
+      showOk("✅ Notas actualizadas para toda la materia");
+    } catch (e) {
+      showErr((e as { message?: string })?.message || "Error actualizando todas las notas");
     } finally {
       setSavingAll(false);
     }
@@ -1948,44 +2026,64 @@ export default function AdminPage() {
               marginTop: 14,
               padding: 14,
               gridColumn: "1 / span 2",
-              alignItems: "center",
-              justifyContent: "space-between",
+              display: "flex",
               gap: 12,
+              alignItems: "flex-end",
             }}
           >
-            <div>
-              <div style={{ fontWeight: 900, fontSize: 16 }}>¿Qué quieres hacer?</div>
-            </div>
-
-            <div
-              style={{
-                minWidth: 320,
-                padding: 10,
-              }}
-            >
+            <div style={{ flex: 4 }}>
+              <div className="label">¿Qué quieres hacer?</div>
               <select
                 className="select"
+                style={{ width: "100%" }}
                 value={view}
-                onChange={(e) => { setView(e.target.value as AdminView); loadAll(); }}
+                onChange={(e) => { setView(e.target.value as AdminView); loadAll(adminYear); }}
               >
                 <option value="" disabled>¿Qué quieres hacer?...</option>
-                <option value="COURSES">Crear un Curso</option>
+                <option value="COURSES">Crear/Editar Curso</option>
                 <option value="CLASSES">Crear una Materia</option>
                 <option value="TYPES">Crear un tipo de Evaluación</option>
                 <option value="ASSIGN_TEACHER">Asignar Materias a un Profesor</option>
                 <option value="USERS">Crear/Actualizar Persona</option>
                 <option value="UPSERT">Gestionar Notas</option>
                 <option value="EVAL_CRUD">Gestionar Evaluaciones</option>
+                <option value="HABILITAR_EXAMENES">Habilitar Exámenes</option>
+                <option value="ANIO_LECTIVO">Gestionar Año Lectivo</option>
               </select>
             </div>
+            {anioLectivoItems.length > 0 && (
+              <div style={{ flex: 1 }}>
+                <div className="label">Año lectivo</div>
+                <select
+                  className="select"
+                  style={{ width: "100%" }}
+                  value={adminYear ?? ""}
+                  onChange={(e) => {
+                    const y = Number(e.target.value);
+                    setAdminYear(y);
+                    loadAll(y);
+                  }}
+                >
+                  {anioLectivoItems.map(a => (
+                    <option key={a.year} value={a.year}>{a.year}{a.activo ? " ✓" : ""}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
-          {view !== "EVAL_CRUD" && msg   && <div className="msgError" style={{ marginTop: 12 }}>{msg}</div>}
-          {view !== "EVAL_CRUD" && okMsg && <div className="msgOk"    style={{ marginTop: 12 }}>{okMsg}</div>}
+          {isHistoricalYear && (
+            <div style={{ marginTop: 10, padding: "8px 14px", background: "color-mix(in srgb, orange 15%, var(--card) 85%)", borderRadius: 10, fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+              Modo lectura — año {adminYear}. Las modificaciones solo están permitidas en el año lectivo vigente ({adminYearActivo}).
+            </div>
+          )}
+
+          {view !== "EVAL_CRUD" && view !== "HABILITAR_EXAMENES" && view !== "UPSERT" && msg   && <div className="msgError" style={{ marginTop: 12 }}>{msg}</div>}
+          {view !== "EVAL_CRUD" && view !== "HABILITAR_EXAMENES" && view !== "UPSERT" && okMsg && <div className="msgOk"    style={{ marginTop: 12 }}>{okMsg}</div>}
 
           {view === "COURSES" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Crear un Curso</h2>
+              <h2 style={{ marginTop: 0 }}>Crear/Editar Curso</h2>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto auto", gap: 12, alignItems: "flex-end" }}>
                 <div>
@@ -2043,6 +2141,8 @@ export default function AdminPage() {
                 <button
                   className="btn"
                   onClick={createCourse}
+                  disabled={isHistoricalYear}
+                  title={isHistoricalYear ? `Solo se puede modificar el año vigente (${adminYearActivo})` : undefined}
                   style={{ padding: "10px 16px", whiteSpace: "nowrap" }}
                 >
                   Crear
@@ -2057,14 +2157,13 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
+              <div style={{ marginTop: 16 }}>
                 <div
                   style={{
                     overflow: "hidden",
                     borderRadius: 18,
                     border: "1px solid var(--stroke)",
                     width: "100%",
-                    maxWidth: 560,
                   }}
                 >
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -2073,19 +2172,20 @@ export default function AdminPage() {
                         <th style={{ textAlign: "center", padding: 12 }}>Nivel</th>
                         <th style={{ textAlign: "center", padding: 12 }}>Año</th>
                         <th style={{ textAlign: "center", padding: 12 }}>Curso</th>
+                        <th style={{ textAlign: "left",   padding: 12 }}>Monitor</th>
                         <th style={{ textAlign: "center", padding: 12 }}></th>
                       </tr>
                     </thead>
                     <tbody>
                       {!newCourseYear ? (
                         <tr>
-                          <td colSpan={4} style={{ padding: 12, color: "var(--muted)", textAlign: "center" }}>
+                          <td colSpan={5} style={{ padding: 12, color: "var(--muted)", textAlign: "center" }}>
                             Selecciona un año para ver los cursos existentes
                           </td>
                         </tr>
                       ) : courses.filter((c) => String(c.year) === newCourseYear).length === 0 ? (
                         <tr>
-                          <td colSpan={4} style={{ padding: 12, color: "var(--muted)", textAlign: "center" }}>
+                          <td colSpan={5} style={{ padding: 12, color: "var(--muted)", textAlign: "center" }}>
                             No hay cursos para el año {newCourseYear}
                           </td>
                         </tr>
@@ -2093,25 +2193,74 @@ export default function AdminPage() {
                         courses
                           .filter((c) => String(c.year) === newCourseYear)
                           .map((c, idx) => {
-                            const hasUsers = (c.user_count ?? 0) > 0;
+                            const hasUsers      = (c.user_count ?? 0) > 0;
+                            const isEditingMon  = monitorEditCourseId === c.id;
                             return (
                               <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)", background: getGrillaBaseRowBg(idx, isDarkThemeEnabled()) }}>
                                 <td style={{ padding: 12, textAlign: "center" }}>{levels.find((l) => l.id === Number(c.level))?.name ?? c.level}</td>
                                 <td style={{ padding: 12, textAlign: "center" }}>{c.year ?? "—"}</td>
                                 <td style={{ padding: 12, textAlign: "center", fontWeight: 500 }}>{c.name}</td>
+
+                                {/* Columna Monitor */}
+                                <td style={{ padding: "8px 12px" }}>
+                                  {isEditingMon ? (
+                                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                      <select
+                                        className="select"
+                                        style={{ flex: 1, fontSize: 13, padding: "4px 8px" }}
+                                        value={monitorSelectedId}
+                                        onChange={(e) => setMonitorSelectedId(e.target.value)}
+                                        disabled={monitorLoading}
+                                      >
+                                        <option value="">Sin monitor</option>
+                                        {monitorStudents.map((s) => (
+                                          <option key={s.id} value={s.id}>{s.name}</option>
+                                        ))}
+                                      </select>
+                                      <button
+                                        onClick={() => saveMonitor(c.id)}
+                                        style={{ padding: "4px 10px", borderRadius: 7, border: "none", background: "#16a34a", color: "#fff", fontWeight: 600, fontSize: 12, cursor: "pointer" }}
+                                      >
+                                        Guardar
+                                      </button>
+                                      <button
+                                        onClick={() => setMonitorEditCourseId(null)}
+                                        style={{ padding: "4px 10px", borderRadius: 7, border: "none", background: "#6b7280", color: "#fff", fontWeight: 600, fontSize: 12, cursor: "pointer" }}
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                      <span style={{ fontSize: 13, color: c.monitor_name ? "var(--text)" : "var(--muted)" }}>
+                                        {c.monitor_name ?? "—"}
+                                      </span>
+                                      {!isHistoricalYear && (
+                                        <button
+                                          onClick={() => openMonitorEdit(c.id)}
+                                          title="Asignar monitor"
+                                          style={{ padding: "2px 8px", borderRadius: 7, border: "1px solid var(--stroke)", background: "transparent", color: "var(--text)", fontSize: 12, cursor: "pointer" }}
+                                        >
+                                          ✎
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+
                                 <td style={{ padding: "8px 12px", textAlign: "center" }}>
                                   <button
-                                    disabled={hasUsers}
-                                    title={hasUsers ? "No se puede eliminar: tiene estudiantes asignados" : "Eliminar curso"}
+                                    disabled={hasUsers || isHistoricalYear}
+                                    title={isHistoricalYear ? `Solo se puede modificar el año vigente (${adminYearActivo})` : hasUsers ? "No se puede eliminar: tiene estudiantes asignados" : "Eliminar curso"}
                                     onClick={() => deleteCourse(c.id)}
                                     style={{
                                       padding: "4px 12px",
                                       borderRadius: 8,
                                       border: "none",
-                                      background: hasUsers ? "var(--muted)" : "#ef4444",
+                                      background: (hasUsers || isHistoricalYear) ? "var(--muted)" : "#ef4444",
                                       color: "#fff",
-                                      cursor: hasUsers ? "not-allowed" : "pointer",
-                                      opacity: hasUsers ? 0.45 : 1,
+                                      cursor: (hasUsers || isHistoricalYear) ? "not-allowed" : "pointer",
+                                      opacity: (hasUsers || isHistoricalYear) ? 0.45 : 1,
                                       fontSize: 13,
                                       fontWeight: 600,
                                     }}
@@ -2195,6 +2344,8 @@ export default function AdminPage() {
                 <button
                   className="btn"
                   onClick={createClass}
+                  disabled={isHistoricalYear}
+                  title={isHistoricalYear ? `Solo se puede modificar el año vigente (${adminYearActivo})` : undefined}
                   style={{ padding: "10px 16px", whiteSpace: "nowrap" }}
                 >
                   Guardar
@@ -2214,7 +2365,7 @@ export default function AdminPage() {
                     setTblFilterModule("");
                     setTblFilterGroup("");
                     setTblFilterName("");
-                    loadAll();
+                    loadAll(adminYear);
                   }}
                 >
                   Cancelar
@@ -2341,13 +2492,13 @@ export default function AdminPage() {
                 return (
                   <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, alignItems: "end", marginBottom: 12 }}>
                     <div>
-                      <div className="label">Año</div>
+                      <div className="label">Nivel</div>
                       <select
                         className="select"
                         value={ecLevel}
                         onChange={(e) => setEcLevel(Number(e.target.value))}
                       >
-                        <option value={0} disabled>Seleccionar año...</option>
+                        <option value={0} disabled>Seleccionar nivel...</option>
                         <option value={-1} style={{ fontWeight: 700 }}>Todos</option>
                         {levels.map((x) => (
                           <option key={x.id} value={x.id}>{x.name}</option>
@@ -2386,7 +2537,8 @@ export default function AdminPage() {
                       <button
                         className="btn"
                         style={{ marginTop: 0, padding: "12px 48px", opacity: scopeReady ? 1 : 0.35, whiteSpace: "nowrap" }}
-                        disabled={ecCreating || !scopeReady}
+                        disabled={ecCreating || !scopeReady || isHistoricalYear}
+                        title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
                         onClick={ecHandleCreate}
                       >
                         {ecCreating ? "..." : "Crear"}
@@ -2550,20 +2702,24 @@ export default function AdminPage() {
                     No hay evaluaciones para la selección actual.
                   </div>
                 ) : (
-                  <div style={{ borderRadius: 14, border: "1px solid var(--stroke)", overflow: "hidden" }}>
+                  <div style={{ borderRadius: 14, border: "1px solid var(--stroke)", overflow: "hidden", overflowX: "auto" }}>
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "1.5fr 1.2fr 0.9fr 1.2fr 100px 70px 70px",
-                        padding: "12px 16px",
+                        gridTemplateColumns: "0.25fr 1.2fr 1.05fr 1fr 0.9fr 1fr 1.4fr 76px 70px 70px",
+                        padding: "10px 16px",
                         background: "rgba(14,165,233,.06)",
                         borderBottom: "1px solid var(--stroke)",
                         fontWeight: 700,
-                        fontSize: 13,
+                        fontSize: 12,
                         gap: 8,
+                        minWidth: 900,
                       }}
                     >
                       <div style={{ color: "var(--label)" }}>Curso</div>
+                      <div style={{ color: "var(--label)" }}>Módulo</div>
+                      <div style={{ color: "var(--label)" }}>Grupo</div>
+                      <div style={{ color: "var(--label)" }}>Materia</div>
                       <div style={{ color: "var(--label)" }}>Tipo</div>
                       <div style={{ color: "var(--label)" }}>Evaluación</div>
                       <div style={{ color: "var(--label)" }}>Profesor</div>
@@ -2577,15 +2733,19 @@ export default function AdminPage() {
                         key={ev.id}
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "1.5fr 1.2fr 0.9fr 1.2fr 100px 70px 70px",
-                          padding: "12px 16px",
+                          gridTemplateColumns: "0.25fr 1.2fr 1.05fr 1fr 0.9fr 1fr 1.4fr 76px 70px 70px",
+                          padding: "10px 16px",
                           alignItems: "center",
                           borderBottom: "1px solid var(--stroke)",
-                          fontSize: 13,
+                          fontSize: 12,
                           gap: 8,
+                          minWidth: 900,
                         }}
                       >
                         <div style={{ color: "var(--muted)" }}>{ev.course?.name ?? "—"}</div>
+                        <div style={{ color: "var(--muted)" }}>{ev.module?.name ?? "—"}</div>
+                        <div style={{ color: "var(--muted)" }}>{ev.group?.name ?? "—"}</div>
+                        <div style={{ color: "var(--muted)" }}>{ev.class?.name ?? "—"}</div>
                         <div style={{ color: "var(--muted)" }}>{ev.evaluation_type?.type ?? "—"}</div>
                         <div style={{ fontWeight: 500 }}>{ev.title}</div>
                         <div>
@@ -2632,7 +2792,8 @@ export default function AdminPage() {
                               type="button"
                               className="btnLight"
                               style={{ fontSize: 12, padding: "8px 14px", borderRadius: 8, width: "100%" }}
-                              disabled={ecSavingPercent[ev.id]}
+                              disabled={ecSavingPercent[ev.id] || isHistoricalYear}
+                              title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
                               onClick={() => ecHandleSavePercent(ev.id)}
                             >
                               {ecSavingPercent[ev.id] ? "..." : "Guardar"}
@@ -2651,8 +2812,9 @@ export default function AdminPage() {
                               color: "#fff",
                               borderColor: "#ef4444",
                             }}
-                            disabled={ecDeleting[ev.id]}
-                            onClick={() => ecHandleDelete(ev.id)}
+                            disabled={ecDeleting[ev.id] || isHistoricalYear}
+                            title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
+                            onClick={() => setEcConfirmDeleteId(ev.id)}
                           >
                             {ecDeleting[ev.id] ? "..." : "Eliminar"}
                           </button>
@@ -2680,14 +2842,14 @@ export default function AdminPage() {
                     placeholder="Ej: Quiz, Parcial, Final..."
                   />
                 </div>
-                <button className="btn" onClick={createEvalType} style={{ padding: "10px 16px", whiteSpace: "nowrap" }}>
+                <button className="btn" onClick={createEvalType} disabled={isHistoricalYear} title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined} style={{ padding: "10px 16px", whiteSpace: "nowrap" }}>
                   Crear tipo
                 </button>
                 <button
                   type="button"
                   className="btn"
                   style={{ padding: "10px 16px", whiteSpace: "nowrap", background: "#4b5563", borderColor: "#4b5563" }}
-                  onClick={() => { setNewType(""); loadAll(); }}
+                  onClick={() => { setNewType(""); loadAll(adminYear); }}
                 >
                   Cancelar
                 </button>
@@ -2725,17 +2887,17 @@ export default function AdminPage() {
                               <td style={{ padding: "12px 12px 12px 20px", textAlign: "left", fontWeight: 500 }}>{t.type}</td>
                               <td style={{ padding: "8px 12px", textAlign: "center" }}>
                                 <button
-                                  disabled={inUse}
-                                  title={inUse ? "No se puede eliminar: tiene evaluaciones asociadas" : "Eliminar tipo"}
+                                  disabled={inUse || isHistoricalYear}
+                                  title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : inUse ? "No se puede eliminar: tiene evaluaciones asociadas" : "Eliminar tipo"}
                                   onClick={() => deleteEvalType(t.id)}
                                   style={{
                                     padding: "4px 12px",
                                     borderRadius: 8,
                                     border: "none",
-                                    background: inUse ? "var(--muted)" : "#ef4444",
+                                    background: (inUse || isHistoricalYear) ? "var(--muted)" : "#ef4444",
                                     color: "#fff",
-                                    cursor: inUse ? "not-allowed" : "pointer",
-                                    opacity: inUse ? 0.45 : 1,
+                                    cursor: (inUse || isHistoricalYear) ? "not-allowed" : "pointer",
+                                    opacity: (inUse || isHistoricalYear) ? 0.45 : 1,
                                     fontSize: 13,
                                     fontWeight: 600,
                                   }}
@@ -2811,7 +2973,8 @@ export default function AdminPage() {
                   className="btn"
                   style={{ alignSelf: "flex-end" }}
                   onClick={saveAssignmentGrid}
-                  disabled={assignSaving || assignGrid.length === 0}
+                  disabled={assignSaving || assignGrid.length === 0 || isHistoricalYear}
+                  title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
                 >
                   {assignSaving ? "Guardando..." : "Guardar"}
                 </button>
@@ -3033,15 +3196,23 @@ export default function AdminPage() {
                       </div>
                     )}
 
-                    <button className="btn" onClick={createUserManual} disabled={creatingUser} style={{ height: 42 }}>
+                    <button
+                      className="btn"
+                      onClick={createUserManual}
+                      disabled={creatingUser || isHistoricalYear}
+                      title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
+                      style={{ height: 42 }}
+                    >
                       {creatingUser ? "Guardando..." : "Guardar"}
                     </button>
                     {uFoundUser && (
                       <button
                         type="button"
                         className="btn"
-                        style={{ height: 42, background: "#dc2626", borderColor: "#b91c1c" }}
+                        style={{ height: 42, background: "#dc2626", borderColor: "#b91c1c", opacity: isHistoricalYear ? 0.45 : 1, cursor: isHistoricalYear ? "not-allowed" : "pointer" }}
                         onClick={deleteUser}
+                        disabled={isHistoricalYear}
+                        title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
                       >
                         Eliminar
                       </button>
@@ -3060,15 +3231,11 @@ export default function AdminPage() {
 
               {/* ── Fila 2: Cargue masivo ── */}
               <div style={{ padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(34,197,94,.08)", marginTop: 36 }}>
-                <div
-                  onClick={() => setShowMasivo(v => !v)}
-                  style={{ fontWeight: 900, fontSize: 15, marginBottom: showMasivo ? 10 : 0, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, userSelect: "none" }}
-                >
-                  <span style={{ fontSize: 12, transition: "transform .2s", display: "inline-block", transform: showMasivo ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+                <div style={{ fontWeight: 900, fontSize: 15, marginBottom: 10 }}>
                   Cargue masivo
                 </div>
 
-                {showMasivo && <>
+                {<>
                 {/* Input file oculto */}
                 <input
                   ref={fileRef}
@@ -3124,7 +3291,12 @@ export default function AdminPage() {
                     </div>
 
                     {/* Cargar Plantilla */}
-                    <button className="btn" onClick={uploadExcelUsers} disabled={uploading}>
+                    <button
+                      className="btn"
+                      onClick={uploadExcelUsers}
+                      disabled={uploading || isHistoricalYear}
+                      title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
+                    >
                       {uploading ? "Subiendo..." : "↑ Cargar Archivo"}
                     </button>
 
@@ -3156,7 +3328,7 @@ export default function AdminPage() {
                         <div style={{ marginTop: 8 }}>
                           <div style={{ fontWeight: 900, color: "#b91c1c" }}>Errores:</div>
                           <ul style={{ marginTop: 4 }}>
-                            {uploadReport.errors.slice(0, 25).map((x: any, idx: number) => (
+                            {uploadReport.errors.slice(0, 25).map((x: { row: number; error: string }, idx: number) => (
                               <li key={idx} style={{ color: "#b91c1c", fontWeight: 700 }}>Fila {x.row}: {x.error}</li>
                             ))}
                           </ul>
@@ -3187,6 +3359,9 @@ export default function AdminPage() {
                 </div>
 
               </div>
+
+              {msg   && <div className="msgError" style={{ marginTop: 12 }}>{msg}</div>}
+              {okMsg && <div className="msgOk"    style={{ marginTop: 12 }}>{okMsg}</div>}
 
               <div style={{ display: "flex", gap: 12, marginTop: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
                 {/* Año */}
@@ -3407,6 +3582,7 @@ export default function AdminPage() {
                                       padding: "4px 10px",
                                       borderBottom: GRILLA.headerBottomBorder,
                                       fontSize: 11,
+                                      fontWeight: 700,
                                       textAlign: "center",
                                       background: GRILLA.headerBgLight,
                                       borderLeft: "1px solid var(--stroke)",
@@ -3522,7 +3698,18 @@ export default function AdminPage() {
                                   borderLeft: upsertClassFilter === "all" ? "1px solid var(--stroke)" : undefined,
                                 }}
                               >
-                                {getEvaluationColumnLabel(ev)}
+                                {(() => {
+                                  const typeLabel = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim();
+                                  const showTitle = ev.title && ev.title.trim() !== typeLabel;
+                                  return (
+                                    <div style={{ lineHeight: 1.3 }}>
+                                      <div>{typeLabel} ({Number(ev.percent).toFixed(0)}%)</div>
+                                      {showTitle && (
+                                        <div style={{ fontSize: 11, opacity: 0.8 }}>{ev.title}</div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                               </th>
                             ))}
 
@@ -3793,7 +3980,8 @@ export default function AdminPage() {
                                       <button
                                         className="btn"
                                         onClick={() => handleRowAction(st)}
-                                        disabled={isBusy}
+                                        disabled={isBusy || (isEditing && isHistoricalYear)}
+                                        title={(isEditing && isHistoricalYear) ? `Solo año vigente (${adminYearActivo})` : undefined}
                                         style={{
                                           minWidth: 104,
                                           padding: "5px 10px",
@@ -3853,6 +4041,134 @@ export default function AdminPage() {
               )}
             </div>
           )}
+          {view === "HABILITAR_EXAMENES" && (
+            <HabilitarExamenes courses={courses} />
+          )}
+
+          {view === "ANIO_LECTIVO" && (
+            <div className="card" style={{ marginTop: 18 }}>
+              <h2 style={{ marginTop: 0 }}>Años Lectivos</h2>
+
+              {/* Lista de años */}
+              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 28 }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left", padding: "6px 12px", borderBottom: "1px solid var(--stroke)" }}>Año</th>
+                    <th style={{ textAlign: "left", padding: "6px 12px", borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
+                    <th style={{ textAlign: "center", padding: "6px 12px", borderBottom: "1px solid var(--stroke)" }}>Estado</th>
+                    <th style={{ padding: "6px 12px", borderBottom: "1px solid var(--stroke)" }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {anioLectivoItems.map((a) => (
+                    <tr key={a.year}>
+                      <td style={{ padding: "8px 12px", fontWeight: 700 }}>{a.year}</td>
+                      <td style={{ padding: "8px 12px" }}>{a.nombre}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center" }}>
+                        {a.activo
+                          ? <span style={{ color: "var(--ok, #16a34a)", fontWeight: 700 }}>Vigente</span>
+                          : <span style={{ color: "var(--text-muted, #6b7280)" }}>Inactivo</span>
+                        }
+                      </td>
+                      <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                        {!a.activo && (
+                          alConfirmActivate === a.year ? (
+                            <span style={{ display: "inline-flex", gap: 8 }}>
+                              <button
+                                className="btn"
+                                style={{ padding: "4px 12px", fontSize: 12 }}
+                                disabled={alActivating === a.year}
+                                onClick={async () => {
+                                  setAlActivating(a.year);
+                                  try {
+                                    await apiFetch("/api/admin/anio-lectivo/activo", { method: "PUT", body: JSON.stringify({ year: a.year }) });
+                                    setAlConfirmActivate(null);
+                                    const res = await apiFetch("/api/admin/anio-lectivo");
+                                    const items: AnioLectivoItem[] = res?.items || [];
+                                    setAnioLectivoItems(items);
+                                    const activo = items.find(i => i.activo);
+                                    if (activo) { setAdminYear(activo.year); loadAll(activo.year); }
+                                    showOk(`✅ Año ${a.year} activado`);
+                                  } catch (e) {
+                                    showErr((e as { message?: string })?.message || "Error activando año");
+                                  } finally {
+                                    setAlActivating(null);
+                                  }
+                                }}
+                              >
+                                {alActivating === a.year ? "Activando…" : "Confirmar"}
+                              </button>
+                              <button className="btnSecondary" style={{ padding: "4px 12px", fontSize: 12 }} onClick={() => setAlConfirmActivate(null)}>Cancelar</button>
+                            </span>
+                          ) : (
+                            <button
+                              className="btnSecondary"
+                              style={{ padding: "4px 12px", fontSize: 12 }}
+                              onClick={() => setAlConfirmActivate(a.year)}
+                            >
+                              Activar
+                            </button>
+                          )
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Crear nuevo año */}
+              <h3 style={{ marginTop: 0, marginBottom: 12 }}>Crear nuevo año lectivo</h3>
+              <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+                <div>
+                  <div className="label">Año</div>
+                  <input
+                    className="input"
+                    type="number"
+                    min={2020}
+                    max={2100}
+                    placeholder="ej: 2027"
+                    value={alNewYear}
+                    onChange={(e) => setAlNewYear(e.target.value)}
+                    style={{ width: 100 }}
+                  />
+                </div>
+                <div>
+                  <div className="label">Nombre</div>
+                  <input
+                    className="input"
+                    type="text"
+                    placeholder="ej: Año Lectivo 2027"
+                    value={alNewNombre}
+                    onChange={(e) => setAlNewNombre(e.target.value)}
+                    style={{ width: 220 }}
+                  />
+                </div>
+                <button
+                  className="btn"
+                  disabled={alCreating || !alNewYear || !alNewNombre}
+                  onClick={async () => {
+                    const y = Number(alNewYear);
+                    if (!y || !alNewNombre.trim()) return;
+                    setAlCreating(true);
+                    try {
+                      await apiFetch("/api/admin/anio-lectivo", { method: "POST", body: JSON.stringify({ year: y, nombre: alNewNombre.trim() }) });
+                      setAlNewYear("");
+                      setAlNewNombre("");
+                      const res = await apiFetch("/api/admin/anio-lectivo");
+                      setAnioLectivoItems(res?.items || []);
+                      showOk(`✅ Año ${y} creado`);
+                    } catch (e) {
+                      showErr((e as { message?: string })?.message || "Error creando año");
+                    } finally {
+                      setAlCreating(false);
+                    }
+                  }}
+                >
+                  {alCreating ? "Creando…" : "Crear año"}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </main>
 
@@ -3874,7 +4190,15 @@ export default function AdminPage() {
             if (ecLevel > 0) reloadParams.set("level", String(ecLevel));
             if (ecCourseId)  reloadParams.set("course_id", ecCourseId);
             apiFetch(`/api/admin/evaluations?${reloadParams.toString()}`)
-              .then((r: any) => setEcExisting(r?.items || []))
+              .then((r) => {
+                const evs: EvalItem[] = r?.items || [];
+                setEcExisting(evs);
+                const initP: Record<number, string> = {};
+                const initT: Record<number, string> = {};
+                evs.forEach((e) => { initP[e.id] = String(e.percent); initT[e.id] = e.teacher?.id ?? ""; });
+                setEcEditPercents(initP);
+                setEcEditTeachers(initT);
+              })
               .catch(() => {});
           }}
           onCancel={() => {
@@ -3884,6 +4208,34 @@ export default function AdminPage() {
             setCrearExamenExamId(null);
           }}
         />
+      )}
+
+      {/* Modal confirmar eliminar evaluación */}
+      {ecConfirmDeleteId !== null && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 400,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div className="card" style={{ maxWidth: 380, width: "90%", padding: 32, textAlign: "center" }}>
+            <div style={{ fontSize: 44, marginBottom: 14 }}>⚠️</div>
+            <h3 style={{ margin: "0 0 10px" }}>¿Eliminar evaluación?</h3>
+            <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 24 }}>
+              Se eliminarán también todas las programaciones, notas y respuestas de examen de los estudiantes. Esta acción no se puede deshacer.
+            </p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              <button className="btn"
+                style={{ background: "var(--card)", color: "var(--text)", border: "1px solid var(--stroke)", padding: "10px 24px" }}
+                onClick={() => setEcConfirmDeleteId(null)}>
+                Cancelar
+              </button>
+              <button className="btn"
+                style={{ background: "#ef4444", color: "#fff", borderColor: "#ef4444", padding: "10px 24px" }}
+                onClick={() => ecHandleDelete(ecConfirmDeleteId)}>
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <Footer  />

@@ -8,10 +8,14 @@ import { roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
+import TomarExamen, { type ExamAvailableItem } from "./TomarExamen";
+import VerExamen from "./VerExamen";
 
 type ClassItem = { id: number; name: string; level: number };
 
 type CourseItem = { id: number; name: number; level: number; year: number };
+
+type AnioLectivoItem = { year: number; nombre: string; activo: boolean };
 
 type GradeItem = {
   exam_id: number;
@@ -21,6 +25,8 @@ type GradeItem = {
   grade: number | null;
   finished_at: string | null;
   attempts: number | null;
+  fecha_fin: string | null;
+  fecha_limite_ver: string | null;
 };
 
 type SummaryItem = {
@@ -38,6 +44,7 @@ type SummaryStats = {
   pass_grade: number;
 };
 
+
 const LEVELS = [
   { value: 1, label: "Primer año" },
   { value: 2, label: "Segundo año" },
@@ -48,12 +55,15 @@ const LEVELS = [
 export default function DashboardPage() {
   const router = useRouter();
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [me, setMe] = useState<any>(null);
   const [meLoading, setMeLoading] = useState(true);
 
   const [level, setLevel] = useState<number>(1);
 
   const [studentCourses, setStudentCourses] = useState<CourseItem[]>([]);
+  const [anioLectivoItems, setAnioLectivoItems] = useState<AnioLectivoItem[]>([]);
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
 
   const studentCourseFixed = useMemo(() => me?.course ?? null, [me]);
 
@@ -62,19 +72,30 @@ export default function DashboardPage() {
     return Number.isFinite(lvl) && lvl > 0 ? lvl : null;
   }, [studentCourseFixed]);
 
+  // Courses filtered by selected year (for multi-year history)
+  const coursesForYear = useMemo(() =>
+    selectedYear != null
+      ? studentCourses.filter(c => Number(c.year) === selectedYear)
+      : studentCourses,
+    [studentCourses, selectedYear]
+  );
+
   const availableLevels = useMemo(() =>
-    studentCourses
+    coursesForYear
       .map(c => ({ value: Number(c.level), label: LEVELS.find(l => l.value === Number(c.level))?.label ?? `Nivel ${c.level}` }))
       .sort((a, b) => a.value - b.value),
-    [studentCourses]
+    [coursesForYear]
   );
 
   const selectedCourseForLevel = useMemo(() =>
-    studentCourses.find(c => Number(c.level) === level) ?? null,
-    [studentCourses, level]
+    coursesForYear.find(c => Number(c.level) === level) ?? null,
+    [coursesForYear, level]
   );
 
   const courseId = useMemo(() => selectedCourseForLevel?.id ?? null, [selectedCourseForLevel]);
+
+  const activoYear = useMemo(() => anioLectivoItems.find(a => a.activo)?.year ?? null, [anioLectivoItems]);
+  const isHistoricalYear = selectedYear !== null && activoYear !== null && selectedYear !== activoYear;
 
   const [q, setQ] = useState("");
   const [suggestions, setSuggestions] = useState<ClassItem[]>([]);
@@ -85,7 +106,7 @@ export default function DashboardPage() {
 
   const [loadingGrades, setLoadingGrades] = useState(false);
   const [items, setItems] = useState<GradeItem[]>([]);
-  const [weighted, setWeighted] = useState<number | null>(null);
+  const [, setWeighted] = useState<number | null>(null);
 
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryItems, setSummaryItems] = useState<SummaryItem[]>([]);
@@ -96,6 +117,13 @@ export default function DashboardPage() {
   const debounceRef = useRef<number | null>(null);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // ── Exámenes disponibles ────────────────────────────────────────────────────
+  const [examAvailable, setExamAvailable]     = useState<ExamAvailableItem[]>([]);
+  const [tomarExamenInfo, setTomarExamenInfo] = useState<ExamAvailableItem | null>(null);
+  const [verExamenInfo, setVerExamenInfo]     = useState<ExamAvailableItem | null>(null);
+  const [verExamenEvalId, setVerExamenEvalId] = useState<number | null>(null);
+  const [examLinkMsg, setExamLinkMsg]         = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -130,6 +158,26 @@ export default function DashboardPage() {
   }, [meLoading]);
 
   useEffect(() => {
+    if (meLoading) return;
+    apiFetch("/api/student/anio-lectivo")
+      .then((res) => {
+        const items: AnioLectivoItem[] = res?.items || [];
+        setAnioLectivoItems(items);
+        const activo = items.find(i => i.activo);
+        if (activo) setSelectedYear(activo.year);
+      })
+      .catch(() => {});
+  }, [meLoading]);
+
+  // T25 — cargar exámenes disponibles para el curso del estudiante
+  useEffect(() => {
+    if (meLoading) return;
+    apiFetch("/api/student/exam-available")
+      .then((r) => setExamAvailable(r?.items || []))
+      .catch(() => setExamAvailable([]));
+  }, [meLoading]);
+
+  useEffect(() => {
     setSelectedClass(null);
     setQ("");
     setSuggestions([]);
@@ -139,6 +187,21 @@ export default function DashboardPage() {
     setError(null);
   }, [level]);
 
+  useEffect(() => {
+    setSelectedClass(null);
+    setQ("");
+    setSuggestions([]);
+    setOpenSug(false);
+    setItems([]);
+    setWeighted(null);
+    setError(null);
+    setSummaryItems([]);
+    setSummaryStats(null);
+    // loadSummary runs via the courseId effect; if courseId didn't change, run it explicitly
+    loadSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedYear]);
+
   async function loadSummary() {
     if (!courseId) return;
     setError(null);
@@ -147,7 +210,7 @@ export default function DashboardPage() {
       const res = await apiFetch(`/api/student/subjects-summary?course_id=${courseId}`);
       setSummaryItems(res?.items || []);
       setSummaryStats(res?.stats || null);
-    } catch (e: any) {
+    } catch {
       setSummaryItems([]);
       setSummaryStats(null);
       setError(e?.message || "Error cargando resumen");
@@ -158,7 +221,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     loadSummary();
-  }, [courseId]);
+  }, [courseId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setError(null);
@@ -179,8 +242,8 @@ export default function DashboardPage() {
         );
         setSuggestions(res?.items || []);
         setOpenSug(true);
-      } catch (e: any) {
-        setError(e?.message || "Error buscando materias");
+      } catch (e) {
+        setError((e as { message?: string })?.message || "Error buscando materias");
       } finally {
         setLoadingSug(false);
       }
@@ -191,7 +254,7 @@ export default function DashboardPage() {
     };
   }, [q, level]);
 
-  function pickClass(c: ClassItem) {
+  function _pickClass(c: ClassItem) {
     setSelectedClass(c);
     setQ(c.name);
     setOpenSug(false);
@@ -214,8 +277,8 @@ export default function DashboardPage() {
       const res = await apiFetch(url);
       setItems(res?.items || []);
       setWeighted(typeof res?.weighted === "number" ? res.weighted : null);
-    } catch (e: any) {
-      setError(e?.message || "Error consultando notas");
+    } catch (e) {
+      setError((e as { message?: string })?.message || "Error consultando notas");
     } finally {
       setLoadingGrades(false);
     }
@@ -225,6 +288,36 @@ export default function DashboardPage() {
     await supabase.auth.signOut();
     router.replace("/login");
   }
+
+  // T26 — mapa class_id → examen disponible (solo los no rendidos muestran botón naranja)
+  const examByClassId = useMemo(() => {
+    const m = new Map<number, ExamAvailableItem[]>();
+    for (const ex of examAvailable) {
+      if (ex.class_id) {
+        const arr = m.get(ex.class_id) ?? [];
+        arr.push(ex);
+        m.set(ex.class_id, arr);
+      }
+    }
+    return m;
+  }, [examAvailable]);
+
+  // Orden: 1) con nota  2) con examen activo sin rendir  3) resto — alfabético dentro de cada grupo
+  const sortedSummaryItems = useMemo(() => {
+    return [...summaryItems].sort((a, b) => {
+      const aGrade = a.weighted !== null;
+      const bGrade = b.weighted !== null;
+      const aExam  = !aGrade && (examByClassId.get(a.class_id)?.some(e => !e.ya_rendido) ?? false);
+      const bExam  = !bGrade && (examByClassId.get(b.class_id)?.some(e => !e.ya_rendido) ?? false);
+
+      const rank = (hasGrade: boolean, hasExam: boolean) =>
+        hasGrade ? 0 : hasExam ? 1 : 2;
+
+      const diff = rank(aGrade, aExam) - rank(bGrade, bExam);
+      if (diff !== 0) return diff;
+      return a.name.localeCompare(b.name, "es", { sensitivity: "base" });
+    });
+  }, [summaryItems, examByClassId]);
 
   const PASS_GRADE = summaryStats?.pass_grade ?? 70;
   const gradeTextColor = (value: number | null) => {
@@ -461,15 +554,34 @@ export default function DashboardPage() {
                 </div>
 
                 <div style={{ flex: "0 0 calc(25% - 8px)", minWidth: 0 }}>
-                  <div className="label" style={{ fontWeight: 700, marginBottom: 4, fontSize: 12 }}>Año</div>
-                  <div
+                  <div className="label" style={{ fontWeight: 700, marginBottom: 4, fontSize: 12 }}>Año Lectivo</div>
+                  <select
                     className="select"
-                    style={{ width: "100%", display: "flex", alignItems: "center", cursor: "default", userSelect: "none", fontWeight: 700 }}
+                    value={selectedYear ?? ""}
+                    onChange={(e) => setSelectedYear(Number(e.target.value))}
+                    disabled={anioLectivoItems.length === 0}
+                    style={{ width: "100%", fontWeight: 700 }}
                   >
-                    {selectedCourseForLevel?.year ?? "—"}
-                  </div>
+                    {anioLectivoItems.length === 0
+                      ? <option value="">{selectedCourseForLevel?.year ?? "—"}</option>
+                      : anioLectivoItems.map(a => (
+                          <option key={a.year} value={a.year}>{a.year}</option>
+                        ))
+                    }
+                  </select>
                 </div>
               </div>
+
+              {isHistoricalYear && (
+                <div style={{ marginTop: 12, padding: "6px 12px", background: "color-mix(in srgb, orange 12%, var(--card) 88%)", borderRadius: 8, fontSize: 12, fontWeight: 600, color: "var(--text)", display: "inline-block" }}>
+                  Histórico — {selectedYear}
+                </div>
+              )}
+              {isHistoricalYear && coursesForYear.length === 0 && (
+                <div style={{ marginTop: 12, fontSize: 14, color: "var(--text-muted, #6b7280)" }}>
+                  No hay datos para el año {selectedYear}.
+                </div>
+              )}
 
               <div className="summaryCardsGrid" style={{ marginTop: 28 }}>
                   <div className="summaryCardItem">
@@ -614,7 +726,7 @@ export default function DashboardPage() {
                                   Cargando materias...
                                 </td>
                               </tr>
-                            ) : summaryItems.length === 0 ? (
+                            ) : sortedSummaryItems.length === 0 ? (
                               <tr className="table-row-hover">
                                 <td
                                   colSpan={4}
@@ -625,7 +737,7 @@ export default function DashboardPage() {
                                 </td>
                               </tr>
                             ) : (
-                              summaryItems.map((s) => (
+                              sortedSummaryItems.map((s) => (
                                 <tr key={s.class_id} className="table-row-hover">
                                   <td
                                     className="fit-td fit-wrap"
@@ -655,13 +767,40 @@ export default function DashboardPage() {
                                   </td>
 
                                   <td className="fit-td fit-num">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleConsult({ id: s.class_id, name: s.name })}
-                                      className="btn actionBtn fit-btn"
-                                    >
-                                      Detalle
-                                    </button>
+                                    {/* T26/T27 — botón naranja si hay examen activo y no rendido */}
+                                    {(() => {
+                                      if (!isHistoricalYear) {
+                                        const avList = examByClassId.get(s.class_id) ?? [];
+                                        const av = avList.find(e => !e.ya_rendido);
+                                        if (av) {
+                                          return (
+                                            <button
+                                              type="button"
+                                              className="btn fit-btn"
+                                              style={{
+                                                background: "linear-gradient(180deg,#fb923c 0%,#f97316 100%)",
+                                                color: "#fff",
+                                                border: "1px solid rgba(251,146,60,.82)",
+                                                boxShadow: "0 4px 12px rgba(249,115,22,.3)",
+                                                whiteSpace: "nowrap",
+                                              }}
+                                              onClick={() => setTomarExamenInfo(av)}
+                                            >
+                                              Tomar Examen
+                                            </button>
+                                          );
+                                        }
+                                      }
+                                      return (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleConsult({ id: s.class_id, name: s.name })}
+                                          className="btn actionBtn fit-btn"
+                                        >
+                                          Detalle
+                                        </button>
+                                      );
+                                    })()}
                                   </td>
                                 </tr>
                               ))
@@ -672,7 +811,29 @@ export default function DashboardPage() {
                     </div>
                   )}
 
-                  {selectedClass && (
+                  {selectedClass && (() => {
+                    // Construye ExamAvailableItem para abrir VerExamen
+                    const buildExamInfo = (examId: number): ExamAvailableItem => {
+                      const fromAvailable = (examByClassId.get(selectedClass.id) ?? [])
+                        .find(av => av.id_evaluation === examId);
+                      if (fromAvailable) return fromAvailable;
+                      const it = items.find(i => i.exam_id === examId)!;
+                      return {
+                        id_programacion: 0,
+                        id_evaluation: examId,
+                        title: it.title,
+                        tiempo_minutos: null,
+                        class_id: selectedClass.id,
+                        class_name: selectedClass.name,
+                        module_name: null,
+                        fecha_ini: "",
+                        fecha_fin: "",
+                        fecha_limite_ver: null,
+                        ya_rendido: true,
+                        finalizado_at: it.finished_at,
+                      };
+                    };
+                    return (
                     <div style={{ marginTop: 16 }}>
                       <div
                         style={{
@@ -778,60 +939,120 @@ export default function DashboardPage() {
                                 </td>
                               </tr>
                             ) : (
-                              items.map((it) => (
-                                <tr key={it.exam_id} className="table-row-hover">
-                                  <td
-                                    className="fit-td fit-wrap"
-                                    style={{ fontWeight: 500, color: "var(--text)" }}
-                                  >
-                                    {it.type}
-                                  </td>
+                              items.map((it) => {
+                                const isExamenRendido = it.type === "Examen" && (it.attempts ?? 0) > 0 && !!it.finished_at;
+                                async function handleVerExamenClick() {
+                                  const MESES = ["ENE","FEB","MAR","ABR","MAY","JUN","JUL","AGO","SEP","OCT","NOV","DIC"];
+                                  let fecha_fin: string | null = it.fecha_fin ?? null;
+                                  let fecha_limite_ver: string | null = it.fecha_limite_ver ?? null;
+                                  try {
+                                    const sched = await apiFetch(`/api/student/exam/${it.exam_id}/schedule`);
+                                    fecha_fin        = sched.fecha_fin        ?? null;
+                                    fecha_limite_ver = sched.fecha_limite_ver ?? null;
+                                  } catch { /* usa caché si falla */ }
 
-                                  <td
-                                    className="fit-td fit-wrap"
-                                    style={{ fontWeight: 600, color: "var(--text)" }}
-                                  >
-                                    {it.title}
-                                  </td>
+                                  const fmtCol = (iso: string) => {
+                                    const d = new Date(new Date(iso).toLocaleString("en-US", { timeZone: "America/Bogota" }));
+                                    const hh = d.getHours(), mm = d.getMinutes();
+                                    return `${String(d.getDate()).padStart(2,"0")}-${MESES[d.getMonth()]}-${d.getFullYear()} ${String(hh % 12 || 12).padStart(2,"0")}:${String(mm).padStart(2,"0")}${hh < 12 ? "am" : "pm"}`;
+                                  };
 
-                                  <td className="fit-td fit-num" style={{ color: "var(--text)" }}>
-                                    {Number(it.percent).toFixed(0)}%
-                                  </td>
+                                  const ts  = Date.now();
+                                  const enVentana = isExamenRendido &&
+                                    !!fecha_fin && !!fecha_limite_ver &&
+                                    ts > new Date(fecha_fin).getTime() &&
+                                    ts <= new Date(fecha_limite_ver).getTime();
 
-                                  <td
-                                    className="fit-td fit-num"
-                                    style={{
-                                      fontWeight: 700,
-                                      color: it.attempts === 0 ? "inherit" : gradeTextColor(it.grade),
-                                    }}
-                                  >
-                                    {it.attempts === 0 ? (
-                                      <span
-                                        style={{
-                                          display: "inline-block",
-                                          padding: "2px 4px",
-                                          borderRadius: 4,
-                                          fontSize: 10,
-                                          fontWeight: 700,
-                                          letterSpacing: 0.3,
-                                          background: "rgba(239,68,68,0.1)",
-                                          color: "#dc2626",
-                                          border: "1px solid rgba(239,68,68,0.25)",
-                                          whiteSpace: "nowrap",
-                                        }}
-                                      >
-                                        No Presentó
-                                      </span>
-                                    ) : it.grade === null ? "—" : Number(it.grade).toFixed(2)}
-                                  </td>
+                                  if (enVentana) {
+                                    setExamLinkMsg(null);
+                                    const info = buildExamInfo(it.exam_id);
+                                    setVerExamenInfo(info);
+                                    setVerExamenEvalId(it.exam_id);
+                                  } else {
+                                    let msg: string;
+                                    if (!fecha_limite_ver) {
+                                      msg = "Este examen no tiene período de revisión habilitado.";
+                                    } else if (fecha_fin && ts <= new Date(fecha_fin).getTime()) {
+                                      msg = `El examen aún está en curso. Podrás revisarlo a partir del:\n${fmtCol(fecha_fin)}`;
+                                    } else if (ts > new Date(fecha_limite_ver).getTime()) {
+                                      msg = `El período de revisión se cerró el:\n${fmtCol(fecha_limite_ver)}`;
+                                    } else {
+                                      msg = "No puedes revisar este examen en este momento.";
+                                    }
+                                    setExamLinkMsg(msg);
+                                  }
+                                }
 
-                                  <td className="fit-td fit-date" style={{ color: "var(--text)" }}>
-                                    {it.finished_at
-                                      ? new Date(it.finished_at).toLocaleDateString()
-                                      : "—"}
-                                  </td>
-                                </tr>
-                              ))
+                                return (
+                                  <tr key={it.exam_id} className="table-row-hover">
+                                    <td
+                                      className="fit-td fit-wrap"
+                                      style={{ fontWeight: 500, color: "var(--text)" }}
+                                    >
+                                      {it.type}
+                                    </td>
+
+                                    <td
+                                      className="fit-td fit-wrap"
+                                      style={{ fontWeight: 600 }}
+                                    >
+                                      {isExamenRendido && !isHistoricalYear ? (
+                                        <button
+                                          type="button"
+                                          onClick={handleVerExamenClick}
+                                          style={{
+                                            background: "none", border: "none", padding: 0,
+                                            color: "#3b82f6", textDecoration: "underline",
+                                            cursor: "pointer", fontWeight: 400, fontSize: "inherit",
+                                            textAlign: "left",
+                                          }}
+                                        >
+                                          {it.title}
+                                        </button>
+                                      ) : (
+                                        <span style={{ color: "var(--text)" }}>{it.title}</span>
+                                      )}
+                                    </td>
+
+                                    <td className="fit-td fit-num" style={{ color: "var(--text)" }}>
+                                      {Number(it.percent).toFixed(0)}%
+                                    </td>
+
+                                    <td
+                                      className="fit-td fit-num"
+                                      style={{
+                                        fontWeight: 700,
+                                        color: it.attempts === 0 ? "inherit" : gradeTextColor(it.grade),
+                                      }}
+                                    >
+                                      {it.attempts === 0 ? (
+                                        <span
+                                          style={{
+                                            display: "inline-block",
+                                            padding: "2px 4px",
+                                            borderRadius: 4,
+                                            fontSize: 10,
+                                            fontWeight: 700,
+                                            letterSpacing: 0.3,
+                                            background: "rgba(239,68,68,0.1)",
+                                            color: "#dc2626",
+                                            border: "1px solid rgba(239,68,68,0.25)",
+                                            whiteSpace: "nowrap",
+                                          }}
+                                        >
+                                          No Presentó
+                                        </span>
+                                      ) : it.grade === null ? "—" : Number(it.grade).toFixed(2)}
+                                    </td>
+
+                                    <td className="fit-td fit-date" style={{ color: "var(--text)" }}>
+                                      {it.finished_at
+                                        ? new Date(it.finished_at).toLocaleDateString("es-CO", { timeZone: "America/Bogota" })
+                                        : "—"}
+                                    </td>
+                                  </tr>
+                                );
+                              })
                             )}
                           </tbody>
                         </table>
@@ -842,16 +1063,27 @@ export default function DashboardPage() {
                           marginTop: 12,
                           display: "flex",
                           justifyContent: "flex-end",
+                          gap: 10,
                         }}
                       >
                         <button
                           type="button"
                           onClick={() => {
+                            const openClassId = selectedClass?.id ?? null;
                             setSelectedClass(null);
                             setQ("");
                             setItems([]);
                             setWeighted(null);
+                            setExamLinkMsg(null);
                             loadSummary();
+                            apiFetch("/api/student/exam-available")
+                              .then((r) => setExamAvailable(r?.items || []))
+                              .catch(() => {});
+                            if (openClassId) {
+                              apiFetch(`/api/student/grades?class_id=${openClassId}${courseId ? `&course_id=${courseId}` : ""}`)
+                                .then((r) => { setItems(r?.items || []); setWeighted(typeof r?.weighted === "number" ? r.weighted : null); })
+                                .catch(() => {});
+                            }
                           }}
                           className="btn yearRefreshBtn"
                           style={{
@@ -868,12 +1100,88 @@ export default function DashboardPage() {
                         </button>
                       </div>
                     </div>
-                  )}
+                    );
+                  })()}
                 </>
             </section>
           </div>
         </div>
       </main>
+
+      {/* T27 — Overlay TomarExamen */}
+      {tomarExamenInfo && (
+        <TomarExamen
+          examInfo={tomarExamenInfo}
+          me={me}
+          onClose={(submitted) => {
+            setTomarExamenInfo(null);
+            if (submitted) {
+              apiFetch("/api/student/exam-available")
+                .then((r) => setExamAvailable(r?.items || []))
+                .catch(() => {});
+              loadSummary();
+              if (selectedClass?.id) {
+                apiFetch(`/api/student/grades?class_id=${selectedClass.id}${courseId ? `&course_id=${courseId}` : ""}`)
+                  .then((r) => { setItems(r?.items || []); setWeighted(typeof r?.weighted === "number" ? r.weighted : null); })
+                  .catch(() => {});
+              }
+            }
+          }}
+          onFinished={(id_evaluation) => {
+            // Guardar contexto para VerExamen, cerrar TomarExamen
+            setVerExamenInfo(tomarExamenInfo);
+            setVerExamenEvalId(id_evaluation);
+            setTomarExamenInfo(null);
+          }}
+        />
+      )}
+
+      {/* Modal mensaje Ver Examen fuera de ventana */}
+      {examLinkMsg && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 400,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div className="card" style={{ maxWidth: 360, width: "90%", padding: 32, textAlign: "center" }}>
+            <div style={{ fontSize: 44, marginBottom: 14 }}>ℹ️</div>
+            <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 24 }}>
+              {examLinkMsg?.includes("\n") ? (
+                <>
+                  <span>{examLinkMsg.split("\n")[0]}</span>
+                  <br />
+                  <strong style={{ color: "var(--text)", fontSize: 15, whiteSpace: "nowrap" }}>{examLinkMsg.split("\n")[1]}</strong>
+                </>
+              ) : examLinkMsg}
+            </p>
+            <button className="btn" style={{ padding: "10px 32px" }} onClick={() => setExamLinkMsg(null)}>
+              Aceptar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* T34-T37 — Overlay VerExamen */}
+      {verExamenInfo && verExamenEvalId && (
+        <VerExamen
+          id_evaluation={verExamenEvalId}
+          examInfo={verExamenInfo}
+          me={me}
+          onClose={() => {
+            // T38 — Bloque 9: refrescar al regresar
+            setVerExamenInfo(null);
+            setVerExamenEvalId(null);
+            apiFetch("/api/student/exam-available")
+              .then((r) => setExamAvailable(r?.items || []))
+              .catch(() => {});
+            loadSummary();
+            if (selectedClass?.id) {
+              apiFetch(`/api/student/grades?class_id=${selectedClass.id}${courseId ? `&course_id=${courseId}` : ""}`)
+                .then((r) => { setItems(r?.items || []); setWeighted(typeof r?.weighted === "number" ? r.weighted : null); })
+                .catch(() => {});
+            }
+          }}
+        />
+      )}
 
       <Footer />
     </div>

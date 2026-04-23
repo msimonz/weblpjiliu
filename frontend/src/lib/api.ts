@@ -67,7 +67,7 @@ function buildHeaders(
 async function parseResponse(res: Response) {
   const text = await res.text();
 
-  let json: any = null;
+  let json: unknown = null;
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
@@ -77,6 +77,7 @@ async function parseResponse(res: Response) {
   return { text, json };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function apiFetch<T = any>(path: string, init: ApiFetchOptions = {}): Promise<T> {
   const {
     skipAuthRedirect = false,
@@ -109,8 +110,8 @@ export async function apiFetch<T = any>(path: string, init: ApiFetchOptions = {}
 
   try {
     res = await doRequest(token);
-  } catch (e: any) {
-    throw new Error(e?.message || "No se pudo conectar con el servidor");
+  } catch (e) {
+    throw new Error((e as { message?: string })?.message || "No se pudo conectar con el servidor");
   }
 
   if (requireAuth && res.status === 401) {
@@ -120,8 +121,8 @@ export async function apiFetch<T = any>(path: string, init: ApiFetchOptions = {}
       token = refreshed;
       try {
         res = await doRequest(token);
-      } catch (e: any) {
-        throw new Error(e?.message || "No se pudo conectar con el servidor");
+      } catch (e) {
+        throw new Error((e as { message?: string })?.message || "No se pudo conectar con el servidor");
       }
     }
   }
@@ -134,10 +135,8 @@ export async function apiFetch<T = any>(path: string, init: ApiFetchOptions = {}
   }
 
   if (!res.ok) {
-    const msg =
-      (json && (json.error || json.message)) ||
-      text ||
-      `HTTP ${res.status}`;
+    const j = json as Record<string, string> | null;
+    const msg = (j && (j.error || j.message)) || text || `HTTP ${res.status}`;
     throw new Error(msg);
   }
 

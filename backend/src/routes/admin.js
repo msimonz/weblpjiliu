@@ -4,6 +4,13 @@ import XLSX from "xlsx";
 import ExcelJS from "exceljs";
 import { requireAuth } from "../middlewares/auth.js";
 import { supabaseAdmin } from "../supabase.js";
+import {
+  getAnioLectivoVigente,
+  invalidarCacheAnioLectivo,
+  requireAnioVigenteForCourse,
+  requireAnioVigenteForRecord,
+  handleYearError,
+} from "../lib/anioLectivo.js";
 
 export const adminRouter = Router();
 
@@ -11,6 +18,13 @@ export const adminRouter = Router();
 function requireAdmin(req, res, next) {
   const roles = req.auth?.roles || [];
   if (!roles.includes("A")) return res.status(403).json({ error: "Solo Admin" });
+  return next();
+}
+
+// ===== Middleware: Admin o Secretaría (solo lectura) =====
+function requireAdminOrSecretary(req, res, next) {
+  const roles = req.auth?.roles || [];
+  if (!roles.includes("A") && !roles.includes("E")) return res.status(403).json({ error: "Sin acceso" });
   return next();
 }
 
@@ -142,25 +156,39 @@ async function getStudentsByCourseIds(courseIds) {
   return (users || []).filter((u) => studentSet.has(u.id));
 }
 
-async function resolveEvaluationTypeId(id_type, type_text) {
+// Devuelve todos los IDs de evaluation_type con un nombre dado (todos los años).
+// Usar en operaciones de lectura que necesitan filtrar por tipo sin importar el año.
+async function getEvaluationTypeIdsByName(typeName) {
+  const { data } = await supabaseAdmin
+    .from("evaluation_type")
+    .select("id")
+    .eq("type", typeName);
+  return (data || []).map((r) => r.id);
+}
+
+// Para escrituras: busca o crea el tipo en el año especificado.
+// year es obligatorio cuando se crea un nuevo tipo.
+async function resolveEvaluationTypeId(id_type, type_text, year) {
   let typeId = Number(id_type || 0);
   if (typeId) return typeId;
 
   const raw = cleanStr(type_text);
   if (!raw) throw new Error("Selecciona un tipo o escribe type_text");
 
-  const { data: existing, error: exErr } = await supabaseAdmin
-    .from("evaluation_type")
-    .select("id,type")
-    .eq("type", raw)
-    .maybeSingle();
+  // Buscar por (type, year)
+  let q = supabaseAdmin.from("evaluation_type").select("id,type").eq("type", raw);
+  if (year) q = q.eq("year", year);
+  const { data: existing, error: exErr } = await q.maybeSingle();
 
   if (exErr) throw new Error(exErr.message);
   if (existing?.id) return existing.id;
 
+  // Crear con year
+  const insertPayload = { type: raw };
+  if (year) insertPayload.year = year;
   const { data: created, error: crErr } = await supabaseAdmin
     .from("evaluation_type")
-    .insert({ type: raw })
+    .insert(insertPayload)
     .select("id,type")
     .maybeSingle();
 
@@ -171,29 +199,36 @@ async function resolveEvaluationTypeId(id_type, type_text) {
 // ============================================================================
 // 0) LEVELS / MODULES / GROUPS
 // ============================================================================
-adminRouter.get("/levels", requireAuth, requireAdmin, async (req, res) => {
+adminRouter.get("/levels", requireAuth, requireAdminOrSecretary, async (req, res) => {
+  const year = toInt(req.query.year) || (await getAnioLectivoVigente());
   const { data, error } = await supabaseAdmin
     .from("level")
-    .select("id,name")
+    .select("id,name,year")
+    .eq("year", year)
     .order("id", { ascending: true });
 
   if (error) return res.status(500).json({ error: error.message });
   return res.json({ items: data || [] });
 });
-adminRouter.get("/modules", requireAuth, requireAdmin, async (req, res) => {
+
+adminRouter.get("/modules", requireAuth, requireAdminOrSecretary, async (req, res) => {
+  const year = toInt(req.query.year) || (await getAnioLectivoVigente());
   const { data, error } = await supabaseAdmin
     .from("module")
-    .select("id,name")
+    .select("id,name,year")
+    .eq("year", year)
     .order("name", { ascending: true });
 
   if (error) return res.status(500).json({ error: error.message });
   return res.json({ items: data || [] });
 });
 
-adminRouter.get("/groups", requireAuth, requireAdmin, async (req, res) => {
+adminRouter.get("/groups", requireAuth, requireAdminOrSecretary, async (req, res) => {
+  const year = toInt(req.query.year) || (await getAnioLectivoVigente());
   const { data, error } = await supabaseAdmin
     .from("group")
-    .select("id,name,id_module")
+    .select("id,name,id_module,year")
+    .eq("year", year)
     .order("name", { ascending: true });
 
   if (error) return res.status(500).json({ error: error.message });
@@ -203,30 +238,47 @@ adminRouter.get("/groups", requireAuth, requireAdmin, async (req, res) => {
 // ============================================================================
 // 1) COURSES
 // ============================================================================
-adminRouter.get("/courses", requireAuth, requireAdmin, async (req, res) => {
+adminRouter.get("/courses", requireAuth, requireAdminOrSecretary, async (req, res) => {
+  const yearFilter = toInt(req.query.year) || (await getAnioLectivoVigente());
   const { data, error } = await supabaseAdmin
     .from("course")
-    .select("id,name,year,level")
+    .select("id,name,year,level,id_monitor")
+    .eq("year", yearFilter)
     .order("level", { ascending: true })
-    .order("year", { ascending: false })
     .order("name", { ascending: true });
 
   if (error) return res.status(500).json({ error: error.message });
 
-  const { data: usedRows, error: usedErr } = await supabaseAdmin
-    .from("users")
-    .select("id_course")
-    .not("id_course", "is", null);
+  const courseIds = (data || []).map((c) => c.id);
+  const { data: usedRows, error: usedErr } = courseIds.length > 0
+    ? await supabaseAdmin
+        .from("users")
+        .select("id_course")
+        .in("id_course", courseIds)
+    : { data: [], error: null };
 
   if (usedErr) return res.status(500).json({ error: usedErr.message });
 
+  // Cargar nombres de monitores asignados
+  const monitorIds = [...new Set((data || []).map((c) => c.id_monitor).filter(Boolean))];
+  let monitorMap = new Map();
+  if (monitorIds.length > 0) {
+    const { data: monitorRows } = await supabaseAdmin
+      .from("users")
+      .select("id,name")
+      .in("id", monitorIds);
+    monitorMap = new Map((monitorRows || []).map((u) => [u.id, u.name]));
+  }
+
   const usedSet = new Set((usedRows || []).map((r) => String(r.id_course)));
   const items = (data || []).map((c) => ({
-    id: c.id,
-    name: c.name,
-    year: c.year,
-    level: c.level,
-    user_count: usedSet.has(String(c.id)) ? 1 : 0,
+    id:           c.id,
+    name:         c.name,
+    year:         c.year,
+    level:        c.level,
+    user_count:   usedSet.has(String(c.id)) ? 1 : 0,
+    id_monitor:   c.id_monitor   ?? null,
+    monitor_name: monitorMap.get(c.id_monitor) ?? null,
   }));
   return res.json({ items });
 });
@@ -234,6 +286,9 @@ adminRouter.get("/courses", requireAuth, requireAdmin, async (req, res) => {
 adminRouter.delete("/courses/:id", requireAuth, requireAdmin, async (req, res) => {
   const id = toInt(req.params.id);
   if (!id) return res.status(400).json({ error: "id inválido" });
+
+  try { await requireAnioVigenteForRecord("course", id); }
+  catch (err) { return handleYearError(res, err); }
 
   const { count, error: checkErr } = await supabaseAdmin
     .from("users")
@@ -251,17 +306,18 @@ adminRouter.delete("/courses/:id", requireAuth, requireAdmin, async (req, res) =
 adminRouter.post("/courses", requireAuth, requireAdmin, async (req, res) => {
   const name = cleanStr(req.body?.name);
   const level = toInt(req.body?.level);
-  const year = toInt(req.body?.year);
+  const vigente = await getAnioLectivoVigente();
+  const year = toInt(req.body?.year) || vigente;
 
   if (!name) return res.status(400).json({ error: "name requerido" });
   if (!level) return res.status(400).json({ error: "level requerido" });
-
-  const payload = { name, level };
-  if (year) payload.year = year;
+  if (year !== vigente) {
+    return res.status(403).json({ error: `Solo se pueden crear cursos para el año lectivo vigente (${vigente})` });
+  }
 
   const { data, error } = await supabaseAdmin
     .from("course")
-    .insert(payload)
+    .insert({ name, level, year })
     .select("id,name,year,level")
     .maybeSingle();
 
@@ -270,9 +326,148 @@ adminRouter.post("/courses", requireAuth, requireAdmin, async (req, res) => {
 });
 
 // ============================================================================
+// T14 — GET /api/admin/courses/:id/students
+// Estudiantes del curso (para dropdown Monitor en UI)
+// ============================================================================
+adminRouter.get("/courses/:id/students", requireAuth, requireAdmin, async (req, res) => {
+  const courseId = toInt(req.params.id);
+  if (!courseId) return res.status(400).json({ error: "id inválido" });
+
+  try {
+    const { data: typeRow } = await supabaseAdmin
+      .from("type")
+      .select("id")
+      .eq("code", "S")
+      .maybeSingle();
+
+    if (!typeRow?.id) return res.status(500).json({ error: "Tipo S no encontrado" });
+
+    const { data: users, error: uErr } = await supabaseAdmin
+      .from("users")
+      .select("id,name,cedula")
+      .eq("id_course", courseId)
+      .order("name", { ascending: true });
+
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    if (!users?.length) return res.json({ items: [] });
+
+    const { data: roleRows, error: rErr } = await supabaseAdmin
+      .from("user_type")
+      .select("id_user")
+      .eq("id_type", typeRow.id)
+      .in("id_user", users.map((u) => u.id));
+
+    if (rErr) return res.status(500).json({ error: rErr.message });
+
+    const studentSet = new Set((roleRows || []).map((r) => r.id_user));
+    return res.json({ items: users.filter((u) => studentSet.has(u.id)) });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================================
+// T15 — PUT /api/admin/courses/:id/monitor
+// Asignar o desasignar monitor de un curso
+// Body: { id_monitor: uuid | null }
+// ============================================================================
+adminRouter.put("/courses/:id/monitor", requireAuth, requireAdmin, async (req, res) => {
+  const courseId = toInt(req.params.id);
+  if (!courseId) return res.status(400).json({ error: "id inválido" });
+
+  const id_monitor = req.body?.id_monitor ?? null;
+
+  try {
+    // Validar que el curso exista y sea del año vigente
+    try { await requireAnioVigenteForRecord("course", courseId); }
+    catch (err) { return handleYearError(res, err); }
+
+    if (id_monitor !== null) {
+      // Verificar que el usuario existe y pertenece al curso
+      const { data: userRow, error: uErr } = await supabaseAdmin
+        .from("users")
+        .select("id,id_course")
+        .eq("id", id_monitor)
+        .maybeSingle();
+
+      if (uErr) return res.status(500).json({ error: uErr.message });
+      if (!userRow) return res.status(404).json({ error: "Usuario no encontrado" });
+      if (Number(userRow.id_course) !== courseId) {
+        return res.status(400).json({ error: "El usuario no pertenece a este curso" });
+      }
+
+      // Verificar que no sea ya monitor de otro curso en el mismo año
+      const { data: courseRow } = await supabaseAdmin
+        .from("course")
+        .select("year")
+        .eq("id", courseId)
+        .maybeSingle();
+
+      const { data: otherMonitor } = await supabaseAdmin
+        .from("course")
+        .select("id")
+        .eq("id_monitor", id_monitor)
+        .eq("year", courseRow.year)
+        .neq("id", courseId)
+        .maybeSingle();
+
+      if (otherMonitor) {
+        return res.status(409).json({ error: "Este estudiante ya es monitor de otro curso en el mismo año lectivo" });
+      }
+
+      // Asignar rol M si no lo tiene
+      const { data: typeM } = await supabaseAdmin
+        .from("type").select("id").eq("code", "M").maybeSingle();
+
+      if (typeM?.id) {
+        await supabaseAdmin
+          .from("user_type")
+          .upsert({ id_user: id_monitor, id_type: typeM.id }, { onConflict: "id_user,id_type" });
+      }
+    }
+
+    // Si se desasigna monitor (id_monitor = null), quitar rol M del monitor anterior
+    if (id_monitor === null) {
+      const { data: currentCourse } = await supabaseAdmin
+        .from("course")
+        .select("id_monitor")
+        .eq("id", courseId)
+        .maybeSingle();
+
+      if (currentCourse?.id_monitor) {
+        const { data: typeM } = await supabaseAdmin
+          .from("type").select("id").eq("code", "M").maybeSingle();
+
+        if (typeM?.id) {
+          await supabaseAdmin
+            .from("user_type")
+            .delete()
+            .eq("id_user", currentCourse.id_monitor)
+            .eq("id_type", typeM.id);
+        }
+      }
+    }
+
+    // Actualizar course.id_monitor
+    const { data: updated, error: upErr } = await supabaseAdmin
+      .from("course")
+      .update({ id_monitor })
+      .eq("id", courseId)
+      .select("id,name,id_monitor")
+      .maybeSingle();
+
+    if (upErr) return res.status(500).json({ error: upErr.message });
+    return res.json({ ok: true, item: updated });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================================
 // 2) CLASSES
 // ============================================================================
-adminRouter.get("/classes", requireAuth, requireAdmin, async (req, res) => {
+adminRouter.get("/classes", requireAuth, requireAdminOrSecretary, async (req, res) => {
+  const year = toInt(req.query.year) || (await getAnioLectivoVigente());
   const [
     { data: classData, error: classErr },
     { data: cgData,    error: cgErr },
@@ -280,7 +475,8 @@ adminRouter.get("/classes", requireAuth, requireAdmin, async (req, res) => {
   ] = await Promise.all([
     supabaseAdmin
       .from("class")
-      .select("id,name,level,id_module,id_group,created_at,module:module(id,name)")
+      .select("id,name,level,id_module,id_group,year,created_at,module:module(id,name)")
+      .eq("year", year)
       .order("level", { ascending: true })
       .order("name",  { ascending: true }),
     supabaseAdmin
@@ -288,7 +484,8 @@ adminRouter.get("/classes", requireAuth, requireAdmin, async (req, res) => {
       .select("id_class,id_group"),
     supabaseAdmin
       .from("group")
-      .select("id,name"),
+      .select("id,name")
+      .eq("year", year),
   ]);
 
   if (classErr) return res.status(500).json({ error: classErr.message });
@@ -344,8 +541,10 @@ adminRouter.post("/classes", requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "Debes seleccionar un módulo o crear uno nuevo" });
     }
 
+    const vigente = await getAnioLectivoVigente();
+
     if (!id_module && new_module_name) {
-      const mod = await getOrCreateModuleByName(new_module_name);
+      const mod = await getOrCreateModuleByName(new_module_name, vigente);
       id_module = mod.id;
     } else if (id_module) {
       const { data: mod, error: modErr } = await supabaseAdmin
@@ -360,7 +559,7 @@ adminRouter.post("/classes", requireAuth, requireAdmin, async (req, res) => {
 
     // grupo existente o nuevo (opcional)
     if (!id_group && new_group_name) {
-      const grp = await getOrCreateGroupByName(new_group_name);
+      const grp = await getOrCreateGroupByName(new_group_name, vigente);
       id_group = grp.id;
     } else if (id_group) {
       const { data: grp, error: grpErr } = await supabaseAdmin
@@ -379,9 +578,10 @@ adminRouter.post("/classes", requireAuth, requireAdmin, async (req, res) => {
         name,
         level,
         id_module,
+        year: vigente,
         ...(id_group ? { id_group } : {}),
       })
-      .select("id,name,level,id_module,id_group,created_at")
+      .select("id,name,level,id_module,id_group,year,created_at")
       .maybeSingle();
 
     if (classErr) return res.status(500).json({ error: classErr.message });
@@ -404,8 +604,9 @@ adminRouter.post("/classes", requireAuth, requireAdmin, async (req, res) => {
 // 3) EVALUATION TYPES
 // ============================================================================
 adminRouter.get("/evaluation-types", requireAuth, requireAdmin, async (req, res) => {
+  const year = toInt(req.query.year) || (await getAnioLectivoVigente());
   const [{ data, error }, { data: usedRows, error: usedErr }] = await Promise.all([
-    supabaseAdmin.from("evaluation_type").select("id,type,created_at").order("id", { ascending: true }),
+    supabaseAdmin.from("evaluation_type").select("id,type,year,created_at").eq("year", year).order("id", { ascending: true }),
     supabaseAdmin.from("evaluation").select("id_type"),
   ]);
 
@@ -420,6 +621,9 @@ adminRouter.get("/evaluation-types", requireAuth, requireAdmin, async (req, res)
 adminRouter.delete("/evaluation-types/:id", requireAuth, requireAdmin, async (req, res) => {
   const id = toInt(req.params.id);
   if (!id) return res.status(400).json({ error: "id inválido" });
+
+  try { await requireAnioVigenteForRecord("evaluation_type", id); }
+  catch (err) { return handleYearError(res, err); }
 
   const { count, error: checkErr } = await supabaseAdmin
     .from("evaluation")
@@ -438,10 +642,13 @@ adminRouter.post("/evaluation-types", requireAuth, requireAdmin, async (req, res
   const type = cleanStr(req.body?.type);
   if (!type) return res.status(400).json({ error: "type requerido" });
 
+  const vigente = await getAnioLectivoVigente();
+
   const { data: ex, error: exErr } = await supabaseAdmin
     .from("evaluation_type")
-    .select("id,type")
+    .select("id,type,year")
     .eq("type", type)
+    .eq("year", vigente)
     .maybeSingle();
 
   if (exErr) return res.status(500).json({ error: exErr.message });
@@ -449,8 +656,8 @@ adminRouter.post("/evaluation-types", requireAuth, requireAdmin, async (req, res
 
   const { data, error } = await supabaseAdmin
     .from("evaluation_type")
-    .insert({ type })
-    .select("id,type,created_at")
+    .insert({ type, year: vigente })
+    .select("id,type,year,created_at")
     .maybeSingle();
 
   if (error) return res.status(500).json({ error: error.message });
@@ -585,15 +792,20 @@ adminRouter.get("/students", requireAuth, requireAdmin, async (req, res) => {
 // ============================================================================
 adminRouter.post("/assign-teacher", requireAuth, requireAdmin, async (req, res) => {
   const id_teacher = cleanStr(req.body?.id_teacher);
-  const id_class = toInt(req.body?.id_class);
+  const id_class   = toInt(req.body?.id_class);
+  const id_course  = toInt(req.body?.id_course);
 
   if (!id_teacher) return res.status(400).json({ error: "id_teacher requerido" });
-  if (!id_class) return res.status(400).json({ error: "id_class requerido" });
+  if (!id_class)   return res.status(400).json({ error: "id_class requerido" });
+  if (!id_course)  return res.status(400).json({ error: "id_course requerido" });
+
+  try { await requireAnioVigenteForCourse(id_course); }
+  catch (err) { return handleYearError(res, err); }
 
   const { data, error } = await supabaseAdmin
     .from("class_teacher")
-    .upsert({ id_teacher, id_class }, { onConflict: "id_teacher,id_class" })
-    .select("id_teacher,id_class,created_at")
+    .upsert({ id_teacher, id_class, id_course }, { onConflict: "id_teacher,id_class,id_course" })
+    .select("id_teacher,id_class,id_course,created_at")
     .maybeSingle();
 
   if (error) return res.status(500).json({ error: error.message });
@@ -688,7 +900,7 @@ adminRouter.get("/evaluations", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-adminRouter.get("/class-grade-grid", requireAuth, requireAdmin, async (req, res) => {
+adminRouter.get("/class-grade-grid", requireAuth, requireAdminOrSecretary, async (req, res) => {
   try {
     const classId = toInt(req.query.class_id);
     const teacherId = cleanStr(req.query.teacher_id);
@@ -785,7 +997,7 @@ adminRouter.get("/class-grade-grid", requireAuth, requireAdmin, async (req, res)
 
 // Flexible grade grid: all params optional
 // level=0 or omit = all levels; course_id omit = all courses; module_id omit = all modules; class_id omit = all classes
-adminRouter.get("/grade-grid", requireAuth, requireAdmin, async (req, res) => {
+adminRouter.get("/grade-grid", requireAuth, requireAdminOrSecretary, async (req, res) => {
   try {
     const classId  = toInt(req.query.class_id);
     const courseId = toInt(req.query.course_id);
@@ -950,7 +1162,10 @@ adminRouter.post("/evaluations", requireAuth, requireAdmin, async (req, res) => 
       });
     }
 
-    const typeId = await resolveEvaluationTypeId(id_type, type_text);
+    try { await requireAnioVigenteForCourse(id_course); }
+    catch (err) { return handleYearError(res, err); }
+
+    const typeId = await resolveEvaluationTypeId(id_type, type_text, course.year);
 
     const { data, error } = await supabaseAdmin
       .from("evaluation")
@@ -1008,6 +1223,9 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "El estudiante no pertenece al curso de esta evaluación" });
     }
 
+    try { await requireAnioVigenteForCourse(ev.id_course); }
+    catch (err) { return handleYearError(res, err); }
+
     const payload = {
       id_exam: examId,
       id_student: st.id,
@@ -1046,6 +1264,11 @@ adminRouter.patch("/evaluations/:id", requireAuth, requireAdmin, async (req, res
 
     if (evErr) return res.status(500).json({ error: evErr.message });
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
+
+    if (ev.id_course) {
+      try { await requireAnioVigenteForCourse(ev.id_course); }
+      catch (err) { return handleYearError(res, err); }
+    }
 
     const payload = {};
 
@@ -1147,12 +1370,17 @@ adminRouter.delete("/evaluations/:id", requireAuth, requireAdmin, async (req, re
 
     const { data: ev, error: evErr } = await supabaseAdmin
       .from("evaluation")
-      .select("id")
+      .select("id,id_course")
       .eq("id", id)
       .maybeSingle();
 
     if (evErr) return res.status(500).json({ error: evErr.message });
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
+
+    if (ev.id_course) {
+      try { await requireAnioVigenteForCourse(ev.id_course); }
+      catch (err) { return handleYearError(res, err); }
+    }
 
     const { error } = await supabaseAdmin
       .from("evaluation")
@@ -1196,7 +1424,13 @@ adminRouter.post("/evaluations/bulk", requireAuth, requireAdmin, async (req, res
     }
     if (!title) return res.status(400).json({ error: "title requerido" });
 
-    const typeId = await resolveEvaluationTypeId(id_type, type_text);
+    if (id_course) {
+      try { await requireAnioVigenteForCourse(id_course); }
+      catch (err) { return handleYearError(res, err); }
+    }
+
+    const vigente = await getAnioLectivoVigente();
+    const typeId = await resolveEvaluationTypeId(id_type, type_text, vigente);
 
     // Una sola evaluación vinculada al módulo o grupo directamente
     const row = {
@@ -1365,14 +1599,30 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         // Intentar primero por nombre, luego por id numérico (compatibilidad)
         const { data: courseMatch } = await supabaseAdmin
           .from("course")
-          .select("id")
+          .select("id, year")
           .eq("name", courseNameRaw)
           .maybeSingle();
         if (courseMatch) {
           id_course = courseMatch.id;
         } else {
           const asInt = toInt(courseNameRaw);
-          if (asInt) id_course = asInt;
+          if (asInt) {
+            const { data: courseById } = await supabaseAdmin
+              .from("course")
+              .select("id, year")
+              .eq("id", asInt)
+              .maybeSingle();
+            if (courseById) id_course = courseById.id;
+          }
+        }
+        // Solo se puede asignar a cursos del año lectivo vigente
+        if (id_course) {
+          try { await requireAnioVigenteForCourse(id_course); }
+          catch {
+            results.errors.push({ row: rowNum, error: `El curso '${courseNameRaw}' no pertenece al año lectivo vigente` });
+            results.skipped++;
+            continue;
+          }
         }
       }
 
@@ -1571,7 +1821,7 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
     if (!email || !email.includes("@")) return res.status(400).json({ error: "email inválido" });
     if (!name) return res.status(400).json({ error: "name requerido" });
 
-    if (roles.length === 0 || roles.some((r) => !["S", "T", "A", "M"].includes(String(r).toUpperCase()))) {
+    if (roles.length === 0 || roles.some((r) => !["S", "T", "A", "M", "E"].includes(String(r).toUpperCase()))) {
       return res.status(400).json({ error: "roles inválidos (S/T/A/M)" });
     }
     const roleList = roles.map((r) => String(r).toUpperCase());
@@ -1676,7 +1926,7 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
     if (!email || !email.includes("@")) return res.status(400).json({ error: "email inválido" });
     if (!name) return res.status(400).json({ error: "name requerido" });
 
-    if (roles.length === 0 || roles.some((r) => !["S", "T", "A", "M"].includes(String(r).toUpperCase()))) {
+    if (roles.length === 0 || roles.some((r) => !["S", "T", "A", "M", "E"].includes(String(r).toUpperCase()))) {
       return res.status(400).json({ error: "roles inválidos (S/T/A/M)" });
     }
 
@@ -1806,14 +2056,16 @@ adminRouter.get("/user-by-cedula", requireAuth, requireAdmin, async (req, res) =
   }
 });
 
-async function getOrCreateModuleByName(name) {
+async function getOrCreateModuleByName(name, year) {
   const cleanName = cleanStr(name);
   if (!cleanName) throw new Error("Nombre de módulo requerido");
+  if (!year) throw new Error("year requerido en getOrCreateModuleByName");
 
   const { data: existing, error: exErr } = await supabaseAdmin
     .from("module")
     .select("id,name")
     .ilike("name", cleanName)
+    .eq("year", year)
     .maybeSingle();
 
   if (exErr) throw new Error(exErr.message);
@@ -1821,7 +2073,7 @@ async function getOrCreateModuleByName(name) {
 
   const { data: created, error: crErr } = await supabaseAdmin
     .from("module")
-    .insert({ name: cleanName })
+    .insert({ name: cleanName, year })
     .select("id,name")
     .maybeSingle();
 
@@ -1829,14 +2081,16 @@ async function getOrCreateModuleByName(name) {
   return created;
 }
 
-async function getOrCreateGroupByName(name) {
+async function getOrCreateGroupByName(name, year) {
   const cleanName = cleanStr(name);
   if (!cleanName) throw new Error("Nombre de grupo requerido");
+  if (!year) throw new Error("year requerido en getOrCreateGroupByName");
 
   const { data: existing, error: exErr } = await supabaseAdmin
     .from("group")
     .select("id,name")
     .ilike("name", cleanName)
+    .eq("year", year)
     .maybeSingle();
 
   if (exErr) throw new Error(exErr.message);
@@ -1844,7 +2098,7 @@ async function getOrCreateGroupByName(name) {
 
   const { data: created, error: crErr } = await supabaseAdmin
     .from("group")
-    .insert({ name: cleanName })
+    .insert({ name: cleanName, year })
     .select("id,name")
     .maybeSingle();
 
@@ -1857,16 +2111,24 @@ async function getOrCreateGroupByName(name) {
 adminRouter.post("/unassign-teacher", requireAuth, requireAdmin, async (req, res) => {
   try {
     const id_teacher = cleanStr(req.body?.id_teacher);
-    const id_class = toInt(req.body?.id_class);
+    const id_class   = toInt(req.body?.id_class);
+    const id_course  = toInt(req.body?.id_course);
 
     if (!id_teacher) return res.status(400).json({ error: "id_teacher requerido" });
-    if (!id_class) return res.status(400).json({ error: "id_class requerido" });
+    if (!id_class)   return res.status(400).json({ error: "id_class requerido" });
+    if (!id_course)  return res.status(400).json({ error: "id_course requerido" });
 
-    const { error } = await supabaseAdmin
+    try { await requireAnioVigenteForCourse(id_course); }
+    catch (err) { return handleYearError(res, err); }
+
+    let q = supabaseAdmin
       .from("class_teacher")
       .delete()
       .eq("id_teacher", id_teacher)
-      .eq("id_class", id_class);
+      .eq("id_class", id_class)
+      .eq("id_course", id_course);
+
+    const { error } = await q;
 
     if (error) return res.status(500).json({ error: error.message });
 
@@ -2098,8 +2360,11 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
     if (Number(course.level) !== Number(cls.level))
       return res.status(400).json({ error: "El curso no corresponde al nivel de la materia" });
 
-    // Resolver id del tipo 'Examen'
-    const examenTypeId = await resolveEvaluationTypeId(null, "Examen");
+    try { await requireAnioVigenteForCourse(id_course); }
+    catch (err) { return handleYearError(res, err); }
+
+    // Resolver id del tipo 'Examen' para el año vigente
+    const examenTypeId = await resolveEvaluationTypeId(null, "Examen", course.year);
 
     // Insertar registro maestro en evaluation
     const { data: evalData, error: evalErr } = await supabaseAdmin
@@ -2154,8 +2419,8 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
 // ============================================================================
 adminRouter.get("/exams", requireAuth, requireAdmin, async (req, res) => {
   try {
-    // Resolver id del tipo 'Examen'
-    const examenTypeId = await resolveEvaluationTypeId(null, "Examen");
+    const examenTypeIds = await getEvaluationTypeIdsByName("Examen");
+    if (!examenTypeIds.length) return res.json({ items: [] });
 
     let q = supabaseAdmin
       .from("evaluation")
@@ -2167,7 +2432,7 @@ adminRouter.get("/exams", requireAuth, requireAdmin, async (req, res) => {
         module:module(id,name),
         group:group(id,name)
       `)
-      .eq("id_type", examenTypeId)
+      .in("id_type", examenTypeIds)
       .order("created_at", { ascending: false });
 
     if (req.query.id_course) q = q.eq("id_course", toInt(req.query.id_course));
@@ -2217,18 +2482,22 @@ adminRouter.delete("/exams/:id", requireAuth, requireAdmin, async (req, res) => 
     const id = toInt(req.params.id);
     if (!id) return res.status(400).json({ error: "ID inválido" });
 
-    // Verificar que sea tipo Examen
-    const examenTypeId = await resolveEvaluationTypeId(null, "Examen");
+    const examenTypeIds = await getEvaluationTypeIdsByName("Examen");
     const { data: ev, error: evErr } = await supabaseAdmin
       .from("evaluation")
-      .select("id, id_type")
+      .select("id, id_type, id_course")
       .eq("id", id)
       .maybeSingle();
 
     if (evErr) return res.status(500).json({ error: evErr.message });
     if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
-    if (ev.id_type !== examenTypeId)
+    if (!examenTypeIds.includes(ev.id_type))
       return res.status(400).json({ error: "Esta evaluación no es de tipo Examen" });
+
+    if (ev.id_course) {
+      try { await requireAnioVigenteForCourse(ev.id_course); }
+      catch (err) { return handleYearError(res, err); }
+    }
 
     const { error } = await supabaseAdmin.from("evaluation").delete().eq("id", id);
     if (error) return res.status(500).json({ error: error.message });
@@ -2248,7 +2517,7 @@ adminRouter.get("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
     const id = toInt(req.params.id);
     if (!id) return res.status(400).json({ error: "ID inválido" });
 
-    const examenTypeId = await resolveEvaluationTypeId(null, "Examen");
+    const examenTypeIds = await getEvaluationTypeIdsByName("Examen");
     const { data: ev, error: evErr } = await supabaseAdmin
       .from("evaluation")
       .select(`
@@ -2260,7 +2529,7 @@ adminRouter.get("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
         group:group(id,name)
       `)
       .eq("id", id)
-      .eq("id_type", examenTypeId)
+      .in("id_type", examenTypeIds)
       .maybeSingle();
 
     if (evErr) return res.status(500).json({ error: evErr.message });
@@ -2328,17 +2597,22 @@ adminRouter.put("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
     if (Math.abs(sumaPuntos - 100) > 0.01)
       return res.status(400).json({ error: `La suma de puntos debe ser 100 (actual: ${sumaPuntos})` });
 
-    // Verificar que sea tipo Examen
-    const examenTypeId = await resolveEvaluationTypeId(null, "Examen");
+    // Verificar que sea tipo Examen y que pertenezca al año vigente
+    const examenTypeIds = await getEvaluationTypeIdsByName("Examen");
     const { data: ev, error: evErr } = await supabaseAdmin
       .from("evaluation")
-      .select("id, id_type")
+      .select("id, id_type, id_course")
       .eq("id", id)
       .maybeSingle();
     if (evErr) return res.status(500).json({ error: evErr.message });
     if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
-    if (ev.id_type !== examenTypeId)
+    if (!examenTypeIds.includes(ev.id_type))
       return res.status(400).json({ error: "Esta evaluación no es de tipo Examen" });
+
+    if (ev.id_course) {
+      try { await requireAnioVigenteForCourse(ev.id_course); }
+      catch (err) { return handleYearError(res, err); }
+    }
 
     // Actualizar tiempo_minutos y percent en evaluation
     const { error: updErr } = await supabaseAdmin
@@ -2384,7 +2658,7 @@ adminRouter.get("/exam-schedules", requireAuth, requireAdmin, async (req, res) =
     let q = supabaseAdmin
       .from("examen_programacion")
       .select(`
-        id, year, fecha_ini, fecha_fin, habilitado, created_at,
+        id, year, fecha_ini, fecha_fin, fecha_limite_ver, habilitado, created_at,
         id_evaluation, id_course,
         evaluation:evaluation(
           id, title, percent, tiempo_minutos,
@@ -2422,6 +2696,9 @@ adminRouter.post("/exam-schedules", requireAuth, requireAdmin, async (req, res) 
     const year          = toInt(req.body?.year);
     const fecha_ini     = req.body?.fecha_ini || null;
     const fecha_fin     = req.body?.fecha_fin || null;
+    const fecha_limite_ver = req.body?.fecha_limite_ver !== undefined
+      ? (req.body.fecha_limite_ver || null)
+      : (fecha_fin ? new Date(new Date(fecha_fin).getTime() + 15 * 24 * 60 * 60 * 1000).toISOString() : null);
     const habilitado    = Boolean(req.body?.habilitado ?? false);
 
     if (!id_evaluation) return res.status(400).json({ error: "id_evaluation requerido" });
@@ -2450,10 +2727,13 @@ adminRouter.post("/exam-schedules", requireAuth, requireAdmin, async (req, res) 
     if (cErr) return res.status(500).json({ error: cErr.message });
     if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
 
+    try { await requireAnioVigenteForCourse(id_course); }
+    catch (err) { return handleYearError(res, err); }
+
     const { data, error } = await supabaseAdmin
       .from("examen_programacion")
-      .insert({ id_evaluation, id_course, year, fecha_ini, fecha_fin, habilitado })
-      .select("id, id_evaluation, id_course, year, fecha_ini, fecha_fin, habilitado, created_at")
+      .insert({ id_evaluation, id_course, year, fecha_ini, fecha_fin, fecha_limite_ver, habilitado })
+      .select("id, id_evaluation, id_course, year, fecha_ini, fecha_fin, fecha_limite_ver, habilitado, created_at")
       .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
@@ -2475,16 +2755,22 @@ adminRouter.patch("/exam-schedules/:id", requireAuth, requireAdmin, async (req, 
 
     const { data: prog, error: pErr } = await supabaseAdmin
       .from("examen_programacion")
-      .select("id")
+      .select("id, id_course")
       .eq("id", id)
       .maybeSingle();
 
     if (pErr) return res.status(500).json({ error: pErr.message });
     if (!prog?.id) return res.status(404).json({ error: "Programación no existe" });
 
+    if (prog.id_course) {
+      try { await requireAnioVigenteForCourse(prog.id_course); }
+      catch (err) { return handleYearError(res, err); }
+    }
+
     const payload = {};
     if (req.body?.fecha_ini !== undefined) payload.fecha_ini = req.body.fecha_ini || null;
     if (req.body?.fecha_fin !== undefined) payload.fecha_fin = req.body.fecha_fin || null;
+    if (req.body?.fecha_limite_ver !== undefined) payload.fecha_limite_ver = req.body.fecha_limite_ver || null;
     if (req.body?.habilitado !== undefined) payload.habilitado = Boolean(req.body.habilitado);
 
     if (Object.keys(payload).length === 0)
@@ -2494,7 +2780,7 @@ adminRouter.patch("/exam-schedules/:id", requireAuth, requireAdmin, async (req, 
       .from("examen_programacion")
       .update(payload)
       .eq("id", id)
-      .select("id, id_evaluation, id_course, year, fecha_ini, fecha_fin, habilitado")
+      .select("id, id_evaluation, id_course, year, fecha_ini, fecha_fin, fecha_limite_ver, habilitado")
       .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
@@ -2502,5 +2788,224 @@ adminRouter.patch("/exam-schedules/:id", requireAuth, requireAdmin, async (req, 
     return res.json({ ok: true, item: data });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error actualizando programación" });
+  }
+});
+
+// DELETE /api/admin/exam-schedules/:id
+adminRouter.delete("/exam-schedules/:id", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = toInt(req.params.id);
+    if (!id) return res.status(400).json({ error: "ID inválido" });
+
+    const { data: prog, error: progErr } = await supabaseAdmin
+      .from("examen_programacion")
+      .select("id_course")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (progErr) return res.status(500).json({ error: progErr.message });
+    if (!prog) return res.status(404).json({ error: "Programación no existe" });
+
+    if (prog.id_course) {
+      try { await requireAnioVigenteForCourse(prog.id_course); }
+      catch (err) { return handleYearError(res, err); }
+    }
+
+    // Desreferenciar rta_examen antes de eliminar
+    await supabaseAdmin
+      .from("rta_examen")
+      .update({ id_programacion: null })
+      .eq("id_programacion", id);
+
+    const { error } = await supabaseAdmin
+      .from("examen_programacion")
+      .delete()
+      .eq("id", id);
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error eliminando programación" });
+  }
+});
+
+// GET /api/admin/exam-attempts?id_evaluation=X&id_course=Y
+// Lista estudiantes del curso que han finalizado el examen
+adminRouter.get("/exam-attempts", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id_evaluation = toInt(req.query.id_evaluation);
+    const id_course     = toInt(req.query.id_course);
+    if (!id_evaluation || !id_course)
+      return res.status(400).json({ error: "id_evaluation e id_course requeridos" });
+
+    const { data: rtas, error: rtaErr } = await supabaseAdmin
+      .from("rta_examen")
+      .select("id_student, calificacion, finalizado_at")
+      .eq("id_evaluation", id_evaluation)
+      .not("finalizado_at", "is", null);
+
+    if (rtaErr) return res.status(500).json({ error: rtaErr.message });
+    if (!rtas?.length) return res.json({ items: [] });
+
+    const studentIds = rtas.map((r) => r.id_student);
+
+    const { data: users, error: usersErr } = await supabaseAdmin
+      .from("users")
+      .select("id, name, cedula")
+      .in("id", studentIds)
+      .eq("id_course", id_course);
+
+    if (usersErr) return res.status(500).json({ error: usersErr.message });
+
+    const userMap = new Map((users || []).map((u) => [u.id, u]));
+
+    const items = rtas
+      .filter((r) => userMap.has(r.id_student))
+      .map((r) => ({
+        id_student:   r.id_student,
+        name:         userMap.get(r.id_student)?.name  ?? "—",
+        cedula:       userMap.get(r.id_student)?.cedula ?? "—",
+        calificacion: r.calificacion,
+        finalizado_at: r.finalizado_at,
+      }));
+
+    return res.json({ items });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error obteniendo intentos" });
+  }
+});
+
+// DELETE /api/admin/exam-attempts
+// Reinicia el intento de un estudiante (elimina rta_examen + grades)
+adminRouter.delete("/exam-attempts", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id_student    = cleanStr(req.body?.id_student);
+    const id_evaluation = toInt(req.body?.id_evaluation);
+    if (!id_student || !id_evaluation)
+      return res.status(400).json({ error: "id_student e id_evaluation requeridos" });
+
+    const { data: ev, error: evErr } = await supabaseAdmin
+      .from("evaluation")
+      .select("id_course")
+      .eq("id", id_evaluation)
+      .maybeSingle();
+
+    if (evErr) return res.status(500).json({ error: evErr.message });
+    if (!ev) return res.status(404).json({ error: "Evaluación no encontrada" });
+
+    try { await requireAnioVigenteForCourse(ev.id_course); }
+    catch (err) { return handleYearError(res, err); }
+
+    const { error: rtaErr } = await supabaseAdmin
+      .from("rta_examen")
+      .delete()
+      .eq("id_student", id_student)
+      .eq("id_evaluation", id_evaluation);
+
+    if (rtaErr) return res.status(500).json({ error: rtaErr.message });
+
+    const { error: gradeErr } = await supabaseAdmin
+      .from("grades")
+      .delete()
+      .eq("id_student", id_student)
+      .eq("id_exam", id_evaluation);
+
+    if (gradeErr) return res.status(500).json({ error: gradeErr.message });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error reiniciando intento" });
+  }
+});
+
+// ============================================================================
+// GESTIÓN DE AÑO LECTIVO
+// ============================================================================
+
+// GET /api/admin/anio-lectivo — lista todos los años con su estado activo
+adminRouter.get("/anio-lectivo", requireAuth, requireAdminOrSecretary, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("anio_lectivo")
+      .select("year, nombre, activo, created_at")
+      .order("year", { ascending: false });
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ items: data || [] });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error obteniendo años lectivos" });
+  }
+});
+
+// POST /api/admin/anio-lectivo — crea un nuevo año lectivo (inactivo por defecto)
+adminRouter.post("/anio-lectivo", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const year   = toInt(req.body?.year);
+    const nombre = cleanStr(req.body?.nombre);
+
+    if (!year || year < 2000 || year > 2100)
+      return res.status(400).json({ error: "year inválido (2000-2100)" });
+    if (!nombre)
+      return res.status(400).json({ error: "nombre requerido" });
+
+    const { data, error } = await supabaseAdmin
+      .from("anio_lectivo")
+      .insert({ year, nombre, activo: false })
+      .select("year, nombre, activo")
+      .maybeSingle();
+
+    if (error) {
+      if (isUniqueViolation(error))
+        return res.status(409).json({ error: `El año ${year} ya existe` });
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.status(201).json({ ok: true, item: data });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error creando año lectivo" });
+  }
+});
+
+// PUT /api/admin/anio-lectivo/activo — activa un año lectivo (desactiva el anterior)
+adminRouter.put("/anio-lectivo/activo", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const year = toInt(req.body?.year);
+    if (!year) return res.status(400).json({ error: "year requerido" });
+
+    // Verificar que el año existe
+    const { data: exists, error: exErr } = await supabaseAdmin
+      .from("anio_lectivo")
+      .select("year")
+      .eq("year", year)
+      .maybeSingle();
+
+    if (exErr) return res.status(500).json({ error: exErr.message });
+    if (!exists) return res.status(404).json({ error: `Año ${year} no encontrado` });
+
+    // Desactivar todos los años
+    const { error: deactivateErr } = await supabaseAdmin
+      .from("anio_lectivo")
+      .update({ activo: false })
+      .neq("year", year);
+
+    if (deactivateErr) return res.status(500).json({ error: deactivateErr.message });
+
+    // Activar el año solicitado
+    const { data, error: activateErr } = await supabaseAdmin
+      .from("anio_lectivo")
+      .update({ activo: true })
+      .eq("year", year)
+      .select("year, nombre, activo")
+      .maybeSingle();
+
+    if (activateErr) return res.status(500).json({ error: activateErr.message });
+
+    // Invalidar caché para que el siguiente request use el año nuevo
+    invalidarCacheAnioLectivo();
+
+    return res.json({ ok: true, item: data });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error activando año lectivo" });
   }
 });

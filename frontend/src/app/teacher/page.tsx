@@ -39,6 +39,7 @@ type EvalItem = {
 
 type CourseItem = { id: number; name: string; level: number; year: string };
 type EvalTypeItem = { id: number; type: string };
+type AnioLectivoItem = { year: number; nombre: string; activo: boolean };
 
 type StudentRow = {
   id: string;
@@ -204,6 +205,7 @@ function getGrillaTextColor(isDarkTheme: boolean) {
 export default function TeacherPage() {
   const router = useRouter();
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [me, setMe] = useState<any>(null);
   const [loadingMe, setLoadingMe] = useState(true);
 
@@ -215,7 +217,7 @@ export default function TeacherPage() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const [myClasses, setMyClasses] = useState<TeacherClass[]>([]);
-  const [loadingClasses, setLoadingClasses] = useState(false);
+  const [_loadingClasses, setLoadingClasses] = useState(false);
   const [levels, setLevels] = useState<LevelItem[]>([]);
   const levelMap = useMemo<Record<number, string>>(
     () => Object.fromEntries(levels.map((l) => [l.id, l.name])),
@@ -224,6 +226,9 @@ export default function TeacherPage() {
 
   const [dashboard, setDashboard] = useState<TeacherDashboardResponse | null>(null);
   const [loadingDashboard, setLoadingDashboard] = useState(false);
+
+  const [anioLectivoItems, setAnioLectivoItems] = useState<AnioLectivoItem[]>([]);
+  const [teacherYear, setTeacherYear] = useState<number | null>(null);
   const [dashLevelFilter, setDashLevelFilter] = useState<number | "all">("all");
   const [dashCourseFilter, setDashCourseFilter] = useState<number | "all">("all");
 
@@ -270,9 +275,6 @@ export default function TeacherPage() {
   const [cPercent, setCPercent] = useState<number>(0);
   const [creating, setCreating] = useState(false);
 
-  // evaluaciones existentes de la materia seleccionada en CREATE
-  const [createClassEvals, setCreateClassEvals] = useState<EvalItem[]>([]);
-  const [loadingCreateClassEvals, setLoadingCreateClassEvals] = useState(false);
   const [editPercents, setEditPercents] = useState<Record<number, string>>({});
   const [savingEvalPercent, setSavingEvalPercent] = useState<Record<number, boolean>>({});
   const [deletingEval, setDeletingEval] = useState<Record<number, boolean>>({});
@@ -284,7 +286,7 @@ export default function TeacherPage() {
   const [savingAll, setSavingAll] = useState(false);
 
   const [percentDraft, setPercentDraft] = useState<Record<number, string>>({});
-  const [savingPercents, setSavingPercents] = useState(false);
+  const [_savingPercents, setSavingPercents] = useState(false);
   const [savingEvalRow, setSavingEvalRow] = useState<Record<number, boolean>>({});
 
   const [editingRow, setEditingRow] = useState<Record<string, boolean>>({});
@@ -303,10 +305,50 @@ export default function TeacherPage() {
   const ACTION_COL_W = 160;
   const STICKY_ALUMNO_LEFT = CEDULA_COL_W;
 
+  function resetView(v: TeacherView) {
+    switch (v) {
+      case "DASHBOARD":
+        setDashLevelFilter("all");
+        setDashCourseFilter("all");
+        break;
+      case "EVALS":
+        setEvalLevelFilter("all");
+        setEvalCourseFilter("all");
+        setEvalModuleFilter("");
+        setEvalClassFilter("all");
+        break;
+      case "CREATE":
+        setCreateLevelFilter("");
+        setCreateModuleFilter("");
+        setCreateClassFilter("all");
+        setCCourse("");
+        setCType("");
+        setCTypeOther("");
+        setTitlePick("");
+        setTitleOther("");
+        setCPercent(0);
+        setEditPercents({});
+        break;
+      case "UPSERT":
+        setUpsertLevelFilter("");
+        setUpsertCourseFilter("all");
+        setThFilterLevel("");
+        setThFilterModule("");
+        setThFilterGroup("");
+        setThFilterClass("");
+        setThFilterCedula("");
+        setThFilterName("");
+        setAllSections([]);
+        setGradeDraft({});
+        setEditingRow({});
+        setRowSnapshot({});
+        break;
+    }
+  }
+
   function goToUpsertFromEvaluation(item: EvalItem) {
     const classId = Number(item.id_class);
     const level = Number(item.class?.level ?? 0);
-    const className = item.class?.name ?? "";
 
     if (!classId || !level) return;
 
@@ -314,13 +356,13 @@ export default function TeacherPage() {
     setView("UPSERT");
 
     if (Number(upsertLevelFilter) === level) {
-      // Data already loaded for this level — just set the class filter
-      setThFilterClass(className);
+      // Data already loaded for this level — just set the class filter by ID
+      setThFilterClass(String(classId));
       return;
     }
 
-    // Need to load new level — store the pending class filter to apply after load
-    pendingThFilterClassRef.current = className;
+    // Need to load new level — store the pending class ID to apply after load
+    pendingThFilterClassRef.current = String(classId);
     setUpsertLevelFilter(level);
   }
 
@@ -362,54 +404,58 @@ export default function TeacherPage() {
     })();
   }, [router]);
 
-  async function loadMyClasses() {
+  async function loadMyClasses(year?: number | null) {
     setLoadingClasses(true);
     try {
-      const res = await apiFetch("/api/teacher/classes");
+      const url = year ? `/api/teacher/classes?year=${year}` : "/api/teacher/classes";
+      const res = await apiFetch(url);
       setMyClasses(res?.items || []);
-    } catch (e: any) {
+    } catch (e) {
       setMyClasses([]);
-      setMsg(e?.message || "Error cargando materias del profesor");
+      setMsg((e as { message?: string })?.message || "Error cargando materias del profesor");
     } finally {
       setLoadingClasses(false);
     }
   }
 
-  async function loadDashboard() {
+  async function loadDashboard(year?: number | null) {
     setLoadingDashboard(true);
     try {
-      const res = await apiFetch("/api/teacher/dashboard");
+      const url = year ? `/api/teacher/dashboard?year=${year}` : "/api/teacher/dashboard";
+      const res = await apiFetch(url);
       setDashboard(res || null);
-    } catch (e: any) {
+    } catch (e) {
       setDashboard(null);
-      setMsg(e?.message || "Error cargando dashboard del profesor");
+      setMsg((e as { message?: string })?.message || "Error cargando dashboard del profesor");
     } finally {
       setLoadingDashboard(false);
     }
   }
 
-  async function loadEvaluations() {
+  async function loadEvaluations(year?: number | null) {
     setMsg(null);
     setLoadingList(true);
     try {
-      const res = await apiFetch("/api/teacher/evaluations");
+      const url = year ? `/api/teacher/evaluations?year=${year}` : "/api/teacher/evaluations";
+      const res = await apiFetch(url);
       setItems(res?.items || []);
-    } catch (e: any) {
+    } catch (e) {
       setItems([]);
-      setMsg(e?.message || "Error cargando evaluaciones");
+      setMsg((e as { message?: string })?.message || "Error cargando evaluaciones");
     } finally {
       setLoadingList(false);
     }
   }
 
-  async function loadTeacherCourses() {
+  async function loadTeacherCourses(year?: number | null) {
     setLoadingCourses(true);
     try {
-      const res = await apiFetch("/api/teacher/courses");
+      const url = year ? `/api/teacher/courses?year=${year}` : "/api/teacher/courses";
+      const res = await apiFetch(url);
       setCourses(res?.items || []);
-    } catch (e: any) {
+    } catch (e) {
       setCourses([]);
-      setMsg(e?.message || "Error cargando cursos del profesor");
+      setMsg((e as { message?: string })?.message || "Error cargando cursos del profesor");
     } finally {
       setLoadingCourses(false);
     }
@@ -421,27 +467,63 @@ export default function TeacherPage() {
     try {
       const res = await apiFetch("/api/teacher/evaluation-types");
       setTypes(res?.items || []);
-    } catch (e: any) {
+    } catch (e) {
       setTypes([]);
-      setMsg(e?.message || "Error cargando tipos de evaluación");
+      setMsg((e as { message?: string })?.message || "Error cargando tipos de evaluación");
     } finally {
       setLoadingTypes(false);
     }
   }
 
+  // Signals that the next teacherYear change was triggered by the mount effect (not the user)
+  const initialYearSetRef = useRef(false);
+
   useEffect(() => {
     if (!loadingMe) {
-      loadMyClasses();
-      loadDashboard();
-      loadTypes();
-      loadEvaluations();
-      loadTeacherCourses();
+      apiFetch("/api/student/anio-lectivo")
+        .then((res) => {
+          const items: AnioLectivoItem[] = res?.items || [];
+          setAnioLectivoItems(items);
+          const activo = items.find(i => i.activo);
+          const year = activo?.year ?? null;
+          initialYearSetRef.current = true; // mark before setting state
+          setTeacherYear(year);
+          loadMyClasses(year);
+          loadDashboard(year);
+          loadTypes();
+          loadEvaluations(year);
+          loadTeacherCourses(year);
+        })
+        .catch(() => {
+          loadMyClasses(null);
+          loadDashboard(null);
+          loadTypes();
+          loadEvaluations(null);
+          loadTeacherCourses(null);
+        });
       apiFetch("/api/teacher/levels")
         .then((res) => setLevels(res?.items || []))
         .catch(() => {});
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingMe]);
+
+  useEffect(() => {
+    // Skip the initial year set triggered by the mount effect (already loaded there)
+    if (initialYearSetRef.current) {
+      initialYearSetRef.current = false;
+      return;
+    }
+    if (teacherYear === null) return;
+    // User changed year — reload all data and clear the grade grid
+    setAllSections([]);
+    setUpsertLevelFilter("");
+    // If on CREATE (write-only view), kick back to the selector
+    setView((v) => (v === "CREATE" ? "" : v));
+    loadMyClasses(teacherYear);
+    loadDashboard(teacherYear);
+    loadEvaluations(teacherYear);
+    loadTeacherCourses(teacherYear);
+  }, [teacherYear]);
 
   // =========================
   // DASHBOARD FILTERS
@@ -472,9 +554,15 @@ export default function TeacherPage() {
   }, [dashAssignments, dashLevelFilter, dashCourseFilter]);
 
   // =========================
+  // AÑO LECTIVO
+  // =========================
+  const activoYear = useMemo(() => anioLectivoItems.find(a => a.activo)?.year ?? null, [anioLectivoItems]);
+  const isHistoricalYear = teacherYear !== null && teacherYear !== activoYear;
+
+  // =========================
   // HELPERS GENERALES
   // =========================
-  const availableLevels = useMemo(() => {
+  const _availableLevels = useMemo(() => {
     const set = new Set<number>();
     for (const c of myClasses) {
       if (Number.isFinite(Number(c.level))) set.add(Number(c.level));
@@ -485,7 +573,7 @@ export default function TeacherPage() {
   // =========================
   // EVALS FILTERS
   // =========================
-  const evalClassesFiltered = useMemo(() => {
+  const _evalClassesFiltered = useMemo(() => {
     if (evalLevelFilter === "all") return myClasses;
     if (evalLevelFilter === "") return [];
     return myClasses.filter((c) => Number(c.level) === Number(evalLevelFilter));
@@ -589,18 +677,15 @@ export default function TeacherPage() {
     setEvalCourseFilter("all");
     setEvalModuleFilter("");
     setEvalClassFilter("all");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [evalLevelFilter]);
 
   useEffect(() => {
     setEvalModuleFilter("");
     setEvalClassFilter("all");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [evalCourseFilter]);
 
   useEffect(() => {
     setEvalClassFilter("all");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [evalModuleFilter]);
 
   useEffect(() => {
@@ -609,7 +694,7 @@ export default function TeacherPage() {
     setPercentDraft(next);
   }, [evalItemsFiltered]);
 
-  const percentDirty = useMemo(() => {
+  const _percentDirty = useMemo(() => {
     if (evalClassFilter === "all") return false;
     for (const e of evalsInSelectedClass) {
       const draft = (percentDraft[e.id] ?? "").trim();
@@ -620,7 +705,7 @@ export default function TeacherPage() {
     return false;
   }, [evalClassFilter, evalsInSelectedClass, percentDraft]);
 
-  async function updatePercents() {
+  async function _updatePercents() {
     if (evalClassFilter === "all") {
       setMsg("Selecciona una materia específica primero.");
       return;
@@ -658,9 +743,9 @@ export default function TeacherPage() {
       );
 
       flash("✅ Porcentajes actualizados", "ok");
-      await loadEvaluations();
-    } catch (e: any) {
-      setMsg(e?.message || "Error actualizando porcentajes");
+      await loadEvaluations(teacherYear);
+    } catch (e) {
+      setMsg((e as { message?: string })?.message || "Error actualizando porcentajes");
       flash("❌ No se pudo actualizar", "err");
     } finally {
       setSavingPercents(false);
@@ -683,8 +768,8 @@ export default function TeacherPage() {
         prev.map((e) => (e.id === evalId ? { ...e, percent: val } : e))
       );
       flash("% Actualizado", "ok");
-    } catch (e: any) {
-      flash(e?.message || "Error al actualizar", "err");
+    } catch (e) {
+      flash((e as { message?: string })?.message || "Error al actualizar", "err");
     } finally {
       setSavingEvalRow((p) => ({ ...p, [evalId]: false }));
     }
@@ -693,7 +778,7 @@ export default function TeacherPage() {
   // =========================
   // CREATE FILTERS
   // =========================
-  const selectedCreateCourse = useMemo(() => {
+  const _selectedCreateCourse = useMemo(() => {
     const id = Number(cCourse);
     if (!id) return null;
     return courses.find((c) => Number(c.id) === id) || null;
@@ -719,7 +804,6 @@ export default function TeacherPage() {
     setTitlePick("");
     setTitleOther("");
     setCPercent(0);
-    setCreateClassEvals([]);
     setEditPercents({});
   }, [createLevelFilter]);
 
@@ -732,31 +816,18 @@ export default function TeacherPage() {
     setTitlePick("");
     setTitleOther("");
     setCPercent(0);
-    setCreateClassEvals([]);
     setEditPercents({});
   }, [cCourse]);
 
-  useEffect(() => {
-    if (createClassFilter === "all") {
-      setCreateClassEvals([]);
-      setEditPercents({});
-      return;
-    }
-    let cancelled = false;
-    setLoadingCreateClassEvals(true);
-    apiFetch(`/api/teacher/evaluations?class_id=${Number(createClassFilter)}`)
-      .then((res) => {
-        if (cancelled) return;
-        const evs: EvalItem[] = res?.items || [];
-        setCreateClassEvals(evs);
-        const initPercents: Record<number, string> = {};
-        evs.forEach((e) => { initPercents[e.id] = String(e.percent); });
-        setEditPercents(initPercents);
-      })
-      .catch(() => { if (!cancelled) setCreateClassEvals([]); })
-      .finally(() => { if (!cancelled) setLoadingCreateClassEvals(false); });
-    return () => { cancelled = true; };
-  }, [createClassFilter]);
+  // Derived eval list — no extra API call needed, filter from already-loaded items
+  const createEvalsFiltered = useMemo(() => {
+    if (createLevelFilter === "") return [];
+    let filtered = items.filter(it => Number(it.class?.level) === Number(createLevelFilter));
+    if (cCourse) filtered = filtered.filter(it => Number(it.id_course) === Number(cCourse));
+    if (createModuleFilter) filtered = filtered.filter(it => (it.module?.name ?? "") === createModuleFilter);
+    if (createClassFilter !== "all") filtered = filtered.filter(it => Number(it.id_class) === Number(createClassFilter));
+    return filtered;
+  }, [items, createLevelFilter, cCourse, createModuleFilter, createClassFilter]);
 
   const createTitleOptions = useMemo(() => {
     if (createClassFilter === "all") return [];
@@ -786,12 +857,10 @@ export default function TeacherPage() {
         method: "PATCH",
         body: JSON.stringify({ percent: val }),
       });
-      setCreateClassEvals((prev) =>
-        prev.map((e) => (e.id === evalId ? { ...e, percent: val } : e))
-      );
+      setItems((prev) => prev.map((e) => (e.id === evalId ? { ...e, percent: val } : e)));
       flash("Porcentaje actualizado", "ok");
-    } catch (e: any) {
-      flash(e?.message || "Error al guardar", "err");
+    } catch (e) {
+      flash((e as { message?: string })?.message || "Error al guardar", "err");
     } finally {
       setSavingEvalPercent((p) => ({ ...p, [evalId]: false }));
     }
@@ -801,12 +870,11 @@ export default function TeacherPage() {
     setDeletingEval((p) => ({ ...p, [evalId]: true }));
     try {
       await apiFetch(`/api/teacher/evaluations/${evalId}`, { method: "DELETE" });
-      setCreateClassEvals((prev) => prev.filter((e) => e.id !== evalId));
       setItems((prev) => prev.filter((e) => e.id !== evalId));
       setEditPercents((p) => { const n = { ...p }; delete n[evalId]; return n; });
       flash("Evaluación eliminada", "ok");
-    } catch (e: any) {
-      flash(e?.message || "Error al eliminar", "err");
+    } catch (e) {
+      flash((e as { message?: string })?.message || "Error al eliminar", "err");
     } finally {
       setDeletingEval((p) => ({ ...p, [evalId]: false }));
     }
@@ -839,7 +907,9 @@ export default function TeacherPage() {
       return setMsg("Porcentaje inválido (1..100).");
     }
 
-    const totalExisting = createClassEvals.reduce((s, e) => s + Number(e.percent), 0);
+    const totalExisting = items
+      .filter((it) => Number(it.id_class) === id_class)
+      .reduce((s, e) => s + Number(e.percent), 0);
     if (totalExisting + percent > 100) {
       return setMsg(
         `El porcentaje total superaría 100% (existente: ${totalExisting}%, nuevo: ${percent}%). Ajusta los porcentajes antes de continuar.`
@@ -880,17 +950,12 @@ export default function TeacherPage() {
       setTitleOther("");
       setCPercent(0);
 
-      // Reload existing evals for this class (keeps dropdowns selected)
-      const reloaded = await apiFetch(`/api/teacher/evaluations?class_id=${id_class}`);
-      const evs: EvalItem[] = reloaded?.items || [];
-      setCreateClassEvals(evs);
-      const initP: Record<number, string> = {};
-      evs.forEach((e) => { initP[e.id] = String(e.percent); });
-      setEditPercents(initP);
+      // Reload items so createEvalsFiltered auto-updates
+      await loadEvaluations(teacherYear);
 
       flash("Evaluación creada", "ok");
-    } catch (e: any) {
-      setMsg(e?.message || "Error creando evaluación");
+    } catch (e) {
+      setMsg((e as { message?: string })?.message || "Error creando evaluación");
     } finally {
       setCreating(false);
     }
@@ -934,38 +999,10 @@ export default function TeacherPage() {
     }
   }, [allSections]);
 
-  // Reload grid on Módulo or Materia change
+  // Limpiar filtros de texto al cambiar Módulo o Materia (sin recargar API — datos ya cargados)
   useEffect(() => {
-    if (upsertLevelFilter === "") return;
-
     setThFilterCedula("");
     setThFilterName("");
-
-    const levelNum = Number(upsertLevelFilter);
-
-    const getModuleName = (c: TeacherClass) =>
-      c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "—");
-
-    if (thFilterClass) {
-      const cls = myClasses.find(
-        (c) => c.name === thFilterClass && Number(c.level) === levelNum
-      );
-      if (cls) { loadAllGradeGrids([cls.id]); return; }
-    }
-
-    if (thFilterModule) {
-      const ids = myClasses
-        .filter((c) => Number(c.level) === levelNum && getModuleName(c) === thFilterModule)
-        .map((c) => c.id);
-      if (ids.length > 0) { loadAllGradeGrids(ids); return; }
-    }
-
-    // Both cleared → reload all classes for the level
-    const ids = myClasses
-      .filter((c) => Number(c.level) === levelNum)
-      .map((c) => c.id);
-    if (ids.length > 0) loadAllGradeGrids(ids);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thFilterModule, thFilterClass]);
 
   // =========================
@@ -1026,7 +1063,7 @@ export default function TeacherPage() {
   }, [allSections, myClasses, levelMap]);
 
   // TH filter option memos
-  const thLevelOptions = useMemo(() => {
+  const _thLevelOptions = useMemo(() => {
     const seen = new Set<number>();
     const out: { value: string; label: string }[] = [];
     for (const r of flatRows) {
@@ -1056,7 +1093,7 @@ export default function TeacherPage() {
     return out;
   }, [myClasses, upsertLevelFilter]);
 
-  const thGroupOptions = useMemo(() => {
+  const _thGroupOptions = useMemo(() => {
     const seen = new Set<string>();
     const out: { value: string; label: string }[] = [];
     const levelNum = upsertLevelFilter && upsertLevelFilter !== "all" ? Number(upsertLevelFilter) : null;
@@ -1073,16 +1110,24 @@ export default function TeacherPage() {
   }, [myClasses, upsertLevelFilter, thFilterModule]);
 
   const thClassOptions = useMemo(() => {
-    const seen = new Set<string>();
+    const seenIds = new Set<number>();
     const out: { value: string; label: string }[] = [];
     const levelNum = upsertLevelFilter && upsertLevelFilter !== "all" ? Number(upsertLevelFilter) : null;
+    // Count how many classes share the same name at this level (for label disambiguation)
+    const nameCounts = new Map<string, number>();
     for (const c of myClasses) {
       if (levelNum !== null && Number(c.level) !== levelNum) continue;
       if (thFilterModule && classModuleName(c) !== thFilterModule) continue;
-      if (!seen.has(c.name)) {
-        seen.add(c.name);
-        out.push({ value: c.name, label: c.name });
-      }
+      nameCounts.set(c.name, (nameCounts.get(c.name) ?? 0) + 1);
+    }
+    for (const c of myClasses) {
+      if (levelNum !== null && Number(c.level) !== levelNum) continue;
+      if (thFilterModule && classModuleName(c) !== thFilterModule) continue;
+      if (seenIds.has(c.id)) continue;
+      seenIds.add(c.id);
+      const hasDupe = (nameCounts.get(c.name) ?? 0) > 1;
+      const label = hasDupe ? `${c.name} (${classModuleName(c)})` : c.name;
+      out.push({ value: String(c.id), label });
     }
     return out;
   }, [myClasses, upsertLevelFilter, thFilterModule]);
@@ -1092,7 +1137,7 @@ export default function TeacherPage() {
       (ctx) =>
         (!thFilterModule || ctx.moduleName === thFilterModule) &&
         (!thFilterGroup || ctx.groupName === thFilterGroup) &&
-        (!thFilterClass || ctx.className === thFilterClass)
+        (!thFilterClass || ctx.classId === Number(thFilterClass))
     );
 
   const thCedulaOptions = useMemo(() => {
@@ -1148,7 +1193,7 @@ export default function TeacherPage() {
       }
     }
     return out;
-  }, [myClasses, createLevelFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [myClasses, createLevelFilter]);
 
   const flatRowsFiltered = useMemo<FlatGradeRow[]>(() => {
     return flatRows.filter((r) => {
@@ -1166,8 +1211,23 @@ export default function TeacherPage() {
   const visibleEvals = useMemo<EvalItem[]>(() => {
     const seenEvalIds = new Set<number>();
     const out: EvalItem[] = [];
+
+    // Build the set of class IDs in scope based on the active module/class filter
+    const levelNum = upsertLevelFilter && upsertLevelFilter !== "all" ? Number(upsertLevelFilter) : null;
+    let scopeClassIds: Set<number> | null = null;
+    if (thFilterClass) {
+      scopeClassIds = new Set([Number(thFilterClass)]);
+    } else if (thFilterModule) {
+      scopeClassIds = new Set<number>();
+      for (const c of myClasses) {
+        if (levelNum !== null && Number(c.level) !== levelNum) continue;
+        if (classModuleName(c) === thFilterModule) scopeClassIds.add(c.id);
+      }
+    }
+
     for (const r of flatRowsFiltered) {
       for (const ev of r.sectionEvals) {
+        if (scopeClassIds !== null && !scopeClassIds.has(Number(ev.id_class))) continue;
         if (!seenEvalIds.has(ev.id)) {
           seenEvalIds.add(ev.id);
           out.push(ev);
@@ -1175,7 +1235,7 @@ export default function TeacherPage() {
       }
     }
     return out.sort((a, b) => a.id - b.id);
-  }, [flatRowsFiltered]);
+  }, [flatRowsFiltered, myClasses, upsertLevelFilter, thFilterModule, thFilterClass]);
 
   const upsertDynamicMinWidth = useMemo(() => {
     return 260 + 150 + visibleEvals.length * 170 + 160;
@@ -1208,9 +1268,9 @@ export default function TeacherPage() {
         }
       }
       setGradeDraft(drafts);
-    } catch (e: any) {
+    } catch (e) {
       if (myId !== loadIdRef.current) return;
-      setMsg(e?.message || "Error cargando alumnos/notas");
+      setMsg((e as { message?: string })?.message || "Error cargando alumnos/notas");
       setAllSections([]);
       setGradeDraft({});
     } finally {
@@ -1227,12 +1287,12 @@ export default function TeacherPage() {
     loadAllGradeGrids(ids);
   }
 
-  function getEvaluationColumnLabel(ev: EvalItem, countsMap: Map<string, number>) {
-    const typeLabel = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim();
-    const typeKey = typeLabel.toLowerCase();
-    const repeated = (countsMap.get(typeKey) || 0) > 1;
-    if (repeated) return `${typeLabel} · ${ev.title} (${Number(ev.percent).toFixed(0)}%)`;
-    return `${typeLabel} (${Number(ev.percent).toFixed(0)}%)`;
+  function getEvaluationColumnLabel(ev: EvalItem, _countsMap: Map<string, number>) {
+    const materia = String(ev.class?.name || "").trim();
+    const tipo = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim();
+    const pct = Number(ev.percent).toFixed(0);
+    if (materia) return `${materia} - ${tipo} (${pct}%)`;
+    return `${tipo} (${pct}%)`;
   }
 
   function isEvaluationApplicableToStudent(student: StudentRow, ev: EvalItem) {
@@ -1323,6 +1383,25 @@ export default function TeacherPage() {
         })
       );
 
+      // Patch allSections in-place so noPresentó updates immediately without a reload
+      setAllSections((prev) => prev.map((section) => {
+        const sectionEvalIds = new Set((section.evaluations || []).map((e) => e.id));
+        const applicableHere = applicableEvals.filter((ev) => sectionEvalIds.has(ev.id));
+        if (applicableHere.length === 0) return section;
+        const patchedGrades = [...(section.grades || [])];
+        for (const ev of applicableHere) {
+          const key = gradeCellKey(student.id, ev.id);
+          const savedGrade = Number(gradeDraft[key]);
+          const idx = patchedGrades.findIndex((g) => g.id_student === student.id && g.id_exam === ev.id);
+          if (idx >= 0) {
+            patchedGrades[idx] = { ...patchedGrades[idx], grade: savedGrade, attempts: Math.max(1, Number(patchedGrades[idx].attempts ?? 0)) };
+          } else {
+            patchedGrades.push({ id_student: student.id, id_exam: ev.id, grade: savedGrade, attempts: 1 });
+          }
+        }
+        return { ...section, grades: patchedGrades };
+      }));
+
       setEditingRow((prev) => ({ ...prev, [student.id]: false }));
       setRowSnapshot((prev) => {
         const next = { ...prev };
@@ -1331,15 +1410,15 @@ export default function TeacherPage() {
       });
 
       flash(`✅ Notas guardadas: ${student.name}`, "ok");
-    } catch (e: any) {
-      setMsg(e?.message || `Error guardando notas de ${student.name}`);
+    } catch (e) {
+      setMsg((e as { message?: string })?.message || `Error guardando notas de ${student.name}`);
       flash(`❌ Error guardando: ${student.name}`, "err");
     } finally {
       setSavingOne((prev) => ({ ...prev, [student.id]: false }));
     }
   }
 
-  async function saveAll() {
+  async function _saveAll() {
     const hasSections = allSections.some(
       (s) => (s.students?.length ?? 0) > 0 && (s.evaluations?.length ?? 0) > 0
     );
@@ -1388,8 +1467,8 @@ export default function TeacherPage() {
       setRowSnapshot({});
       loadGradeGrid();
       flash("✅ Notas actualizadas", "ok");
-    } catch (e: any) {
-      setMsg(e?.message || "Error actualizando todas las notas");
+    } catch (e) {
+      setMsg((e as { message?: string })?.message || "Error actualizando todas las notas");
       flash("❌ Error actualizando todas", "err");
     } finally {
       setSavingAll(false);
@@ -1397,7 +1476,7 @@ export default function TeacherPage() {
   }
 
   function downloadExcel() {
-    const label = thFilterClass || thFilterModule
+    const label = (thFilterClass ? (myClasses.find(c => c.id === Number(thFilterClass))?.name ?? "") : "") || thFilterModule
       || (upsertCourseFilter !== "all" ? coursesForUpsert.find(c => c.id === Number(upsertCourseFilter))?.name : undefined)
       || (upsertLevelFilter !== "" ? (levels.find(l => l.id === Number(upsertLevelFilter))?.name ?? `Nivel ${upsertLevelFilter}`) : "Grilla");
     const countsMap = new Map<string, number>();
@@ -1649,44 +1728,57 @@ export default function TeacherPage() {
               <div style={{ fontWeight: 900, fontSize: 16 }}>¿Qué quieres hacer?</div>
             </div>
 
-            <div
-              style={{
-                minWidth: 260,
-                padding: 10,
-              }}
-            >
-              <select
-                className="select"
-                value={view}
-                onChange={(e) => {
-                  const next = e.target.value as TeacherView;
-                  setView(next);
-                  setMsg(null);
-                  if (next === "DASHBOARD") loadDashboard();
-                  if (next === "EVALS") loadEvaluations();
-                  if (next === "CREATE") {
-                    loadTeacherCourses();
-                    loadTypes();
-                    setCCourse("");
-                    setCreateClassFilter("all");
-                    setCType("");
-                    setCTypeOther("");
-                    setTitlePick("");
-                    setTitleOther("");
-                    setCPercent(0);
-                    setCreateClassEvals([]);
-                    setEditPercents({});
+            <div style={{ display: "grid", gridTemplateColumns: "4fr 1fr", gap: 10, alignItems: "flex-end", padding: 10 }}>
+              <div>
+                <select
+                  className="select"
+                  style={{ width: "100%" }}
+                  value={view}
+                  onChange={(e) => {
+                    const next = e.target.value as TeacherView;
+                    resetView(view);
+                    setView(next);
+                    setMsg(null);
+                    if (next === "DASHBOARD") loadDashboard(teacherYear);
+                    if (next === "EVALS") loadEvaluations(teacherYear);
+                    if (next === "CREATE") {
+                      loadTeacherCourses(teacherYear);
+                      loadTypes();
+                    }
+                  }}
+                >
+                  <option value="" disabled>¿Qué quieres hacer?...</option>
+                  <option value="DASHBOARD">Ver Materias Asignadas</option>
+                  <option value="UPSERT">Gestionar notas de Estudiantes</option>
+                  <option value="CREATE" disabled={isHistoricalYear}>Crear/Eliminar Evaluaciones</option>
+                  <option value="EVALS">Ver/Actualizar Evaluaciones</option>
+                </select>
+              </div>
+              <div>
+                <div className="label" style={{ fontSize: 11, marginBottom: 2 }}>Año lectivo</div>
+                <select
+                  className="select"
+                  style={{ width: "100%" }}
+                  value={teacherYear ?? ""}
+                  onChange={(e) => setTeacherYear(Number(e.target.value))}
+                  disabled={anioLectivoItems.length === 0}
+                >
+                  {anioLectivoItems.length === 0
+                    ? <option value="">—</option>
+                    : anioLectivoItems.map(a => (
+                        <option key={a.year} value={a.year}>{a.year}{a.activo ? " ✓" : ""}</option>
+                      ))
                   }
-                }}
-              >
-                <option value="" disabled>¿Qué quieres hacer?...</option>
-                <option value="DASHBOARD">Ver Materias Asignadas</option>
-                <option value="UPSERT">Gestionar notas de Estudiantes</option>
-                <option value="CREATE">Crear/Eliminar Evaluaciones</option>
-                <option value="EVALS">Ver/Actualizar Evaluaciones</option>
-              </select>
+                </select>
+              </div>
             </div>
           </div>
+
+          {isHistoricalYear && (
+            <div style={{ margin: "10px 10px 0", padding: "8px 14px", borderRadius: 10, background: "color-mix(in srgb, var(--accent) 12%, var(--card) 88%)", border: "1px solid color-mix(in srgb, var(--accent) 35%, transparent)", color: "var(--text)", fontSize: 13 }}>
+              Histórico — {teacherYear}. Solo lectura.
+            </div>
+          )}
 
           {msg && (
             <div className={msgKind === "ok" ? "msgOk" : "msgError"} style={{ marginTop: 12 }}>
@@ -1972,7 +2064,7 @@ export default function TeacherPage() {
                         evalItemsFiltered.map((e, rowIndex) => {
                           const isModuleLevel = e.id_class == null && e.id_module != null;
                           const isGroupLevel = e.id_class == null && e.id_group != null;
-                          const isReadOnly = isModuleLevel || isGroupLevel;
+                          const isReadOnly = isModuleLevel || isGroupLevel || isHistoricalYear;
                           const bg = getGrillaBaseRowBg(rowIndex, isDarkTheme);
 
                           const levelNum = Number(e.class?.level ?? 0);
@@ -2044,7 +2136,7 @@ export default function TeacherPage() {
                               </td>
                               <td style={{ padding: "4px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg, textAlign: "center" }}>
                                 {isReadOnly ? (
-                                  <span style={{ fontSize: 12, color: "var(--muted)" }}>Solo lectura</span>
+                                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{isHistoricalYear ? "Histórico" : "Solo lectura"}</span>
                                 ) : (
                                   <button
                                     type="button"
@@ -2161,7 +2253,6 @@ export default function TeacherPage() {
                       setTitlePick("");
                       setTitleOther("");
                       setCPercent(0);
-                      setCreateClassEvals([]);
                       setEditPercents({});
                     }}
                   >
@@ -2297,16 +2388,14 @@ export default function TeacherPage() {
                         <div />
                       </div>
                       {/* filas */}
-                      {createClassFilter === "all" ? (
+                      {createLevelFilter === "" ? (
                         <div style={{ padding: "14px 16px", color: "var(--muted)", fontSize: 13 }}>
-                          Selecciona una materia para ver sus evaluaciones.
+                          Selecciona un nivel para ver las evaluaciones existentes.
                         </div>
-                      ) : loadingCreateClassEvals ? (
-                        <div style={{ padding: "14px 16px", color: "var(--muted)", fontSize: 13 }}>Cargando evaluaciones...</div>
-                      ) : createClassEvals.length === 0 ? (
-                        <div style={{ padding: "14px 16px", color: "var(--muted)", fontSize: 13 }}>Esta materia no tiene evaluaciones aún.</div>
+                      ) : createEvalsFiltered.length === 0 ? (
+                        <div style={{ padding: "14px 16px", color: "var(--muted)", fontSize: 13 }}>No hay evaluaciones para la selección actual.</div>
                       ) : (
-                        createClassEvals.map((ev) => (
+                        createEvalsFiltered.map((ev) => (
                           <div
                             key={ev.id}
                             style={{
@@ -2442,7 +2531,7 @@ export default function TeacherPage() {
                     className="select"
                     value={thFilterClass}
                     disabled={upsertLevelFilter === ""}
-                    onChange={(e) => { setThFilterClass(e.target.value); }}
+                    onChange={(e) => { setThFilterClass(e.target.value); /* stores class ID */ }}
                   >
                     <option value="" style={{ fontWeight: 700 }}>Materia</option>
                     {thClassOptions.map((o) => (
@@ -2482,7 +2571,7 @@ export default function TeacherPage() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
                     <div style={{ fontWeight: 900 }}>
                       {thFilterClass
-                        ? `Materia: ${thFilterClass}`
+                        ? `Materia: ${myClasses.find(c => c.id === Number(thFilterClass))?.name ?? ""}`
                         : thFilterGroup
                           ? `Grupo: ${thFilterGroup}${thFilterModule ? ` · ${thFilterModule}` : ""} — Todas las materias`
                           : thFilterModule
@@ -2522,11 +2611,7 @@ export default function TeacherPage() {
                   <div style={{ borderRadius: GRILLA.radiusSecondary, overflow: "hidden", border: "1px solid color-mix(in srgb, var(--stroke) 100%, transparent)", background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)", boxShadow: "var(--shadow)" }}>
                     <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "68vh", minHeight: 200, background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)" }}>
                       {(() => {
-                        const visibleEvalCountsMap = new Map<string, number>();
-                        for (const ev of visibleEvals) {
-                          const k = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim().toLowerCase();
-                          visibleEvalCountsMap.set(k, (visibleEvalCountsMap.get(k) || 0) + 1);
-                        }
+                        const _visibleEvalCountsMap = new Map<string, number>();
                         return (
                           <table
                             className="teacher-solid-table"
@@ -2552,15 +2637,17 @@ export default function TeacherPage() {
                                   else groups.push({ classId: cid, className: ev.class?.name || `Clase ${cid}`, count: 1 });
                                 }
                                 if (groups.length <= 1) return null;
+                                const subHeaderBg = isDarkTheme ? GRILLA.headerBgDark : GRILLA.headerBgLight;
+                                const subHeaderText = isDarkTheme ? GRILLA.headerTextDark : GRILLA.headerTextLight;
                                 return (
                                   <tr>
-                                    <td colSpan={2} style={{ borderBottom: GRILLA.headerBottomBorder, background: GRILLA.headerBgLight, position: "sticky", top: 0, left: 0, zIndex: 7 }} />
-                                    {groups.map((g) => (
-                                      <td key={g.classId} colSpan={g.count} style={{ padding: "4px 10px", borderBottom: GRILLA.headerBottomBorder, fontSize: 11, textAlign: "center", background: GRILLA.headerBgLight, borderLeft: "1px solid var(--stroke)", position: "sticky", top: 0, zIndex: 5 }}>
+                                    <td colSpan={2} style={{ borderBottom: GRILLA.headerBottomBorder, background: subHeaderBg, position: "sticky", top: 0, left: 0, zIndex: 7 }} />
+                                    {groups.map((g, gi) => (
+                                      <td key={`${g.classId}-${gi}`} colSpan={g.count} style={{ padding: "4px 10px", borderBottom: GRILLA.headerBottomBorder, fontSize: 11, fontWeight: 700, textAlign: "center", background: subHeaderBg, color: subHeaderText, borderLeft: "1px solid var(--stroke)", position: "sticky", top: 0, zIndex: 5 }}>
                                         {g.className}
                                       </td>
                                     ))}
-                                    <td style={{ borderBottom: GRILLA.headerBottomBorder, background: GRILLA.headerBgLight, position: "sticky", top: 0, zIndex: 5 }} />
+                                    <td style={{ borderBottom: GRILLA.headerBottomBorder, background: subHeaderBg, position: "sticky", top: 0, zIndex: 5 }} />
                                   </tr>
                                 );
                               })()}
@@ -2599,11 +2686,19 @@ export default function TeacherPage() {
                                     ))}
                                   </select>
                                 </th>
-                                {visibleEvals.map((ev) => (
-                                  <th key={ev.id} style={{ textAlign: "left", padding: "8px 10px", borderBottom: GRILLA.headerBottomBorder, fontWeight: 800, position: "sticky", top: 0, zIndex: 5, lineHeight: 1.2 }}>
-                                    {getEvaluationColumnLabel(ev, visibleEvalCountsMap)}
-                                  </th>
-                                ))}
+                                {visibleEvals.map((ev) => {
+                                  const materia = String(ev.class?.name || "").trim();
+                                  const tipo = String(ev.evaluation_type?.type || "Evaluación").trim();
+                                  const titulo = String(ev.title || "").trim();
+                                  const tipoLabel = titulo && titulo !== tipo ? `${tipo} - ${titulo}` : tipo;
+                                  const pct = Number(ev.percent).toFixed(0);
+                                  return (
+                                    <th key={ev.id} style={{ textAlign: "left", padding: "8px 10px", borderBottom: GRILLA.headerBottomBorder, position: "sticky", top: 0, zIndex: 5, lineHeight: 1.3 }}>
+                                      {materia && <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.7, marginBottom: 1 }}>{materia}</div>}
+                                      <div style={{ fontSize: 11, fontWeight: 700 }}>{tipoLabel} ({pct}%)</div>
+                                    </th>
+                                  );
+                                })}
                                 <th style={{ textAlign: "center", padding: "8px 10px", borderBottom: GRILLA.headerBottomBorder, fontWeight: 800, position: "sticky", top: 0, zIndex: 5 }} />
                               </tr>
                             </thead>
@@ -2648,8 +2743,8 @@ export default function TeacherPage() {
                                         const enabledForCourse = Number(st.id_course) === Number(ev.id_course);
                                         const editable = enabledForCourse && isEditing && !isBusy;
                                         const gradeRecord = row.sectionGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
-                                        const attempts = gradeRecord?.attempts ?? 0;
-                                        const gradeVal = gradeRecord?.grade ?? 0;
+                                        const attempts = Number(gradeRecord?.attempts ?? 0);
+                                        const gradeVal = Number(gradeRecord?.grade ?? 0);
                                         const noPresentó = enabledForCourse && attempts === 0 && gradeVal === 0;
 
                                         return (
@@ -2689,7 +2784,7 @@ export default function TeacherPage() {
                                           <button
                                             className="btn"
                                             onClick={() => handleRowAction(st, row.sectionEvals)}
-                                            disabled={isBusy}
+                                            disabled={isBusy || isHistoricalYear}
                                             style={{ minWidth: 104, padding: "5px 10px", background: isEditing ? "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)" : "linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%)", border: isEditing ? "1px solid rgba(34,197,94,.8)" : "1px solid rgba(2,132,199,.8)", color: "#fff", boxShadow: isEditing ? "0 5px 14px rgba(34,197,94,.18)" : "0 5px 14px rgba(2,132,199,.16)", fontSize: 13 }}
                                           >
                                             {isBusy ? "Actualizando..." : isEditing ? "Guardar" : "Actualizar"}
