@@ -37,13 +37,19 @@ export type CrearExamenCtx = {
   levelName:   string | null;
 };
 
+type ApiOpciones =
+  | OpcionSimple[]
+  | { izquierda?: OpcionSimple[]; derecha?: OpcionSimple[] }
+  | null
+  | undefined;
+
 type ApiPregunta = {
   id: number;
   orden: number;
   tipo: TipoPregunta;
   enunciado: string;
   puntos: number;
-  opciones: { izquierda?: unknown[]; derecha?: unknown[] } | unknown[] | null | undefined;
+  opciones: ApiOpciones;
   respuesta_correcta: unknown;
 };
 
@@ -93,14 +99,22 @@ function apiToState(p: ApiPregunta): PreguntaState {
     opciones: [], respuestaMulti: [], respuestaFV: "", izquierda: [], derecha: [], mapeo: {},
   };
   if (p.tipo === "multiple_single" || p.tipo === "multiple_multi") {
-    return { ...base, opciones: Array.isArray(p.opciones) ? p.opciones as OpcionSimple[] : [], respuestaMulti: Array.isArray(p.respuesta_correcta) ? p.respuesta_correcta as string[] : [] };
+    const opc = Array.isArray(p.opciones) ? (p.opciones as OpcionSimple[]) : [];
+    const resp = Array.isArray(p.respuesta_correcta) ? (p.respuesta_correcta as string[]) : [];
+    return { ...base, opciones: opc, respuestaMulti: resp };
   }
   if (p.tipo === "falso_verdadero") {
-    return { ...base, opciones: [{ id: "V", texto: "Verdadero" }, { id: "F", texto: "Falso" }], respuestaFV: Array.isArray(p.respuesta_correcta) ? (p.respuesta_correcta[0] as "V" | "F") : "" };
+    const fv = Array.isArray(p.respuesta_correcta) ? (p.respuesta_correcta[0] as "V" | "F") : "";
+    return { ...base, opciones: [{ id: "V", texto: "Verdadero" }, { id: "F", texto: "Falso" }], respuestaFV: fv };
   }
   if (p.tipo === "emparejamiento") {
-    const opc = p.opciones as { izquierda?: unknown[]; derecha?: unknown[] } | null | undefined;
-    return { ...base, izquierda: Array.isArray(opc?.izquierda) ? opc!.izquierda as string[] : [], derecha: Array.isArray(opc?.derecha) ? opc!.derecha as string[] : [], mapeo: (typeof p.respuesta_correcta === "object" && !Array.isArray(p.respuesta_correcta)) ? p.respuesta_correcta as Record<string, string> : {} };
+    const opc = (!Array.isArray(p.opciones) && p.opciones != null)
+      ? (p.opciones as { izquierda?: OpcionSimple[]; derecha?: OpcionSimple[] })
+      : {};
+    const mapeo = (typeof p.respuesta_correcta === "object" && p.respuesta_correcta !== null && !Array.isArray(p.respuesta_correcta))
+      ? (p.respuesta_correcta as Record<string, string>)
+      : {};
+    return { ...base, izquierda: opc.izquierda ?? [], derecha: opc.derecha ?? [], mapeo };
   }
   return base;
 }
