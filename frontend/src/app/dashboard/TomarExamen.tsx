@@ -523,7 +523,7 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
                   <p style={{ fontSize: 15, color: "var(--muted)", marginBottom: 24 }}>
                     Ya has rendido este examen.
                   </p>
-                  <button className="btn" style={{ padding: "10px 28px" }} onClick={onClose}>
+                  <button className="btn" style={{ padding: "10px 28px" }} onClick={() => onClose()}>
                     ← Regresar
                   </button>
                 </div>

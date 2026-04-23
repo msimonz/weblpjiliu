@@ -44,6 +44,11 @@ export default function MonitorPage() {
 
   if (meLoading) return <div className="container">Cargando...</div>;
 
+  const meData    = me ?? {};
+  const profile   = (meData.profile ?? {}) as Record<string, string | number | null | undefined>;
+  const meUser    = (meData.user    ?? {}) as Record<string, string | number | null | undefined>;
+  const meCourse  = (meData.course  ?? {}) as Record<string, string | number | null | undefined>;
+
   const SIDEBAR_W = 300;
   const HAM_PAD   = 14;
   const hamLeft   = sidebarOpen ? SIDEBAR_W + HAM_PAD : HAM_PAD;
@@ -70,10 +75,10 @@ export default function MonitorPage() {
         <div style={{ color: "var(--muted)", marginTop: 4, fontSize: 13 }}>Datos del usuario autenticado</div>
 
         {[
-          { label: "Nombre", value: me?.profile?.name ?? "—" },
-          { label: "Email",  value: me?.user?.email  ?? "—" },
-          { label: "Rol",    value: roleLabelFromRole(getActiveRole(me)) },
-          { label: "Curso",  value: me?.course?.name ?? "—" },
+          { label: "Nombre", value: profile.name  ?? "—" },
+          { label: "Email",  value: meUser.email  ?? "—" },
+          { label: "Rol",    value: roleLabelFromRole(getActiveRole(meData)) },
+          { label: "Curso",  value: meCourse.name ?? "—" },
         ].map(({ label, value }) => (
           <div key={label} style={{ marginTop: 10 }}>
             <div className="label" style={{ fontWeight: 500 }}>{label}</div>
@@ -82,7 +87,7 @@ export default function MonitorPage() {
         ))}
 
         <div style={{ marginTop: 20 }}>
-          <ChangePasswordButton email={me?.user?.email} className="btn actionBtn" />
+          <ChangePasswordButton email={meUser.email as string | undefined} className="btn actionBtn" />
         </div>
         <div style={{ marginTop: 12 }}>
           <button className="btn actionBtn" onClick={handleLogout} style={{ width: "100%" }}>Salir</button>
@@ -99,7 +104,7 @@ export default function MonitorPage() {
               <div style={{ color: "var(--muted)" }}>Panel Monitor</div>
             </div>
             <div className="topbarUserText">
-              Monitor · {me?.profile?.name ?? me?.user?.email ?? "—"}
+              Monitor · {profile.name ?? meUser.email ?? "—"}
             </div>
           </div>
 
@@ -129,8 +134,8 @@ export default function MonitorPage() {
           </div>
 
           {/* Vistas */}
-          {view === "REGISTRAR" && <RegistrarAsistencia me={me} />}
-          {view === "CONSULTAR" && <ReporteAsistencia me={me} />}
+          {view === "REGISTRAR" && <RegistrarAsistencia me={meData} />}
+          {view === "CONSULTAR" && <ReporteAsistencia me={meData} />}
         </div>
       </main>
 

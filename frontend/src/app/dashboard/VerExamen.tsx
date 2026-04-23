@@ -98,8 +98,8 @@ export default function VerExamen({ id_evaluation, examInfo, me, onClose }: Prop
     })();
   }, [id_evaluation]);
 
-  const profile = me?.profile ?? {};
-  const course  = me?.course  ?? {};
+  const profile = (me?.profile ?? {}) as Record<string, string | number | null | undefined>;
+  const course  = (me?.course  ?? {}) as Record<string, string | number | null | undefined>;
 
   // ── Renderers ────────────────────────────────────────────────────────────────
 
@@ -200,7 +200,8 @@ export default function VerExamen({ id_evaluation, examInfo, me, onClose }: Prop
       studentAns && !Array.isArray(studentAns) ? studentAns : {};
 
     // Mismo orden que vio el estudiante en TomarExamen
-    const studentId = me?.user?.id ?? "";
+    const meUser = me?.user as { id?: unknown } | undefined;
+    const studentId = String(meUser?.id ?? "");
     const shuffledDer = seededShuffle(der, studentId, id_evaluation, p.id);
 
     const derLetra  = new Map(shuffledDer.map((d, i) => [d.id, String.fromCharCode(65 + i)]));

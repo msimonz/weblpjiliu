@@ -210,10 +210,10 @@ export default function DashboardPage() {
       const res = await apiFetch(`/api/student/subjects-summary?course_id=${courseId}`);
       setSummaryItems(res?.items || []);
       setSummaryStats(res?.stats || null);
-    } catch {
+    } catch (e: unknown) {
       setSummaryItems([]);
       setSummaryStats(null);
-      setError(e?.message || "Error cargando resumen");
+      setError((e instanceof Error ? e.message : null) || "Error cargando resumen");
     } finally {
       setSummaryLoading(false);
     }

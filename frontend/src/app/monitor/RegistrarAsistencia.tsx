@@ -171,7 +171,7 @@ export default function RegistrarAsistencia({ me }: Props) {
       await apiFetch("/api/monitor/attendance", {
         method: "POST",
         body: JSON.stringify({
-          id_course:        course.id,
+          id_course:        course?.id,
           id_module:        Number(moduleId),
           id_class:         Number(classId),
           fecha_clase:      fecha,
