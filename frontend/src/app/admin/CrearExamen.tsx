@@ -43,7 +43,7 @@ type ApiPregunta = {
   tipo: TipoPregunta;
   enunciado: string;
   puntos: number;
-  opciones: unknown;
+  opciones: { izquierda?: unknown[]; derecha?: unknown[] } | unknown[] | null | undefined;
   respuesta_correcta: unknown;
 };
 
