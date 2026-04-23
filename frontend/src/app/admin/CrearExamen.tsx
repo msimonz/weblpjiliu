@@ -93,7 +93,7 @@ function apiToState(p: ApiPregunta): PreguntaState {
     opciones: [], respuestaMulti: [], respuestaFV: "", izquierda: [], derecha: [], mapeo: {},
   };
   if (p.tipo === "multiple_single" || p.tipo === "multiple_multi") {
-    return { ...base, opciones: Array.isArray(p.opciones) ? p.opciones : [], respuestaMulti: Array.isArray(p.respuesta_correcta) ? p.respuesta_correcta : [] };
+    return { ...base, opciones: Array.isArray(p.opciones) ? p.opciones as OpcionSimple[] : [], respuestaMulti: Array.isArray(p.respuesta_correcta) ? p.respuesta_correcta as string[] : [] };
   }
   if (p.tipo === "falso_verdadero") {
     return { ...base, opciones: [{ id: "V", texto: "Verdadero" }, { id: "F", texto: "Falso" }], respuestaFV: Array.isArray(p.respuesta_correcta) ? (p.respuesta_correcta[0] as "V" | "F") : "" };
