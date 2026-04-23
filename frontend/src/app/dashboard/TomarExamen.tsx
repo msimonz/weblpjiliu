@@ -398,8 +398,8 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
-  const profile = me?.profile ?? {};
-  const course  = me?.course  ?? {};
+  const profile = (me?.profile ?? {}) as Record<string, unknown>;
+  const course  = (me?.course  ?? {}) as Record<string, unknown>;
 
   const timerColor =
     secondsLeft <= 60  ? "#dc2626" :
