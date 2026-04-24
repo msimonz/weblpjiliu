@@ -11,8 +11,6 @@ import { healthRouter } from './src/routes/health.js';
 import { monitorRouter } from './src/routes/monitor.js';
 import { secretariaRouter } from './src/routes/secretaria.js';
 
-import { startSchedulers } from './src/schedulers.js';
-
 const app = express();
 const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 app.use(cors({
@@ -20,7 +18,8 @@ app.use(cors({
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-
+console.log("CORS_ORIGINS raw:", process.env.CORS_ORIGINS);
+console.log("corsOrigins parsed:", corsOrigins);
 app.use(express.json({ limit: '2mb' }));
 
 app.get('/health', (_, res) => res.json({ ok: true }));

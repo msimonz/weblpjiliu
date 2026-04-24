@@ -1511,8 +1511,8 @@ adminRouter.get("/download-template", requireAuth, requireAdmin, async (req, res
     ws.addRow(["Carlos Admin", "30009012", "carlos@ejemplo.com", "A",   "",     ""]);
     ws.addRow(["Ana Dual",     "40003456", "ana@ejemplo.com",    "S,T", "9002", courseNames[0] ?? ""]);
 
-    // Validación columna D (type)
-    ws.dataValidations.add("D2:D200", {
+    // Validación columna D (type) — celda por celda para evitar bug de exceljs@3.4.0 con rangos
+    const typeValidation = {
       type: "list",
       allowBlank: false,
       formulae: [`_listas!$A$1:$A$${typeRows}`],
@@ -1520,11 +1520,14 @@ adminRouter.get("/download-template", requireAuth, requireAdmin, async (req, res
       errorStyle: "stop",
       errorTitle: "Tipo inválido",
       error: "Selecciona un tipo de la lista desplegable",
-    });
+    };
+    for (let row = 2; row <= 200; row++) {
+      ws.dataValidations.add(`D${row}`, typeValidation);
+    }
 
     // Validación columna F (curso)
     if (courseRows > 0) {
-      ws.dataValidations.add("F2:F200", {
+      const courseValidation = {
         type: "list",
         allowBlank: true,
         formulae: [`_listas!$B$1:$B$${courseRows}`],
@@ -1532,7 +1535,10 @@ adminRouter.get("/download-template", requireAuth, requireAdmin, async (req, res
         errorStyle: "stop",
         errorTitle: "Curso inválido",
         error: "Selecciona un curso de la lista desplegable",
-      });
+      };
+      for (let row = 2; row <= 200; row++) {
+        ws.dataValidations.add(`F${row}`, courseValidation);
+      }
     }
 
     // Protección: desbloquear columnas editables (A,B,C,E) y dejar bloqueadas D y F
