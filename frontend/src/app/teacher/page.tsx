@@ -862,6 +862,19 @@ export default function TeacherPage() {
       flash("Porcentaje inválido (1..100)", "err");
       return;
     }
+
+    // Validar que la sumatoria del mismo id_class no supere 100
+    const ev = items.find(e => e.id === evalId);
+    if (ev) {
+      const totalOtros = items
+        .filter(e => e.id !== evalId && Number(e.id_class) === Number(ev.id_class))
+        .reduce((s, e) => s + Number(e.percent), 0);
+      if (totalOtros + val > 100) {
+        flash(`El porcentaje total superaría 100% (existente: ${totalOtros}%, nuevo: ${val}%)`, "err");
+        return;
+      }
+    }
+
     setSavingEvalPercent((p) => ({ ...p, [evalId]: true }));
     try {
       await apiFetch(`/api/teacher/evaluations/${evalId}`, {
@@ -920,6 +933,7 @@ export default function TeacherPage() {
 
   async function handleCreate() {
     setMsg(null);
+    setMsgKind("err");
 
     const id_course = Number(cCourse);
     if (!id_course) return setMsg("Selecciona un curso.");
@@ -2426,21 +2440,21 @@ export default function TeacherPage() {
 
               {/* EVALUACIONES EXISTENTES DE LA MATERIA */}
               <div style={{ marginTop: 48, display: "flex", flexDirection: "column", alignItems: "center" }}>
-                  <div className="label" style={{ width: "90%", marginBottom: 8 }}>Evaluaciones existentes</div>
+                  <div className="label" style={{ width: "75%", marginBottom: 8 }}>Evaluaciones existentes</div>
                   {(true) && (
                     <div
                       style={{
                         borderRadius: 14,
                         border: "1px solid var(--stroke)",
                         overflow: "hidden",
-                        width: "90%",
+                        width: "75%",
                       }}
                     >
                       {/* encabezado */}
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "200px 1fr 100px 130px 130px 130px",
+                          gridTemplateColumns: "130px 150px 150px 1fr 70px 110px 110px",
                           padding: "12px 16px",
                           background: isDarkTheme ? GRILLA.headerBgDark : GRILLA.headerBgLight,
                           borderBottom: "1px solid var(--stroke)",
@@ -2450,10 +2464,11 @@ export default function TeacherPage() {
                           alignItems: "center",
                         }}
                       >
-                        <div style={{ textAlign: "center" }}>Tipo</div>
-                        <div style={{ textAlign: "left", paddingLeft: 160 }}>Titulo</div>
-                        <div style={{ textAlign: "left", marginLeft: -200 }}>%</div>
-                        <div />
+                        <div>Tipo</div>
+                        <div>Curso</div>
+                        <div>Materia</div>
+                        <div>Título</div>
+                        <div style={{ textAlign: "center" }}>%</div>
                         <div />
                         <div />
                       </div>
@@ -2472,24 +2487,24 @@ export default function TeacherPage() {
                             key={ev.id}
                             style={{
                               display: "grid",
-                              gridTemplateColumns: "200px 1fr 100px 130px 130px 130px",
+                              gridTemplateColumns: "130px 150px 150px 1fr 70px 110px 110px",
                               padding: "12px 16px",
                               alignItems: "center",
                               borderBottom: "1px solid var(--stroke)",
-                              fontSize: 14,
+                              fontSize: 13,
                             }}
                           >
-                            <div style={{ fontSize: 13, textAlign: "center" }}>
-                              {ev.evaluation_type?.type ?? "—"}
-                            </div>
-                            <div style={{ textAlign: "left", paddingLeft: 160 }}>{ev.title}</div>
-                            <div style={{ display: "flex", justifyContent: "flex-start", marginLeft: -200 }}>
+                            <div>{ev.evaluation_type?.type ?? "—"}</div>
+                            <div style={{ color: "var(--muted)" }}>{ev.course?.name ?? "—"}</div>
+                            <div style={{ color: "var(--muted)" }}>{ev.class?.name ?? "—"}</div>
+                            <div>{ev.title}</div>
+                            <div style={{ display: "flex", justifyContent: "center" }}>
                               <input
                                 type="number"
                                 min={1}
                                 max={100}
                                 className="input"
-                                style={{ textAlign: "center", padding: "4px 8px", fontSize: 13, width: 72, borderRadius: 9999, opacity: isExamen ? 0.5 : 1 }}
+                                style={{ textAlign: "center", padding: "4px 6px", fontSize: 13, width: 56, borderRadius: 9999, opacity: isExamen ? 0.5 : 1 }}
                                 value={editPercents[ev.id] ?? String(ev.percent)}
                                 disabled={isExamen}
                                 onChange={(e) =>
@@ -2497,34 +2512,24 @@ export default function TeacherPage() {
                                 }
                               />
                             </div>
-                            <div style={{ marginLeft: -80, paddingRight: 6, width: 130 }}>
-                              <button
-                                type="button"
-                                style={{ fontSize: 13, padding: "6px 0", width: "100%", background: "#0ea5e9", color: "#fff", border: "none", borderRadius: 9999, fontWeight: 600, cursor: "pointer", opacity: isExamen ? 0.4 : 1 }}
-                                disabled={savingEvalPercent[ev.id] || isExamen}
-                                onClick={() => handleSaveCreateEvalPercent(ev.id)}
-                              >
-                                {savingEvalPercent[ev.id] ? "..." : "Guardar"}
-                              </button>
-                            </div>
-                            <div style={{ marginLeft: -80, paddingRight: 6, width: 130 }}>
-                              {isExamen && (
-                                <button
-                                  type="button"
-                                  style={{ fontSize: 13, padding: "6px 0", width: "100%", background: "#8b5cf6", color: "#fff", border: "none", borderRadius: 9999, fontWeight: 600, cursor: "pointer" }}
-                                  onClick={() => handleEditExam(ev)}
-                                >
+                            <div style={{ display: "flex", justifyContent: "center" }}>
+                              {isExamen ? (
+                                <button type="button" onClick={() => handleEditExam(ev)}
+                                  style={{ fontSize: 12, padding: "5px 0", width: 80, background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer" }}>
                                   Editar
+                                </button>
+                              ) : (
+                                <button type="button" onClick={() => handleSaveCreateEvalPercent(ev.id)}
+                                  disabled={savingEvalPercent[ev.id]}
+                                  style={{ fontSize: 12, padding: "5px 0", width: 80, background: "#0ea5e9", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", opacity: savingEvalPercent[ev.id] ? 0.5 : 1 }}>
+                                  {savingEvalPercent[ev.id] ? "..." : "Guardar"}
                                 </button>
                               )}
                             </div>
-                            <div style={{ marginLeft: -80, width: 130 }}>
-                              <button
-                                type="button"
-                                style={{ fontSize: 13, padding: "6px 0", width: "100%", background: "#ef4444", color: "#fff", border: "none", borderRadius: 9999, fontWeight: 600, cursor: "pointer" }}
+                            <div style={{ display: "flex", justifyContent: "center" }}>
+                              <button type="button" onClick={() => handleDeleteCreateEval(ev.id)}
                                 disabled={deletingEval[ev.id]}
-                                onClick={() => handleDeleteCreateEval(ev.id)}
-                              >
+                                style={{ fontSize: 12, padding: "5px 0", width: 80, background: "#ef4444", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", opacity: deletingEval[ev.id] ? 0.5 : 1 }}>
                                 {deletingEval[ev.id] ? "..." : "Eliminar"}
                               </button>
                             </div>

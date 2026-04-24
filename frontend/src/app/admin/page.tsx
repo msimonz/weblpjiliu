@@ -2807,12 +2807,11 @@ export default function AdminPage() {
                             }
                           />
                         </div>
-                        <div style={{ textAlign: "center" }}>
+                        <div style={{ display: "flex", justifyContent: "center" }}>
                           {ev.evaluation_type?.type === "Examen" ? (
                             <button
                               type="button"
-                              className="btnLight"
-                              style={{ fontSize: 12, padding: "8px 14px", borderRadius: 8, width: "100%", background: "#1d4ed8", color: "#fff", borderColor: "#1d4ed8" }}
+                              style={{ fontSize: 12, padding: "5px 0", width: 80, background: "#1d4ed8", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer" }}
                               onClick={() => ecHandleEditExam(ev)}
                             >
                               Editar
@@ -2820,8 +2819,7 @@ export default function AdminPage() {
                           ) : (
                             <button
                               type="button"
-                              className="btnLight"
-                              style={{ fontSize: 12, padding: "8px 14px", borderRadius: 8, width: "100%" }}
+                              style={{ fontSize: 12, padding: "5px 0", width: 80, background: "#0ea5e9", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", opacity: (ecSavingPercent[ev.id] || isHistoricalYear) ? 0.5 : 1 }}
                               disabled={ecSavingPercent[ev.id] || isHistoricalYear}
                               title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
                               onClick={() => ecHandleSavePercent(ev.id)}
@@ -2830,18 +2828,10 @@ export default function AdminPage() {
                             </button>
                           )}
                         </div>
-                        <div style={{ textAlign: "center", paddingLeft: 6 }}>
+                        <div style={{ display: "flex", justifyContent: "center" }}>
                           <button
                             type="button"
-                            className="btnLight"
-                            style={{
-                              fontSize: 12,
-                              padding: "8px 14px",
-                              borderRadius: 8,
-                              background: "#ef4444",
-                              color: "#fff",
-                              borderColor: "#ef4444",
-                            }}
+                            style={{ fontSize: 12, padding: "5px 0", width: 80, background: "#ef4444", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", opacity: (ecDeleting[ev.id] || isHistoricalYear) ? 0.5 : 1 }}
                             disabled={ecDeleting[ev.id] || isHistoricalYear}
                             title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
                             onClick={() => setEcConfirmDeleteId(ev.id)}
