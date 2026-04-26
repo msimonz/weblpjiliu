@@ -3017,3 +3017,4 @@ adminRouter.put("/anio-lectivo/activo", requireAuth, requireAdmin, async (req, r
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error activando año lectivo" });
   }
+});
