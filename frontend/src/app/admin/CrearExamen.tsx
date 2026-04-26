@@ -4,6 +4,7 @@ import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Types
 
 type TipoPregunta = "multiple_multi" | "multiple_single" | "falso_verdadero" | "emparejamiento";
 type OpcionSimple  = { id: string; texto: string };
