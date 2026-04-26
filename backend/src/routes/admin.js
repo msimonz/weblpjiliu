@@ -2310,8 +2310,8 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "preguntas debe ser un array" });
 
     // Validar rango de preguntas
-    if (preguntas.length < 4 || preguntas.length > 20)
-      return res.status(400).json({ error: "El examen debe tener entre 4 y 20 preguntas" });
+    if (preguntas.length < 1)
+      return res.status(400).json({ error: "El examen debe tener al menos 1 pregunta" });
 
     // Validar tipos permitidos
     const TIPOS_VALIDOS = ["multiple_multi", "multiple_single", "falso_verdadero", "emparejamiento"];
@@ -2571,8 +2571,8 @@ adminRouter.put("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "percent inválido (1..100)" });
     if (!Array.isArray(preguntas))
       return res.status(400).json({ error: "preguntas debe ser un array" });
-    if (preguntas.length < 4 || preguntas.length > 20)
-      return res.status(400).json({ error: "El examen debe tener entre 4 y 20 preguntas" });
+    if (preguntas.length < 1)
+      return res.status(400).json({ error: "El examen debe tener al menos 1 pregunta" });
 
     const TIPOS_VALIDOS = ["multiple_multi", "multiple_single", "falso_verdadero", "emparejamiento"];
     for (let i = 0; i < preguntas.length; i++) {
@@ -2616,6 +2616,18 @@ adminRouter.put("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
       try { await requireAnioVigenteForCourse(ev.id_course); }
       catch (err) { return handleYearError(res, err); }
     }
+
+    const { count: intentosCount, error: intentosErr } = await supabaseAdmin
+      .from("rta_examen")
+      .select("id", { count: "exact", head: true })
+      .eq("id_evaluation", id)
+      .not("finalizado_at", "is", null);
+
+    if (intentosErr) return res.status(500).json({ error: intentosErr.message });
+    if (intentosCount > 0)
+      return res.status(409).json({
+        error: `No se puede editar: ${intentosCount} alumno${intentosCount !== 1 ? "s" : ""} ya ${intentosCount !== 1 ? "rindieron" : "rindió"} este examen.`,
+      });
 
     // Actualizar tiempo_minutos y percent en evaluation
     const { error: updErr } = await supabaseAdmin

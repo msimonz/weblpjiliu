@@ -375,6 +375,21 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
     }
   }
 
+  // Auto-cierre: cerrar exámenes en progreso cuyo tiempo ya expiró
+  const { data: rtaEnProgreso } = await supabaseAdmin
+    .from("rta_examen")
+    .select("id, id_evaluation, iniciado_at, respuestas, evaluation:evaluation(tiempo_minutos)")
+    .eq("id_student", userId)
+    .in("id_evaluation", evalIds)
+    .is("finalizado_at", null)
+    .not("iniciado_at", "is", null);
+
+  for (const r of (rtaEnProgreso || [])) {
+    if (isTimeExpired(r.iniciado_at, r.evaluation?.tiempo_minutos)) {
+      await autoCloseRta(r.id, userId, r.id_evaluation, r.respuestas || []);
+    }
+  }
+
   const { data: gradeRows, error: gradesErr } = await supabaseAdmin
     .from("grades")
     .select("id_exam,grade,finished_at,attempts,created_at,updated_at")
@@ -457,6 +472,38 @@ async function getActiveSchedule(id_evaluation, id_course) {
     .or(`fecha_fin.is.null,fecha_fin.gte.${now}`)
     .maybeSingle();
   return data;
+}
+
+function isTimeExpired(iniciado_at, tiempo_minutos) {
+  if (!iniciado_at || !tiempo_minutos) return false;
+  const elapsedMs = Date.now() - new Date(iniciado_at).getTime();
+  const limiteMs  = (Number(tiempo_minutos) * 60 + 30) * 1000; // +30s margen
+  return elapsedMs > limiteMs;
+}
+
+async function autoCloseRta(rtaId, userId, id_evaluation, respuestas) {
+  const finalizadoAt = new Date().toISOString();
+
+  const { data: preguntas } = await supabaseAdmin
+    .from("examen_detalle")
+    .select("id, tipo, puntos, respuesta_correcta")
+    .eq("id_evaluation", id_evaluation);
+
+  const calificacion = gradeExam(preguntas || [], respuestas);
+
+  await Promise.all([
+    supabaseAdmin
+      .from("grades")
+      .update({ grade: calificacion, finished_at: finalizadoAt })
+      .eq("id_exam", id_evaluation)
+      .eq("id_student", userId),
+    supabaseAdmin
+      .from("rta_examen")
+      .update({ calificacion, finalizado_at: finalizadoAt })
+      .eq("id", rtaId),
+  ]);
+
+  return { calificacion, finalizado_at: finalizadoAt };
 }
 
 function gradeExam(preguntas, respuestas) {
@@ -688,15 +735,22 @@ studentRouter.post("/exam/:id_evaluation/save-answer", requireAuth, async (req, 
   if (id_pregunta == null)  return res.status(400).json({ error: "id_pregunta requerido" });
   if (pregunta_idx == null) return res.status(400).json({ error: "pregunta_idx requerido" });
 
-  const { data: rta, error: rtaErr } = await supabaseAdmin
-    .from("rta_examen")
-    .select("id, respuestas, finalizado_at")
-    .eq("id_student", userId)
-    .eq("id_evaluation", id_evaluation)
-    .maybeSingle();
+  const [{ data: rta, error: rtaErr }, { data: ev }] = await Promise.all([
+    supabaseAdmin
+      .from("rta_examen")
+      .select("id, respuestas, finalizado_at, iniciado_at")
+      .eq("id_student", userId)
+      .eq("id_evaluation", id_evaluation)
+      .maybeSingle(),
+    supabaseAdmin
+      .from("evaluation")
+      .select("tiempo_minutos")
+      .eq("id", id_evaluation)
+      .maybeSingle(),
+  ]);
 
   if (rtaErr) return res.status(500).json({ error: rtaErr.message });
-  if (!rta?.id)        return res.status(400).json({ error: "El examen no fue iniciado" });
+  if (!rta?.id)         return res.status(400).json({ error: "El examen no fue iniciado" });
   if (rta.finalizado_at) return res.status(403).json({ error: "El examen ya fue finalizado" });
 
   // Merge: reemplazar o agregar la respuesta de esta pregunta
@@ -711,7 +765,28 @@ studentRouter.post("/exam/:id_evaluation/save-answer", requireAuth, async (req, 
 
   if (updErr) return res.status(500).json({ error: updErr.message });
 
-  return res.json({ ok: true });
+  // Calificación progresiva: calificar todo lo respondido hasta ahora
+  const { data: preguntas } = await supabaseAdmin
+    .from("examen_detalle")
+    .select("id, tipo, puntos, respuesta_correcta")
+    .eq("id_evaluation", id_evaluation);
+
+  const calificacion = gradeExam(preguntas || [], updated);
+
+  // Auto-cierre si el tiempo expiró
+  if (isTimeExpired(rta.iniciado_at, ev?.tiempo_minutos)) {
+    const result = await autoCloseRta(rta.id, userId, id_evaluation, updated);
+    return res.json({ ok: true, calificacion: result.calificacion, auto_finalizado: true });
+  }
+
+  // Actualizar nota progresiva sin cerrar el examen
+  await supabaseAdmin
+    .from("grades")
+    .update({ grade: calificacion })
+    .eq("id_exam", id_evaluation)
+    .eq("id_student", userId);
+
+  return res.json({ ok: true, calificacion });
 });
 
 // GET /api/student/exam/:id_evaluation/schedule

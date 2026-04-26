@@ -952,8 +952,8 @@ const TIPOS_VALIDOS_EXAMEN = ["multiple_multi", "multiple_single", "falso_verdad
 
 function validatePreguntas(preguntas) {
   if (!Array.isArray(preguntas)) return "preguntas debe ser un array";
-  if (preguntas.length < 4 || preguntas.length > 20)
-    return "El examen debe tener entre 4 y 20 preguntas";
+  if (preguntas.length < 1)
+    return "El examen debe tener al menos 1 pregunta";
   for (let i = 0; i < preguntas.length; i++) {
     const p = preguntas[i]; const n = i + 1;
     if (!TIPOS_VALIDOS_EXAMEN.includes(p?.tipo))
@@ -1138,6 +1138,18 @@ teacherRouter.put("/exams/:id", requireAuth, requireTeacher, async (req, res) =>
     try { await requireAnioVigenteForCourse(ev.id_course); }
     catch (err) { return handleYearError(res, err); }
 
+    const { count: intentosCount, error: intentosErr } = await supabaseAdmin
+      .from("rta_examen")
+      .select("id", { count: "exact", head: true })
+      .eq("id_evaluation", id)
+      .not("finalizado_at", "is", null);
+
+    if (intentosErr) return res.status(500).json({ error: intentosErr.message });
+    if (intentosCount > 0)
+      return res.status(409).json({
+        error: `No se puede editar: ${intentosCount} alumno${intentosCount !== 1 ? "s" : ""} ya ${intentosCount !== 1 ? "rindieron" : "rindió"} este examen.`,
+      });
+
     const { error: updErr } = await supabaseAdmin
       .from("evaluation")
       .update({ tiempo_minutos, percent })
@@ -1166,5 +1178,274 @@ teacherRouter.put("/exams/:id", requireAuth, requireTeacher, async (req, res) =>
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error actualizando examen" });
+  }
+});
+
+// ── Reporte de Asistencia (solo materias del profesor) ───────────────────────
+
+/**
+ * GET /api/teacher/attendance/modules?course_id=X
+ * Módulos del profesor en el curso dado
+ */
+teacherRouter.get("/attendance/modules", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacherId = req.auth.user.id;
+    const courseId  = Number(req.query.course_id || 0);
+    if (!courseId) return res.status(400).json({ error: "course_id requerido" });
+
+    const { data: ctRows, error: ctErr } = await supabaseAdmin
+      .from("class_teacher")
+      .select("class:id_class(id_module)")
+      .eq("id_teacher", teacherId)
+      .eq("id_course", courseId);
+
+    if (ctErr) return res.status(500).json({ error: ctErr.message });
+
+    const moduleIds = [...new Set((ctRows || []).map((r) => r.class?.id_module).filter(Boolean))];
+    if (!moduleIds.length) return res.json({ items: [] });
+
+    const { data, error } = await supabaseAdmin
+      .from("module").select("id,name").in("id", moduleIds).order("name", { ascending: true });
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ items: data || [] });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /api/teacher/attendance/classes?module_id=X&course_id=X
+ * Materias del profesor en el módulo y curso dados
+ */
+teacherRouter.get("/attendance/classes", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacherId = req.auth.user.id;
+    const courseId  = Number(req.query.course_id || 0);
+    const moduleRaw = String(req.query.module_id || "");
+    const moduleId  = moduleRaw === "todos" ? "todos" : Number(moduleRaw || 0);
+
+    if (!courseId || !moduleRaw) return res.status(400).json({ error: "course_id y module_id requeridos" });
+
+    const { data: ctRows, error: ctErr } = await supabaseAdmin
+      .from("class_teacher")
+      .select("class:id_class(id,name,id_module)")
+      .eq("id_teacher", teacherId)
+      .eq("id_course", courseId);
+
+    if (ctErr) return res.status(500).json({ error: ctErr.message });
+
+    let classes = (ctRows || []).map((r) => r.class).filter(Boolean);
+    if (moduleId !== "todos") classes = classes.filter((c) => Number(c.id_module) === Number(moduleId));
+
+    const seen = new Set();
+    const items = classes
+      .filter((c) => { if (seen.has(c.id)) return false; seen.add(c.id); return true; })
+      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", "es"))
+      .map((c) => ({ id: c.id, name: c.name }));
+
+    return res.json({ items });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /api/teacher/attendance/fechas?course_id=X&module_id=X&class_id=X
+ */
+teacherRouter.get("/attendance/fechas", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacherId = req.auth.user.id;
+    const courseId  = Number(req.query.course_id || 0);
+    const moduleRaw = String(req.query.module_id || "");
+    const classRaw  = String(req.query.class_id  || "");
+    const moduleId  = moduleRaw === "todos" ? "todos" : Number(moduleRaw || 0);
+    const classId   = classRaw  === "todas" ? "todas" : Number(classRaw  || 0);
+
+    if (!courseId || !moduleRaw || !classRaw)
+      return res.status(400).json({ error: "course_id, module_id y class_id requeridos" });
+
+    const { data: ctRows } = await supabaseAdmin
+      .from("class_teacher").select("id_class")
+      .eq("id_teacher", teacherId).eq("id_course", courseId);
+
+    const teacherClassIds = (ctRows || []).map((r) => r.id_class);
+    if (!teacherClassIds.length)
+      return res.status(403).json({ error: "No tienes materias asignadas en este curso" });
+
+    let query = supabaseAdmin
+      .from("asistencia_sesion").select("id,fecha_clase")
+      .eq("id_course", courseId).order("fecha_clase", { ascending: false });
+
+    if (moduleId !== "todos") query = query.eq("id_module", moduleId);
+    if (classId  !== "todas") query = query.eq("id_class", classId);
+    else                      query = query.in("id_class", teacherClassIds);
+
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+
+    const seen = new Set();
+    const items = (data || [])
+      .filter((r) => { if (seen.has(r.fecha_clase)) return false; seen.add(r.fecha_clase); return true; })
+      .map((r) => ({ id: r.id, fecha_clase: r.fecha_clase }));
+
+    return res.json({ items });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /api/teacher/attendance/consulta?course_id=X&module_id=X&class_id=X&fecha=X
+ */
+teacherRouter.get("/attendance/consulta", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacherId = req.auth.user.id;
+    const courseId  = Number(req.query.course_id || 0);
+    const moduleId  = Number(req.query.module_id || 0);
+    const classId   = Number(req.query.class_id  || 0);
+    const fecha     = String(req.query.fecha || "").trim();
+
+    if (!courseId || !moduleId || !classId || !fecha)
+      return res.status(400).json({ error: "course_id, module_id, class_id y fecha son requeridos" });
+
+    const { data: ct } = await supabaseAdmin
+      .from("class_teacher").select("id_class")
+      .eq("id_teacher", teacherId).eq("id_course", courseId).eq("id_class", classId).maybeSingle();
+
+    if (!ct) return res.status(403).json({ error: "No tienes esta materia asignada en este curso" });
+
+    const { data: sesion, error: sErr } = await supabaseAdmin
+      .from("asistencia_sesion")
+      .select("id,id_teacher,profesor_asistio,profesor_reemplazo")
+      .eq("id_course", courseId).eq("id_module", moduleId)
+      .eq("id_class", classId).eq("fecha_clase", fecha).maybeSingle();
+
+    if (sErr) return res.status(500).json({ error: sErr.message });
+    if (!sesion) return res.status(404).json({ error: "No hay registro para esa sesión" });
+
+    const { data: teacherRow } = await supabaseAdmin
+      .from("users").select("name").eq("id", sesion.id_teacher).maybeSingle();
+
+    const { data: detalleRows, error: dErr } = await supabaseAdmin
+      .from("asistencia_detalle").select("id_student,asistio,motivo").eq("id_sesion", sesion.id);
+
+    if (dErr) return res.status(500).json({ error: dErr.message });
+
+    const studentIds = (detalleRows || []).map((d) => d.id_student);
+    let userMap = new Map();
+    if (studentIds.length) {
+      const { data: usersData } = await supabaseAdmin
+        .from("users").select("id,name,cedula").in("id", studentIds);
+      userMap = new Map((usersData || []).map((u) => [u.id, u]));
+    }
+
+    const detalle = (detalleRows || [])
+      .map((d) => ({
+        id_student: d.id_student,
+        name:   userMap.get(d.id_student)?.name   ?? null,
+        cedula: userMap.get(d.id_student)?.cedula ?? null,
+        asistio: d.asistio,
+        motivo:  d.motivo,
+      }))
+      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", "es"));
+
+    return res.json({ sesion: { ...sesion, teacher_name: teacherRow?.name ?? null }, detalle });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /api/teacher/attendance/consulta-todas?course_id=X&module_id=X&class_id=X[&fecha=X]
+ */
+teacherRouter.get("/attendance/consulta-todas", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacherId   = req.auth.user.id;
+    const courseId    = Number(req.query.course_id || 0);
+    const moduleRaw   = String(req.query.module_id || "");
+    const classRaw    = String(req.query.class_id  || "");
+    const fechaFiltro = String(req.query.fecha     || "").trim();
+    const moduleId    = moduleRaw === "todos" ? "todos" : Number(moduleRaw || 0);
+    const classId     = classRaw  === "todas" ? "todas" : Number(classRaw  || 0);
+
+    if (!courseId || !moduleRaw || !classRaw)
+      return res.status(400).json({ error: "course_id, module_id y class_id son requeridos" });
+
+    const { data: ctRows } = await supabaseAdmin
+      .from("class_teacher").select("id_class")
+      .eq("id_teacher", teacherId).eq("id_course", courseId);
+
+    const teacherClassIds = (ctRows || []).map((r) => r.id_class);
+    if (!teacherClassIds.length)
+      return res.status(403).json({ error: "No tienes materias asignadas en este curso" });
+
+    let query = supabaseAdmin
+      .from("asistencia_sesion")
+      .select("id,fecha_clase,id_teacher,profesor_asistio,profesor_reemplazo,id_class,class:id_class(id,name)")
+      .eq("id_course", courseId).order("fecha_clase", { ascending: true });
+
+    if (moduleId    !== "todos") query = query.eq("id_module",   moduleId);
+    if (classId     !== "todas") query = query.eq("id_class",    classId);
+    else                         query = query.in("id_class",    teacherClassIds);
+    if (fechaFiltro)             query = query.eq("fecha_clase", fechaFiltro);
+
+    const { data: sesiones, error: sErr } = await query;
+    if (sErr) return res.status(500).json({ error: sErr.message });
+    if (!sesiones?.length) return res.json({ fechas: [], detalle: [] });
+
+    const teacherIds = [...new Set(sesiones.map((s) => s.id_teacher).filter(Boolean))];
+    let teacherMap = new Map();
+    if (teacherIds.length) {
+      const { data: td } = await supabaseAdmin.from("users").select("id,name").in("id", teacherIds);
+      teacherMap = new Map((td || []).map((u) => [u.id, u.name]));
+    }
+
+    const sesionIds = sesiones.map((s) => s.id);
+    const fechasList = sesiones.map((s) => ({
+      fecha:              s.fecha_clase,
+      class_id:           s.id_class   ?? null,
+      class_name:         s.class?.name ?? null,
+      teacher_name:       teacherMap.get(s.id_teacher) ?? null,
+      profesor_asistio:   s.profesor_asistio,
+      profesor_reemplazo: s.profesor_reemplazo ?? null,
+    }));
+    const sesionInfoMap = new Map(sesiones.map((s) => [s.id, { fecha: s.fecha_clase, class_id: s.id_class ?? null }]));
+
+    const { data: detalleRows, error: dErr } = await supabaseAdmin
+      .from("asistencia_detalle").select("id_sesion,id_student,asistio,motivo").in("id_sesion", sesionIds);
+
+    if (dErr) return res.status(500).json({ error: dErr.message });
+
+    const studentIds = [...new Set((detalleRows || []).map((d) => d.id_student))];
+    let userMap = new Map();
+    if (studentIds.length) {
+      const { data: ud } = await supabaseAdmin.from("users").select("id,name,cedula").in("id", studentIds);
+      userMap = new Map((ud || []).map((u) => [u.id, u]));
+    }
+
+    const studentMap = new Map();
+    for (const d of (detalleRows || [])) {
+      const info = sesionInfoMap.get(d.id_sesion);
+      if (!info) continue;
+      if (!studentMap.has(d.id_student)) {
+        studentMap.set(d.id_student, {
+          id_student: d.id_student,
+          name:   userMap.get(d.id_student)?.name   ?? null,
+          cedula: userMap.get(d.id_student)?.cedula ?? null,
+          asistencia: [],
+        });
+      }
+      studentMap.get(d.id_student).asistencia.push({
+        fecha: info.fecha, class_id: info.class_id, asistio: d.asistio, motivo: d.motivo ?? "",
+      });
+    }
+
+    const detalle = [...studentMap.values()]
+      .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", "es"));
+
+    return res.json({ fechas: fechasList, detalle });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
   }
 });
