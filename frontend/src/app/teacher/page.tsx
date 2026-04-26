@@ -2967,7 +2967,7 @@ export default function TeacherPage() {
               ⚠️ Confirmar eliminación
             </h2>
             <p style={{ margin: "0 0 6px", fontSize: 14, lineHeight: 1.55 }}>
-              La evaluación <strong>"{deleteConfirm.title}"</strong> tiene{" "}
+              La evaluación <strong>&quot;{deleteConfirm.title}&quot;</strong> tiene{" "}
               <strong>
                 {deleteConfirm.gradeCount}{" "}
                 {deleteConfirm.gradeCount === 1 ? "alumno con nota asignada" : "alumnos con notas asignadas"}

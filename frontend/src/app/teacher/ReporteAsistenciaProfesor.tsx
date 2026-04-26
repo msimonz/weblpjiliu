@@ -44,6 +44,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
 
   // Curso → módulos
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setModuleId(""); setClassId(""); setFecha("");
     setModules([]); setClasses([]); setFechas([]);
     setDetalle([]); setSesion(null); setTodasData(null);
@@ -57,6 +58,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
 
   // Módulo → clases
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setClassId(""); setFecha(""); setFechas([]); setDetalle([]); setSesion(null); setClasses([]); setTodasData(null);
     if (!courseId || !moduleId) return;
     apiFetch(`/api/teacher/attendance/classes?course_id=${courseId}&module_id=${moduleId}`)
@@ -66,6 +68,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
 
   // Clase → fechas
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFecha(""); setFechas([]); setDetalle([]); setSesion(null); setTodasData(null);
     if (!courseId || !moduleId || !classId) return;
     setLoadingFechas(true);
@@ -77,6 +80,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
 
   // Fecha → detalle
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDetalle([]); setSesion(null); setTodasData(null);
     if (!courseId || !moduleId || !classId || !fecha) return;
     setLoadingDetalle(true);

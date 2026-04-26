@@ -44,7 +44,7 @@ export default function RegistrarAsistencia({ me }: Props) {
   const [detalle,         setDetalle]         = useState<DetalleRow[]>([]);
   const [filterStudentId, setFilterStudentId] = useState("");
   const [bulkAsistio,     setBulkAsistio]     = useState<boolean | null>(false);
-  const [sesionId,        setSesionId]        = useState<number | null>(null);
+  const [_sesionId,       setSesionId]        = useState<number | null>(null);
   const [loadingSession,  setLoadingSession]  = useState(false);
   const [saving,          setSaving]          = useState(false);
   const [msg,             setMsg]             = useState<{ type: "ok" | "err"; text: string } | null>(null);

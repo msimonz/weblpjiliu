@@ -246,7 +246,6 @@ export default function HabilitarExamenes({ courses }: Props) {
     loadSchedules();
     loadExams();
     loadLevels();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function flash(msg: string) {

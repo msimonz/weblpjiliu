@@ -750,7 +750,7 @@ export default function AdminPage() {
     return parts.join(" › ");
   }, [ecLevelLabel, ecModuleId, ecGroupId, ecMode, ecClassId, modules, groups, classes]);
 
-  const evaluationTypeCounts = useMemo(() => {
+  const _evaluationTypeCounts = useMemo(() => {
     const map = new Map<string, number>();
     for (const ev of gEvaluations) {
       const key = String(ev.evaluation_type?.type || ev.title || "Evaluación")
