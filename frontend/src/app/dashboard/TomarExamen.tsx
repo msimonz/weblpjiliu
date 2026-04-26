@@ -248,7 +248,7 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
     setSavingAnswer(true);
     setErrMsg(null);
     try {
-      await apiFetch(`/api/student/exam/${examInfo.id_evaluation}/save-answer`, {
+      const result = await apiFetch<{ ok: boolean; auto_finalizado?: boolean }>(`/api/student/exam/${examInfo.id_evaluation}/save-answer`, {
         method: "POST",
         body: JSON.stringify({
           id_pregunta:  p.id,
@@ -256,6 +256,10 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
           pregunta_idx: currentIdx + 1,
         }),
       });
+      if (result?.auto_finalizado) {
+        setPhase("done");
+        return;
+      }
       setRetomando(false);
       setCurrentIdx((i) => i + 1);
     } catch (e) {
@@ -523,8 +527,8 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
                   <p style={{ fontSize: 15, color: "var(--muted)", marginBottom: 24 }}>
                     Ya has rendido este examen.
                   </p>
-                  <button className="btn" style={{ padding: "10px 28px" }} onClick={() => onClose()}>
-                    ← Regresar
+                  <button className="btnRegresar" onClick={() => onClose()}>
+                    ← Volver
                   </button>
                 </div>
               )}
@@ -561,10 +565,8 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
                     <div style={{ fontSize: 44, marginBottom: 14 }}>✅</div>
                     <h3 style={{ margin: "0 0 10px" }}>Examen enviado</h3>
                     <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 24 }}>{msg}</p>
-                    <button className="btn"
-                      style={{ background: "linear-gradient(180deg,#9ca3af,#6b7280)", color: "#fff", padding: "10px 28px" }}
-                      onClick={() => onClose(true)}>
-                      ← Regresar
+                    <button className="btnRegresar" onClick={() => onClose(true)}>
+                      ← Volver
                     </button>
                   </div>
                 );

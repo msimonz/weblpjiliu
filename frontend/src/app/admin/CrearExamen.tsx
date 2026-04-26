@@ -128,7 +128,7 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
   const [preguntas, setPreguntas]         = useState<PreguntaState[]>(() =>
     initialData?.preguntas?.length
       ? initialData.preguntas.map(apiToState)
-      : [newPregunta(), newPregunta(), newPregunta(), newPregunta()]
+      : [newPregunta()]
   );
   const [saving, setSaving]               = useState(false);
   const [errMsg, setErrMsg]               = useState<string | null>(null);
@@ -143,7 +143,7 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
     setPreguntas(prev => prev.map(p => p._key === key ? { ...p, ...patch } : p));
   }
   function addPregunta() {
-    if (preguntas.length >= 20) return;
+    if (preguntas.length >= 100) return;
     setPreguntas(prev => [...prev, newPregunta()]);
   }
   function removePregunta(key: string) {
@@ -214,7 +214,6 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
     const mins = Number(tiempoMinutos);
     if (!mins || mins < 1) return "Tiempo en minutos requerido (mínimo 1)";
     if (preguntas.length < 1)  return "El examen debe tener al menos 1 pregunta";
-    if (preguntas.length > 20) return "Máximo 20 preguntas";
     let suma = 0;
     for (let i = 0; i < preguntas.length; i++) {
       const p = preguntas[i]; const n = i + 1;
@@ -251,7 +250,29 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
     setErrMsg(null);
     const err = validate();
     if (err) { setErrMsg(err); return; }
+
     setSaving(true);
+    try {
+      // Validar que la suma de porcentajes de la materia quede >= 100
+      const { items: allEvals } = await apiFetch(
+        `${apiBase}/evaluations?class_id=${ctx.id_class}`
+      );
+      const otherPercent = (allEvals as { id: number; percent: number; id_course: number }[])
+        .filter(e => e.id_course === ctx.id_course && e.id !== examId)
+        .reduce((s, e) => s + Number(e.percent), 0);
+      const totalPercent = otherPercent + Number(percent);
+      if (totalPercent > 100) {
+        setErrMsg(
+          `La suma de porcentajes de la materia quedaría en ${totalPercent % 1 === 0 ? totalPercent : totalPercent.toFixed(2)}%` +
+          ` (máximo 100%). Reduce el porcentaje de este examen u otras evaluaciones antes de guardar.`
+        );
+        setSaving(false);
+        return;
+      }
+    } catch {
+      // Si falla la consulta no bloqueamos el guardado
+    }
+
     try {
       const payload = preguntas.map(p => {
         if (p.tipo === "falso_verdadero") return {
@@ -474,6 +495,8 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
                       style={{ width: 64, textAlign: "center", padding: "2px 6px", fontSize: 13 }}
                       value={percent}
                       onChange={e => setPercent(e.target.value)}
+                      onWheel={e => e.currentTarget.blur()}
+                      onKeyDown={e => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                     />
                     <span style={{ fontSize: 13 }}>%</span>
                   </div>
@@ -489,6 +512,8 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
                     value={tiempoMinutos}
                     onChange={e => setTiempoMinutos(e.target.value)}
                     placeholder="ej: 60"
+                    onWheel={e => e.currentTarget.blur()}
+                    onKeyDown={e => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                   />
                   <span style={{ fontSize: 12, color: "var(--muted)" }}>Tiempo disponible para contestar</span>
                 </div>
@@ -509,7 +534,7 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
                   {sumaActual % 1 === 0 ? sumaActual : sumaActual.toFixed(2)} / 100
                 </span>
                 <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                  {preguntas.length} pregunta{preguntas.length !== 1 ? "s" : ""} · mín 4, máx 20
+                  {preguntas.length} pregunta{preguntas.length !== 1 ? "s" : ""}
                 </span>
                 <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
                   <button className="btn"
@@ -536,8 +561,8 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
               {/* Cabecera pregunta */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <span style={{ fontWeight: 700, fontSize: 14 }}>Pregunta {idx + 1}</span>
-                {preguntas.length > 4 && (
-                  <button style={{ fontSize: 12, color: "#dc2626", background: "none", border: "none", cursor: "pointer" }}
+                {preguntas.length > 1 && (
+                  <button style={{ fontSize: 13, color: "#dc2626", background: "none", border: "none", cursor: "pointer" }}
                     onClick={() => removePregunta(p._key)}>
                     Eliminar
                   </button>
@@ -566,6 +591,8 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
                     value={p.puntos}
                     onChange={e => upd(p._key, { puntos: e.target.value })}
                     placeholder="0"
+                    onWheel={e => e.currentTarget.blur()}
+                    onKeyDown={e => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                   />
                 </div>
               </div>
@@ -591,11 +618,11 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
           ))}
 
           {/* Agregar pregunta */}
-          {preguntas.length < 20 && (
+          {preguntas.length < 100 && (
             <button className="btn"
               style={{ width: "100%", marginBottom: 24, background: "none", border: "1px dashed var(--stroke)", color: "var(--text)" }}
               onClick={addPregunta}>
-              + Agregar Pregunta ({preguntas.length} / 20)
+              + Agregar Pregunta
             </button>
           )}
 

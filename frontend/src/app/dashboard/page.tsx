@@ -1103,18 +1103,9 @@ export default function DashboardPage() {
                                 .catch(() => {});
                             }
                           }}
-                          className="btn yearRefreshBtn"
-                          style={{
-                            background: "linear-gradient(180deg,#fb923c 0%,#f97316 100%)",
-                            color: "#ffffff",
-                            border: "1px solid rgba(251,146,60,.82)",
-                            boxShadow: "0 10px 24px rgba(249,115,22,.22)",
-                            fontSize: 20,
-                            fontWeight: 700,
-                            gap: 6,
-                          }}
+                          className="btnRegresar"
                         >
-                          <span>⬅</span><span style={{ fontSize: 14, fontWeight: 400 }}>Volver</span>
+                          ← Volver
                         </button>
                       </div>
                     </div>

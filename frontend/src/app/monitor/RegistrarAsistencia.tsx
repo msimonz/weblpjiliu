@@ -33,12 +33,13 @@ export default function RegistrarAsistencia({ me }: Props) {
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
   const [students, setStudents] = useState<StudentItem[]>([]);
 
-  const [moduleId,         setModuleId]         = useState("");
-  const [classId,          setClassId]          = useState("");
-  const [fecha,            setFecha]            = useState(todayISO());
-  const [assignedTeacherId, setAssignedTeacherId] = useState<string>("");
-  const [teacherId,         setTeacherId]         = useState<string>("");
-  const [profesorAsistio,   setProfAsistio]       = useState<boolean | null>(true);
+  const [moduleId,            setModuleId]            = useState("");
+  const [classId,             setClassId]             = useState("");
+  const [fecha,               setFecha]               = useState(todayISO());
+  const [assignedTeacherId,   setAssignedTeacherId]   = useState<string>("");
+  const [assignedTeacherName, setAssignedTeacherName] = useState<string>("");
+  const [suplentId,           setSuplentId]           = useState<string>("");
+  const [profesorAsistio,     setProfAsistio]         = useState<boolean | null>(true);
 
   const [detalle,         setDetalle]         = useState<DetalleRow[]>([]);
   const [filterStudentId, setFilterStudentId] = useState("");
@@ -70,7 +71,7 @@ export default function RegistrarAsistencia({ me }: Props) {
 
   // ── Cambio de módulo → cargar materias ──────────────────────
   useEffect(() => {
-    setClassId(""); setAssignedTeacherId(""); setTeacherId(""); setClasses([]); setSesionId(null); setBulkAsistio(false);
+    setClassId(""); setAssignedTeacherId(""); setAssignedTeacherName(""); setSuplentId(""); setClasses([]); setSesionId(null); setBulkAsistio(false);
     if (!moduleId) return;
     apiFetch(`/api/monitor/classes?module_id=${moduleId}`)
       .then((r: { items?: ClassItem[] }) => setClasses(r?.items || []))
@@ -79,15 +80,14 @@ export default function RegistrarAsistencia({ me }: Props) {
 
   // ── Cambio de materia → cargar profesor asignado ────────────
   useEffect(() => {
-    setAssignedTeacherId(""); setTeacherId(""); setSesionId(null); setBulkAsistio(false);
+    setAssignedTeacherId(""); setAssignedTeacherName(""); setSuplentId(""); setSesionId(null); setBulkAsistio(false);
     if (!classId) return;
     apiFetch(`/api/monitor/teacher?class_id=${classId}`)
       .then((r: { teacher?: { id?: string; name?: string } }) => {
         const id   = r?.teacher?.id   ?? "";
         const name = r?.teacher?.name ?? "";
         setAssignedTeacherId(id);
-        setTeacherId(id);
-        // Garantizar que el profesor asignado esté en la lista aunque /teachers haya fallado
+        setAssignedTeacherName(name);
         if (id) {
           setTeachers((prev) =>
             prev.some((t) => t.id === id) ? prev : [{ id, name }, ...prev]
@@ -97,14 +97,9 @@ export default function RegistrarAsistencia({ me }: Props) {
       .catch((e) => console.error("teacher fetch:", e));
   }, [classId]);
 
-  // ── Cambio de radio profesor ─────────────────────────────────
   function handleProfAsistio(val: boolean) {
     setProfAsistio(val);
-    if (val) {
-      setTeacherId(assignedTeacherId); // bloquear al profesor asignado
-    } else {
-      setTeacherId(""); // limpiar para elegir suplente
-    }
+    if (val) setSuplentId("");
   }
 
   // ── Carga sesión existente cuando filtros están completos ────
@@ -119,7 +114,11 @@ export default function RegistrarAsistencia({ me }: Props) {
       if (r?.sesion) {
         setSesionId(r.sesion.id);
         setProfAsistio(r.sesion.profesor_asistio);
-        setTeacherId(r.sesion.id_teacher);
+        if (r.sesion.profesor_asistio === false) {
+          setSuplentId(r.sesion.id_teacher);
+        } else {
+          setSuplentId("");
+        }
         const saved = new Map<string, { asistio: boolean; motivo: string }>(
           (r.detalle || []).map((d) => [d.id_student, { asistio: d.asistio, motivo: d.motivo }])
         );
@@ -164,7 +163,8 @@ export default function RegistrarAsistencia({ me }: Props) {
   // ── Guardar ──────────────────────────────────────────────────
   async function handleGuardar() {
     if (!moduleId || !classId || !fecha) return setMsg({ type: "err", text: "Completa módulo, materia y fecha." });
-    if (!teacherId) return setMsg({ type: "err", text: profesorAsistio ? "No hay profesor asignado a esta materia." : "Seleccione profesor suplente." });
+    if (profesorAsistio === true && !assignedTeacherId) return setMsg({ type: "err", text: "No hay profesor asignado a esta materia." });
+    if (profesorAsistio === false && !suplentId) return setMsg({ type: "err", text: "Seleccione un profesor suplente." });
     setSaving(true);
     setMsg(null);
     try {
@@ -175,7 +175,7 @@ export default function RegistrarAsistencia({ me }: Props) {
           id_module:        Number(moduleId),
           id_class:         Number(classId),
           fecha_clase:      fecha,
-          id_teacher:       teacherId,
+          id_teacher:       profesorAsistio === true ? assignedTeacherId : suplentId,
           profesor_asistio: profesorAsistio,
           profesor_reemplazo: null,
           detalle:          detalle.map(({ id_student, asistio, motivo }) => ({ id_student, asistio, motivo })),
@@ -191,14 +191,16 @@ export default function RegistrarAsistencia({ me }: Props) {
     }
   }
 
-  const canSave = !!classId && profesorAsistio !== null && !!teacherId && !saving;
+  const canSave = !!classId && profesorAsistio !== null &&
+    (profesorAsistio === true ? !!assignedTeacherId : !!suplentId) && !saving;
 
   function handleCancelar() {
     setModuleId("");
     setClassId("");
     setFecha(todayISO());
     setAssignedTeacherId("");
-    setTeacherId("");
+    setAssignedTeacherName("");
+    setSuplentId("");
     setProfAsistio(true);
     setClasses([]);
     setSesionId(null);
@@ -276,36 +278,42 @@ export default function RegistrarAsistencia({ me }: Props) {
         </div>
 
         <div>
-          <div className="label">
-            {sesionId && profesorAsistio === false ? "Profesor suplente" : "Profesor"}
-          </div>
-          <div style={{ border: "1px solid var(--stroke)", borderRadius: 10, padding: "8px 12px", display: "flex", alignItems: "center", gap: 12 }}>
-            <select
-              className="select"
-              value={teacherId}
-              disabled={profesorAsistio === true || !!sesionId}
-              onChange={(e) => setTeacherId(e.target.value)}
-              style={{ flex: 1, margin: 0, padding: "6px 14px", fontWeight: 400, fontSize: 13, color: (!teacherId) ? "rgba(148,163,184,0.6)" : "inherit" }}
-            >
-              {/* Placeholder visible cuando no hay materia seleccionada (bloqueado y vacío) */}
-              {!teacherId && (profesorAsistio === true || !!sesionId) && (
-                <option value="" style={{ color: "rgba(148,163,184,0.6)" }}>—</option>
+          <div className="label" style={{ opacity: profesorAsistio === false ? 0.45 : 1 }}>Profesor</div>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <input
+                readOnly
+                className="select"
+                value={assignedTeacherName || "—"}
+                style={{
+                  width: "100%", fontSize: 13, cursor: "default",
+                  color: "inherit",
+                  opacity: profesorAsistio === false ? 0.3 : (assignedTeacherName ? 1 : 0.5),
+                }}
+              />
+              {profesorAsistio === false && (
+                <div style={{ marginTop: 8 }}>
+                  <div className="label">Profesor suplente</div>
+                  <select
+                    className="select"
+                    value={suplentId}
+                    onChange={(e) => setSuplentId(e.target.value)}
+                    style={{ width: "100%", fontSize: 13 }}
+                  >
+                    <option value="" style={{ color: "#6b7280" }}>Seleccione profesor suplente...</option>
+                    {teachers.map((t) => (
+                      <option key={t.id} value={t.id} style={{ color: "#000" }}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
               )}
-              {/* Placeholder para seleccionar suplente (desbloqueado, sin sesión) */}
-              {profesorAsistio === false && !sesionId && (
-                <option value="" style={{ color: "rgba(148,163,184,0.6)" }}>Seleccione profesor suplente</option>
-              )}
-              {teachers.map((t) => (
-                <option key={t.id} value={t.id} style={{ color: "#000" }}>{t.name}</option>
-              ))}
-            </select>
-            <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: sesionId ? "not-allowed" : "pointer", fontWeight: 500, fontSize: 12, flexShrink: 0, opacity: sesionId ? 0.4 : 1 }}>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontWeight: 500, fontSize: 12, flexShrink: 0, whiteSpace: "nowrap", paddingTop: 8 }}>
               <input
                 type="checkbox"
                 className="check-asistencia"
                 checked={profesorAsistio === true}
-                disabled={!!sesionId}
-                onChange={(e) => !sesionId && handleProfAsistio(e.target.checked)}
+                onChange={(e) => handleProfAsistio(e.target.checked)}
               />
               Asistió
             </label>

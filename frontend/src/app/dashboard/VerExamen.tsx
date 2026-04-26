@@ -297,7 +297,7 @@ export default function VerExamen({ id_evaluation, examInfo, me, onClose }: Prop
               <h2 style={{ margin: 0, fontSize: 18 }}>{examInfo.title}</h2>
               {/* T37 — Botón Regresar */}
               <button className="btnRegresar" onClick={onClose}>
-                ← Regresar
+                ← Volver
               </button>
             </div>
           </div>

@@ -64,6 +64,8 @@ export default function ChangePasswordButton({
             padding: "12px 14px",
             borderRadius: 14,
             fontWeight: 900,
+            fontSize: 14,
+            fontFamily: "inherit",
             color: toast.kind === "ok" ? "rgb(21,128,61)" : "rgb(185,28,28)",
             background: "var(--card)",
             border: "1px solid var(--stroke)",

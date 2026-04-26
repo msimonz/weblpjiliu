@@ -379,7 +379,8 @@ button{
   border: 1px solid rgba(239,68,68,.18);
   color: rgba(185,28,28,.92);
   font-weight: 700;
-  font-size: 13px;
+  font-size: 14px;
+  font-family: inherit;
 }
 
 .sideTitle{
@@ -500,9 +501,10 @@ button{
   padding: 8px 20px;
   cursor: pointer;
   color: white;
-  font-weight: 800;
-  background: linear-gradient(180deg, #9ca3af, #6b7280);
-  box-shadow: 0 14px 26px rgba(107,114,128,.35);
+  font-size: 14px;
+  font-weight: 700;
+  background: linear-gradient(180deg, #fb923c, #ea580c);
+  box-shadow: 0 14px 26px rgba(234,88,12,.35);
 }
 
 .btnRegresar:disabled {
@@ -528,6 +530,8 @@ button{
   background: rgba(34,197,94,.12);
   color: color-mix(in srgb, var(--text) 92%, transparent);
   font-weight: 800;
+  font-size: 14px;
+  font-family: inherit;
 }
 
 .teacher-solid-table {

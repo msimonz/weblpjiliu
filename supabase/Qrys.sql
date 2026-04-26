@@ -88,6 +88,8 @@ SELECT
   --AND ct.id_teacher in ( select id from users where name like '%Liliana%')
   ORDER BY co.year DESC, m.name, c.name, e.created_at;
 
+  
+
 
 
 

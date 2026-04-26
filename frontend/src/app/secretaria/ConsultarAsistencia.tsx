@@ -279,12 +279,12 @@ export default function ConsultarAsistencia() {
       ) : isTodasMode && todasData && todasData.detalle.length > 0 ? (
         // ── Modo TODAS las fechas ──
         <div style={{ overflowX: "auto", borderRadius: 14, border: "1px solid var(--stroke)" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead>
               <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                <th style={{ padding: "10px 12px", textAlign: "left" }} rowSpan={2}>Cédula</th>
-                <th style={{ padding: "10px 12px", textAlign: "left" }} rowSpan={2}>Nombre</th>
-                <th style={{ padding: "10px 12px", textAlign: "center" }} rowSpan={2}>Inasistencias</th>
+                <th rowSpan={2} style={{ position: "sticky", left: 0, zIndex: 3, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
+                <th rowSpan={2} style={{ position: "sticky", left: 90, zIndex: 3, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
+                <th style={{ padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }} rowSpan={2}>Inasistencias</th>
                 {todasData.fechas.map((fi, i) => (
                   <th key={i} style={{ padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
                     {fmtFecha(fi.fecha)}
@@ -294,7 +294,7 @@ export default function ConsultarAsistencia() {
               </tr>
               <tr style={{ background: "rgba(14,165,233,.04)" }}>
                 {todasData.fechas.map((fi, i) => (
-                  <th key={i} style={{ padding: "4px 12px 8px", textAlign: "center", fontWeight: 400, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>
+                  <th key={i} style={{ padding: "4px 12px 8px", textAlign: "center", fontWeight: 400, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
                     {fi.profesor_asistio
                       ? `Prof: ${fi.teacher_name ?? "—"}`
                       : `Prof-remp: ${fi.profesor_reemplazo ?? fi.teacher_name ?? "—"}`}
@@ -305,20 +305,24 @@ export default function ConsultarAsistencia() {
             <tbody>
               {todasDetalleFiltered.map((d, idx) => {
                 const inasistencias = d.asistencia.filter((a) => !a.asistio).length;
+                const rowBg    = idx % 2 === 0 ? "transparent" : "rgba(14,165,233,.03)";
+                const stickyBg = idx % 2 === 0
+                  ? "var(--bg0)"
+                  : "color-mix(in srgb, rgb(14,165,233) 3%, var(--bg0))";
                 return (
-                  <tr key={d.id_student} style={{ borderTop: "1px solid var(--stroke)", background: idx % 2 === 0 ? "transparent" : "rgba(14,165,233,.03)" }}>
-                    <td style={{ padding: "8px 12px", color: "var(--muted)" }}>{d.cedula ?? "—"}</td>
-                    <td style={{ padding: "8px 12px", fontWeight: 500 }}>{d.name ?? "—"}</td>
-                    <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: inasistencias > 0 ? "#dc2626" : "#15803d" }}>
+                  <tr key={d.id_student} style={{ background: rowBg }}>
+                    <td style={{ position: "sticky", left: 0, zIndex: 1, background: stickyBg, padding: "8px 12px", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>{d.cedula ?? "—"}</td>
+                    <td style={{ position: "sticky", left: 90, zIndex: 1, background: stickyBg, padding: "8px 12px", fontWeight: 500, borderTop: "1px solid var(--stroke)" }}>{d.name ?? "—"}</td>
+                    <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: inasistencias > 0 ? "#dc2626" : "#15803d", borderTop: "1px solid var(--stroke)" }}>
                       {inasistencias}
                     </td>
                     {todasData.fechas.map((fi, i) => {
                       const entry = d.asistencia.find((a) => a.fecha === fi.fecha && (!fi.class_id || a.class_id === fi.class_id));
                       if (!entry) return (
-                        <td key={i} style={{ padding: "8px 12px", textAlign: "center", color: "var(--muted)" }}>—</td>
+                        <td key={i} style={{ padding: "8px 12px", textAlign: "center", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>—</td>
                       );
                       return (
-                        <td key={i} style={{ padding: "8px 12px", textAlign: "center" }}>
+                        <td key={i} style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
                           <span style={{
                             display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
                             background: entry.asistio ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",

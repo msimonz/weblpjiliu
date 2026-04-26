@@ -10,6 +10,7 @@ import Footer from "@/components/Footer";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 import * as XLSX from "xlsx";
 import CrearExamen, { type CrearExamenCtx, type ExamInitialData } from "../admin/CrearExamen";
+import ReporteAsistenciaProfesor from "./ReporteAsistenciaProfesor";
 
 type TeacherClass = {
   id: number;
@@ -118,7 +119,7 @@ type TeacherDashboardResponse = {
   assignments: DashboardAssignment[];
 };
 
-type TeacherView = "" | "DASHBOARD" | "EVALS" | "CREATE" | "UPSERT";
+type TeacherView = "" | "DASHBOARD" | "EVALS" | "CREATE" | "UPSERT" | "ATTEND_REPORT";
 type LevelValue = number | "all" | "";
 type LevelItem = { id: number; name: string };
 const GRILLA = {
@@ -285,6 +286,7 @@ export default function TeacherPage() {
   const [editPercents, setEditPercents] = useState<Record<number, string>>({});
   const [savingEvalPercent, setSavingEvalPercent] = useState<Record<number, boolean>>({});
   const [deletingEval, setDeletingEval] = useState<Record<number, boolean>>({});
+  const [deleteConfirm, setDeleteConfirm] = useState<{ evalId: number; title: string; gradeCount: number } | null>(null);
 
   const [allSections, setAllSections] = useState<GradeGridResponse[]>([]);
   const [gLoadingRoster, setGLoadingRoster] = useState(false);
@@ -893,6 +895,24 @@ export default function TeacherPage() {
   async function handleDeleteCreateEval(evalId: number) {
     setDeletingEval((p) => ({ ...p, [evalId]: true }));
     try {
+      const result = await apiFetch(`/api/teacher/exam-grades?exam_id=${evalId}`);
+      const gradeCount: number = (result?.items ?? []).length;
+      if (gradeCount > 0) {
+        const ev = items.find((e) => e.id === evalId);
+        setDeleteConfirm({ evalId, title: ev?.title ?? "esta evaluación", gradeCount });
+        return;
+      }
+      await doDeleteEval(evalId);
+    } catch (e) {
+      flash((e as { message?: string })?.message || "Error al eliminar", "err");
+    } finally {
+      setDeletingEval((p) => ({ ...p, [evalId]: false }));
+    }
+  }
+
+  async function doDeleteEval(evalId: number) {
+    setDeletingEval((p) => ({ ...p, [evalId]: true }));
+    try {
       await apiFetch(`/api/teacher/evaluations/${evalId}`, { method: "DELETE" });
       setItems((prev) => prev.filter((e) => e.id !== evalId));
       setEditPercents((p) => { const n = { ...p }; delete n[evalId]; return n; });
@@ -1365,10 +1385,11 @@ export default function TeacherPage() {
 
   function getEvaluationColumnLabel(ev: EvalItem, _countsMap: Map<string, number>) {
     const materia = String(ev.class?.name || "").trim();
-    const tipo = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim();
-    const pct = Number(ev.percent).toFixed(0);
-    if (materia) return `${materia} - ${tipo} (${pct}%)`;
-    return `${tipo} (${pct}%)`;
+    const tipo = String(ev.evaluation_type?.type || "").trim();
+    const titulo = String(ev.title || "").trim();
+    const pct = `${Number(ev.percent).toFixed(0)}%`;
+    const parts = [materia, tipo, titulo, pct].filter(Boolean);
+    return parts.join("-");
   }
 
   function isEvaluationApplicableToStudent(student: StudentRow, ev: EvalItem) {
@@ -1569,30 +1590,47 @@ export default function TeacherPage() {
     const label = (thFilterClass ? (myClasses.find(c => c.id === Number(thFilterClass))?.name ?? "") : "") || thFilterModule
       || (upsertCourseFilter !== "all" ? coursesForUpsert.find(c => c.id === Number(upsertCourseFilter))?.name : undefined)
       || (upsertLevelFilter !== "" ? (levels.find(l => l.id === Number(upsertLevelFilter))?.name ?? `Nivel ${upsertLevelFilter}`) : "Grilla");
-    const countsMap = new Map<string, number>();
+
+    // Construir nombres de columna únicos por eval ID (dos pasadas para detectar duplicados)
+    const baseLabelCounts = new Map<string, number>();
     for (const ev of visibleEvals) {
-      const k = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim().toLowerCase();
-      countsMap.set(k, (countsMap.get(k) || 0) + 1);
+      const base = getEvaluationColumnLabel(ev, new Map());
+      baseLabelCounts.set(base, (baseLabelCounts.get(base) || 0) + 1);
     }
-    const rows = flatRowsFiltered.map((row) => {
+    const baseLabelIdx = new Map<string, number>();
+    const evalColName = new Map<number, string>();
+    for (const ev of visibleEvals) {
+      const base = getEvaluationColumnLabel(ev, new Map());
+      if ((baseLabelCounts.get(base) || 1) === 1) {
+        evalColName.set(ev.id, base);
+      } else {
+        const idx = (baseLabelIdx.get(base) || 0) + 1;
+        baseLabelIdx.set(base, idx);
+        evalColName.set(ev.id, `${base} #${idx}`);
+      }
+    }
+
+    // Usar aoa_to_sheet para garantizar que todas las columnas aparezcan en el orden correcto
+    const headers = ["Cédula", "Alumno", ...visibleEvals.map(ev => evalColName.get(ev.id)!)];
+    const dataRows = flatRowsFiltered.map((row) => {
       const st = row.student;
-      const r: Record<string, string | number> = { Cédula: st.cedula, Alumno: st.name };
+      const cells: (string | number)[] = [st.cedula, st.name];
       for (const ev of visibleEvals) {
-        const col = getEvaluationColumnLabel(ev, countsMap);
-        if (Number(st.id_course) !== Number(ev.id_course)) { r[col] = "-"; continue; }
+        if (Number(st.id_course) !== Number(ev.id_course)) { cells.push("-"); continue; }
         const gradeRecord = row.sectionGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
         const attempts = gradeRecord?.attempts ?? 0;
-        const gradeVal = gradeRecord?.grade ?? 0;
-        if (attempts === 0 && gradeVal === 0) { r[col] = "No Presentó"; }
-        else {
-          const key = gradeCellKey(st.id, ev.id);
-          const val = gradeDraft[key];
-          r[col] = val === "" || val == null ? "" : Number(val);
+        const gradeVal = gradeRecord?.grade ?? null;
+        if (attempts === 0 && (gradeVal === null || gradeVal === 0)) {
+          cells.push("No Presentó");
+        } else {
+          const val = gradeDraft[gradeCellKey(st.id, ev.id)];
+          cells.push(val === "" || val == null ? (gradeVal ?? "") : Number(val));
         }
       }
-      return r;
+      return cells;
     });
-    const ws = XLSX.utils.json_to_sheet(rows);
+
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Notas");
     XLSX.writeFile(wb, `${label}.xlsx`);
@@ -1852,8 +1890,8 @@ export default function TeacherPage() {
                   <option value="" disabled>¿Qué quieres hacer?...</option>
                   <option value="DASHBOARD">Ver Materias Asignadas</option>
                   <option value="UPSERT">Gestionar notas de Estudiantes</option>
-                  <option value="CREATE" disabled={isHistoricalYear}>Crear/Eliminar Evaluaciones</option>
-                  <option value="EVALS">Ver/Actualizar Evaluaciones</option>
+                  <option value="CREATE" disabled={isHistoricalYear}>Gestionar Evaluaciones</option>
+                  <option value="ATTEND_REPORT">Reporte de asistencia</option>
                 </select>
               </div>
               <div>
@@ -2233,6 +2271,8 @@ export default function TeacherPage() {
                                     onChange={(ev) =>
                                       setPercentDraft((p) => ({ ...p, [e.id]: ev.target.value }))
                                     }
+                                    onWheel={(ev) => ev.currentTarget.blur()}
+                                    onKeyDown={(ev) => { if (ev.key === "ArrowUp" || ev.key === "ArrowDown") ev.preventDefault(); }}
                                   />
                                 )}
                               </td>
@@ -2420,6 +2460,8 @@ export default function TeacherPage() {
                         style={{ textAlign: "center", width: "100%" }}
                         value={cPercent}
                         onChange={(e) => setCPercent(Number(e.target.value))}
+                        onWheel={(e) => e.currentTarget.blur()}
+                        onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                       />
                     </div>
 
@@ -2510,6 +2552,8 @@ export default function TeacherPage() {
                                 onChange={(e) =>
                                   setEditPercents((p) => ({ ...p, [ev.id]: e.target.value }))
                                 }
+                                onWheel={(e) => e.currentTarget.blur()}
+                                onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                               />
                             </div>
                             <div style={{ display: "flex", justifyContent: "center" }}>
@@ -2528,8 +2572,8 @@ export default function TeacherPage() {
                             </div>
                             <div style={{ display: "flex", justifyContent: "center" }}>
                               <button type="button" onClick={() => handleDeleteCreateEval(ev.id)}
-                                disabled={deletingEval[ev.id]}
-                                style={{ fontSize: 12, padding: "5px 0", width: 80, background: "#ef4444", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", opacity: deletingEval[ev.id] ? 0.5 : 1 }}>
+                                disabled={deletingEval[ev.id] || isExamen}
+                                style={{ fontSize: 12, padding: "5px 0", width: 80, background: "#ef4444", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, cursor: isExamen ? "not-allowed" : "pointer", opacity: (deletingEval[ev.id] || isExamen) ? 0.4 : 1 }}>
                                 {deletingEval[ev.id] ? "..." : "Eliminar"}
                               </button>
                             </div>
@@ -2900,10 +2944,61 @@ export default function TeacherPage() {
               )}
             </div>
           )}
+          {view === "ATTEND_REPORT" && (
+            <ReporteAsistenciaProfesor courses={courses} />
+          )}
         </div>
       </main>
 
       <Footer rightText="Hecho para la Iglesia La Promesa." />
+
+      {/* Modal confirmación eliminar evaluación con notas */}
+      {deleteConfirm && (
+        <div
+          onClick={() => setDeleteConfirm(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, boxSizing: "border-box" }}
+        >
+          <div
+            className="card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "100%", maxWidth: 420, borderRadius: 18, padding: "22px 20px", boxSizing: "border-box" }}
+          >
+            <h2 style={{ margin: "0 0 10px", fontSize: 17, lineHeight: 1.2, letterSpacing: "-0.01em" }}>
+              ⚠️ Confirmar eliminación
+            </h2>
+            <p style={{ margin: "0 0 6px", fontSize: 14, lineHeight: 1.55 }}>
+              La evaluación <strong>"{deleteConfirm.title}"</strong> tiene{" "}
+              <strong>
+                {deleteConfirm.gradeCount}{" "}
+                {deleteConfirm.gradeCount === 1 ? "alumno con nota asignada" : "alumnos con notas asignadas"}
+              </strong>.
+            </p>
+            <p style={{ margin: "0 0 20px", fontSize: 14, lineHeight: 1.55, color: "#ef4444", fontWeight: 600 }}>
+              Si eliminas esta evaluación, esas notas se perderán permanentemente.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirm(null)}
+                style={{ minHeight: 44, borderRadius: 12, border: "1px solid var(--btn-light-border)", background: "var(--btn-light-bg)", color: "var(--btn-light-text)", cursor: "pointer", fontSize: 14, fontWeight: 600 }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const id = deleteConfirm.evalId;
+                  setDeleteConfirm(null);
+                  await doDeleteEval(id);
+                }}
+                style={{ minHeight: 44, borderRadius: 12, border: "none", background: "#ef4444", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700 }}
+              >
+                Eliminar de todos modos
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Overlay Crear / Editar Examen */}
       {showCrearExamen && crearExamenCtx && (

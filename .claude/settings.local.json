@@ -1,6 +1,9 @@
 {
   "permissions": {
     "allow": [
+      "Read",
+      "Edit",
+      "Write",
       "Bash(npm run:*)",
       "Bash(pkill -f \"node.*backend\")",
       "Bash(pkill -f \"next\")",
@@ -13,7 +16,25 @@
       "Bash(curl:*)",
       "Bash(node:*)",
       "Bash(npx eslint:*)",
-      "Bash(npx next:*)"
+      "Bash(npx next:*)",
+      "Bash(pandoc --version)",
+      "Bash(python -c \"import docx; print\\('python-docx ok'\\)\")",
+      "Bash(python -c \"import docx\")",
+      "Skill(update-config)",
+      "Bash(powershell.exe *)",
+      "Bash(python3 -c \"import docx; print\\('python-docx ok'\\)\")",
+      "Bash(pip3 install *)",
+      "Bash(python3 -m pip install python-docx --quiet)",
+      "Bash(apt-get install *)",
+      "Bash(python3 -c \"import docx; print\\('ok'\\)\")",
+      "Bash(npm list *)",
+      "Bash(mkdir -p /tmp/tesis-docx)",
+      "Read(//tmp/**)",
+      "Bash(npm init *)",
+      "Bash(python3 -c ' *)",
+      "Bash(unzip -p \"/mnt/c/Users/Alexander Marquez/Documents/SOFIA_Tesis_v1.docx\" word/document.xml)",
+      "Bash(python3 *)",
+      "Bash(npx tsc *)"
     ]
   }
 }

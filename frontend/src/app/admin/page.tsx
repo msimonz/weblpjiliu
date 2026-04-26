@@ -1590,14 +1590,12 @@ export default function AdminPage() {
   }
 
   function getEvaluationColumnLabel(ev: EvalItem) {
-    const typeLabel = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim();
-    const typeKey = typeLabel.toLowerCase();
-    const repeated = (evaluationTypeCounts.get(typeKey) || 0) > 1;
-
-    if (repeated) {
-      return `${typeLabel} · ${ev.title} (${Number(ev.percent).toFixed(0)}%)`;
-    }
-    return `${typeLabel} (${Number(ev.percent).toFixed(0)}%)`;
+    const materia = String(ev.class?.name || "").trim();
+    const tipo = String(ev.evaluation_type?.type || "").trim();
+    const titulo = String(ev.title || "").trim();
+    const pct = `${Number(ev.percent).toFixed(0)}%`;
+    const parts = [materia, tipo, titulo, pct].filter(Boolean);
+    return parts.join("-");
   }
 
   function isEvaluationApplicableToStudent(student: StudentRow, ev: EvalItem) {
@@ -1730,35 +1728,51 @@ export default function AdminPage() {
   }
 
   function downloadExcel() {
-    const _materia = gridClassInfo?.name ?? selectedUpsertClass?.name ?? "Grilla";
-    const rows = sortedRoster.map((st) => {
-      const row: Record<string, string | number> = {
-        Cédula: st.cedula,
-        Alumno: st.name,
-      };
+    // Deduplicate column names
+    const baseLabelCounts = new Map<string, number>();
+    for (const ev of gEvaluations) {
+      const base = getEvaluationColumnLabel(ev);
+      baseLabelCounts.set(base, (baseLabelCounts.get(base) || 0) + 1);
+    }
+    const baseLabelIdx = new Map<string, number>();
+    const evalColName = new Map<number, string>();
+    for (const ev of gEvaluations) {
+      const base = getEvaluationColumnLabel(ev);
+      if ((baseLabelCounts.get(base) || 1) === 1) {
+        evalColName.set(ev.id, base);
+      } else {
+        const idx = (baseLabelIdx.get(base) || 0) + 1;
+        baseLabelIdx.set(base, idx);
+        evalColName.set(ev.id, `${base} #${idx}`);
+      }
+    }
+
+    const headers = ["Cédula", "Alumno", "No Aprobadas", ...gEvaluations.map((ev) => evalColName.get(ev.id)!)];
+    const dataRows = sortedRoster.map((st) => {
+      const perdidas = gEvaluations.filter((ev) => {
+        if (!isEvaluationApplicableToStudent(st, ev)) return false;
+        const gradeRecord = gGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
+        return (gradeRecord?.grade ?? 0) < 70;
+      }).length;
+
+      const cells: (string | number)[] = [st.cedula, st.name, perdidas > 0 ? perdidas : ""];
       for (const ev of gEvaluations) {
-        const label = getEvaluationColumnLabel(ev);
-        if (!isEvaluationApplicableToStudent(st, ev)) {
-          row[label] = "-";
-          continue;
-        }
-        const gradeRecord = gGrades.find(
-          (g) => g.id_student === st.id && g.id_exam === ev.id
-        );
+        if (!isEvaluationApplicableToStudent(st, ev)) { cells.push("-"); continue; }
+        const gradeRecord = gGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
         const attempts = gradeRecord?.attempts ?? 0;
         const gradeVal = gradeRecord?.grade ?? 0;
         if (attempts === 0 && gradeVal === 0) {
-          row[label] = "No Presentó";
+          cells.push("No Presentó");
         } else {
           const key = gradeCellKey(st.id, ev.id);
           const val = gradeDraft[key];
-          row[label] = val === "" || val == null ? "" : Number(val);
+          cells.push(val === "" || val == null ? gradeVal : Number(val));
         }
       }
-      return row;
+      return cells;
     });
 
-    const ws = XLSX.utils.json_to_sheet(rows);
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Notas");
     XLSX.writeFile(wb, "consulta_de_notas.xlsx");
@@ -1839,6 +1853,8 @@ export default function AdminPage() {
             padding: "12px 14px",
             borderRadius: 14,
             fontWeight: 900,
+            fontSize: 14,
+            fontFamily: "inherit",
             color: toast.kind === "ok" ? "rgb(21,128,61)" : "rgb(185,28,28)",
             background: "var(--card)",
             border: "1px solid var(--stroke)",
@@ -2070,15 +2086,19 @@ export default function AdminPage() {
                 onChange={(e) => { setView(e.target.value as AdminView); loadAll(adminYear); }}
               >
                 <option value="" disabled>¿Qué quieres hacer?...</option>
-                <option value="COURSES">Crear/Editar Curso</option>
-                <option value="CLASSES">Crear una Materia</option>
-                <option value="TYPES">Crear un tipo de Evaluación</option>
-                <option value="ASSIGN_TEACHER">Asignar Materias a un Profesor</option>
-                <option value="USERS">Crear/Actualizar Persona</option>
-                <option value="UPSERT">Gestionar Notas</option>
-                <option value="EVAL_CRUD">Gestionar Evaluaciones</option>
-                <option value="HABILITAR_EXAMENES">Habilitar Exámenes</option>
-                <option value="ANIO_LECTIVO">Gestionar Año Lectivo</option>
+                <optgroup label="── Data maestra ────">
+                  <option value="COURSES">        Crear/Editar curso</option>
+                  <option value="CLASSES">        Crear materia</option>
+                  <option value="TYPES">        Crear tipo evaluacion</option>
+                  <option value="USERS">        Crear/Actualizar persona</option>
+                  <option value="ASSIGN_TEACHER">        Asignar materias a profesor</option>
+                  <option value="ANIO_LECTIVO">        Asignar año Lectivo</option>
+                </optgroup>
+                <optgroup label="── Evaluaciones ────">
+                  <option value="EVAL_CRUD">        Gestionar evaluaciones</option>
+                  <option value="HABILITAR_EXAMENES">        Agendar exámenes</option>
+                  <option value="UPSERT">        Gestionar notas</option>
+                </optgroup>
               </select>
             </div>
             {anioLectivoItems.length > 0 && (
@@ -2704,6 +2724,8 @@ export default function AdminPage() {
                         value={ecPercent}
                         onChange={(e) => setEcPercent(Number(e.target.value))}
                         disabled={!scopeReady}
+                        onWheel={(e) => e.currentTarget.blur()}
+                        onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                       />
                     </div>
                   </div>
@@ -2805,6 +2827,8 @@ export default function AdminPage() {
                             onChange={(e) =>
                               setEcEditPercents((p) => ({ ...p, [ev.id]: e.target.value }))
                             }
+                            onWheel={(e) => e.currentTarget.blur()}
+                            onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                           />
                         </div>
                         <div style={{ display: "flex", justifyContent: "center" }}>
@@ -3251,9 +3275,6 @@ export default function AdminPage() {
 
               {/* ── Fila 2: Cargue masivo ── */}
               <div style={{ padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(34,197,94,.08)", marginTop: 36 }}>
-                <div style={{ fontWeight: 900, fontSize: 15, marginBottom: 10 }}>
-                  Cargue masivo
-                </div>
 
                 {<>
                 {/* Input file oculto */}
@@ -3276,7 +3297,7 @@ export default function AdminPage() {
                   >
                     {templateLoading ? "Generando..." : (
                       <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        ↓&nbsp;&nbsp;&nbsp;Plantilla&nbsp;&nbsp;
+                        ↓&nbsp;&nbsp;Descargar plantilla&nbsp;&nbsp;
                         <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24">
                           {/* Página base */}
                           <path d="M4 2h9l5 5v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="#fff" stroke="#14532d" strokeWidth="1.2"/>
@@ -3306,7 +3327,7 @@ export default function AdminPage() {
                         type="text"
                         readOnly
                         value={uploadFileName || "Ningún archivo seleccionado"}
-                        style={{ width: 400, padding: "0 10px", fontSize: 13, background: "#ffffff", border: "none", outline: "none", color: uploadFileName ? "var(--text)" : "var(--muted)" }}
+                        style={{ width: 400, padding: "0 10px", fontSize: 13, background: "var(--field-bg)", border: "none", outline: "none", color: uploadFileName ? "var(--text)" : "var(--muted)" }}
                       />
                     </div>
 
@@ -4150,6 +4171,8 @@ export default function AdminPage() {
                     value={alNewYear}
                     onChange={(e) => setAlNewYear(e.target.value)}
                     style={{ width: 100 }}
+                    onWheel={(e) => e.currentTarget.blur()}
+                    onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                   />
                 </div>
                 <div>
