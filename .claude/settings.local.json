@@ -34,7 +34,8 @@
       "Bash(python3 -c ' *)",
       "Bash(unzip -p \"/mnt/c/Users/Alexander Marquez/Documents/SOFIA_Tesis_v1.docx\" word/document.xml)",
       "Bash(python3 *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(git *)"
     ]
   }
 }
