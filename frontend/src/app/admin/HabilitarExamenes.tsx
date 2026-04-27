@@ -11,6 +11,9 @@ type LevelMini = { id: number; name: string };
 type ExamMini = {
   id: number;
   title: string;
+  id_course:   number | null;
+  course_name: string | null;
+  course_year: string | null;
   module_id:   number | null;
   module_name: string | null;
   group_id:    number | null;
@@ -219,11 +222,14 @@ export default function HabilitarExamenes({ courses }: Props) {
 
   async function loadExams() {
     try {
-      type ExamApiItem = { id: number; title: string; module?: { id: number; name: string }; group?: { id: number; name: string }; class?: { id: number; name: string; level: number } };
+      type ExamApiItem = { id: number; title: string; id_course?: number | null; course?: { id: number; name: string; year: string; level: number } | null; module?: { id: number; name: string }; group?: { id: number; name: string }; class?: { id: number; name: string; level: number } };
       const r = await apiFetch<{ items?: ExamApiItem[] }>("/api/admin/exams");
       setAllExams((r?.items || []).map(ev => ({
         id:          ev.id,
         title:       ev.title,
+        id_course:   ev.id_course   ?? null,
+        course_name: ev.course?.name ?? null,
+        course_year: ev.course?.year ?? null,
         module_id:   ev.module?.id   ?? null,
         module_name: ev.module?.name ?? null,
         group_id:    ev.group?.id    ?? null,
@@ -298,9 +304,9 @@ export default function HabilitarExamenes({ courses }: Props) {
           className:     ex.class_name,
           classLevel:    ex.class_level,
           scheduleId:    null,
-          courseId:      null,
-          courseName:    null,
-          courseYear:    null,
+          courseId:      ex.id_course,
+          courseName:    ex.course_name,
+          courseYear:    ex.course_year,
           fechaIni:      null,
           fechaFin:      null,
           fechaLimiteVer: null,
@@ -379,7 +385,7 @@ export default function HabilitarExamenes({ courses }: Props) {
       const { fechaIni, fechaFin, fechaLimiteVer } = defaultColombiaDates();
       setEditing(prev => ({
         ...prev,
-        [row.rowKey]: { fecha_ini: fechaIni, fecha_fin: fechaFin, fecha_limite_ver: fechaLimiteVer, courseId: "" },
+        [row.rowKey]: { fecha_ini: fechaIni, fecha_fin: fechaFin, fecha_limite_ver: fechaLimiteVer, courseId: String(row.courseId ?? "") },
       }));
     }
   }
@@ -522,6 +528,13 @@ export default function HabilitarExamenes({ courses }: Props) {
             </select>
           </div>
           <div>
+            <div className="label">Curso</div>
+            <select className="select" value={filterCourseId} onChange={e => setFilterCourseId(e.target.value)}>
+              <option value="">Todos</option>
+              {filterAvailableCourses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
             <div className="label">Módulo</div>
             <select className="select" value={filterModuleId} onChange={e => {
               setFilterModuleId(e.target.value);
@@ -546,13 +559,6 @@ export default function HabilitarExamenes({ courses }: Props) {
             <select className="select" value={filterClassId} onChange={e => setFilterClassId(e.target.value)}>
               <option value="">Todas</option>
               {filterAvailableClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <div className="label">Curso</div>
-            <select className="select" value={filterCourseId} onChange={e => setFilterCourseId(e.target.value)}>
-              <option value="">Todos</option>
-              {filterAvailableCourses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
         </div>
@@ -594,21 +600,7 @@ export default function HabilitarExamenes({ courses }: Props) {
 
                     {/* Curso */}
                     <td style={{ padding: "8px 10px", whiteSpace: "nowrap", textAlign: "center" }}>
-                      {ed && isNew ? (
-                        <select
-                          className="select"
-                          style={{ fontSize: 12, padding: "3px 6px" }}
-                          value={ed.courseId}
-                          onChange={v => setEditing(prev => ({ ...prev, [row.rowKey]: { ...prev[row.rowKey], courseId: v.target.value } }))}
-                        >
-                          <option value="">Seleccionar...</option>
-                          {courses.filter(c => row.classLevel == null || c.level === row.classLevel).map(c => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        row.courseName ?? <span style={{ color: "var(--muted)" }}>—</span>
-                      )}
+                      {row.courseName ?? <span style={{ color: "var(--muted)" }}>—</span>}
                     </td>
 
                     {/* Desde */}
