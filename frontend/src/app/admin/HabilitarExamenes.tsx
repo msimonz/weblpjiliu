@@ -506,6 +506,7 @@ export default function HabilitarExamenes({ courses }: Props) {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
+    <>
     <div className="card" style={{ marginTop: 18 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
         <h2 style={{ margin: 0 }}>Agendar Exámenes</h2>
@@ -702,7 +703,9 @@ export default function HabilitarExamenes({ courses }: Props) {
         </div>
       )}
 
-      {/* ── Modal: intentos de estudiantes ── */}
+    </div>
+
+      {/* ── Modal: intentos de estudiantes ── fuera del .card para evitar que backdrop-filter rompa position:fixed */}
       {attemptsCtx && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div className="card" style={{ width: "90%", maxWidth: 560, padding: 24 }}>
@@ -764,6 +767,6 @@ export default function HabilitarExamenes({ courses }: Props) {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

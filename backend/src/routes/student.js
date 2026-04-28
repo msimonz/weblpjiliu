@@ -668,6 +668,12 @@ studentRouter.get("/exam/:id_evaluation", requireAuth, async (req, res) => {
 
   if (pregErr) return res.status(500).json({ error: pregErr.message });
 
+  const { data: levelRow } = await supabaseAdmin
+    .from("level")
+    .select("name")
+    .eq("id", course.level)
+    .maybeSingle();
+
   return res.json({
     id_evaluation: ev.id,
     title: ev.title,
@@ -677,6 +683,7 @@ studentRouter.get("/exam/:id_evaluation", requireAuth, async (req, res) => {
     respuestas_guardadas: Array.isArray(rta?.respuestas) ? rta.respuestas : [],
     pregunta_actual:      rta?.pregunta_actual ?? 0,
     preguntas: preguntas || [],
+    level_name: levelRow?.name ?? null,
   });
 });
 

@@ -12,7 +12,7 @@ import Footer from "@/components/Footer";
 export default function LoginPage() {
   const router = useRouter();
 
-  const [logoUrl, setLogoUrl] = useState<string>("");
+  const [logoUrl, setLogoUrl] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     const { data } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");

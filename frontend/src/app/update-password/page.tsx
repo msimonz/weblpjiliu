@@ -14,7 +14,7 @@ export default function UpdatePasswordPage() {
   const [show, setShow] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
-  const [logoUrl, setLogoUrl] = useState<string>("");
+  const [logoUrl, setLogoUrl] = useState<string | undefined>(undefined);
   useEffect(() => {
     const { data } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
     setLogoUrl(data.publicUrl);

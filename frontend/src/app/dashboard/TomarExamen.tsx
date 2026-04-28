@@ -78,6 +78,7 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
   const [savingAnswer,     setSavingAnswer]     = useState(false);
   const [retomando,        setRetomando]        = useState(false); // true si se retoma un examen en curso
   const [calificacionFinal, setCalificacionFinal] = useState<number | null>(null);
+  const [levelName, setLevelName] = useState<string | null>(null);
 
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const iniciadoAtRef = useRef<string | null>(null);
@@ -104,8 +105,9 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
   useEffect(() => {
     (async () => {
       try {
-        const data = await apiFetch<{ preguntas?: Pregunta[]; iniciado_at?: string; respuestas_guardadas?: Array<{ id_pregunta: number; respuesta: RespuestaEstudiante }>; pregunta_actual?: number }>(`/api/student/exam/${examInfo.id_evaluation}`);
+        const data = await apiFetch<{ preguntas?: Pregunta[]; iniciado_at?: string; respuestas_guardadas?: Array<{ id_pregunta: number; respuesta: RespuestaEstudiante }>; pregunta_actual?: number; level_name?: string | null }>(`/api/student/exam/${examInfo.id_evaluation}`);
         setPreguntas(data.preguntas || []);
+        if (data.level_name) setLevelName(data.level_name);
 
         const totalSecs = (examInfo.tiempo_minutos ?? 0) * 60;
         totalSecsRef.current = totalSecs;
@@ -431,26 +433,34 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
               borderBottom: "1px solid var(--stroke)",
               padding: "16px 24px",
             }}>
-              {/* T28 — fila 1: Año / Nivel / Curso */}
-              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 6 }}>
-                <span><span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Año: </span><span style={{ fontSize: 13, color: "var(--muted)" }}>{course.year ?? "—"}</span></span>
-                <span><span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Nivel: </span><span style={{ fontSize: 13, color: "var(--muted)" }}>{course.level ?? "—"}</span></span>
-                <span><span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Curso: </span><span style={{ fontSize: 13, color: "var(--muted)" }}>{course.name ?? "—"}</span></span>
-              </div>
-              {/* T28 — fila 2: Módulo / Materia */}
-              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 6 }}>
-                {examInfo.module_name && (
-                  <span><span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Módulo: </span><span style={{ fontSize: 13, color: "var(--muted)" }}>{examInfo.module_name}</span></span>
-                )}
-                <span><span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Materia: </span><span style={{ fontSize: 13, color: "var(--muted)" }}>{examInfo.class_name ?? "—"}</span></span>
-              </div>
-              {/* T28 — fila 3: Cédula / Nombre */}
-              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 24 }}>
-                <span><span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Cédula: </span><span style={{ fontSize: 13, color: "var(--muted)" }}>{profile.cedula ?? "—"}</span></span>
-                <span><span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Nombre: </span><span style={{ fontSize: 13, color: "var(--muted)" }}>{profile.name ?? "—"}</span></span>
+              {/* 2 columnas independientes: texto (izq) | controles (der) */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 28 }}>
+
+                {/* Col izq: 3 líneas de texto pegadas */}
+                <div>
+                  <div style={{ display: "flex", gap: 20, flexWrap: "wrap", lineHeight: "1.5" }}>
+                    <span><span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Año: </span><span style={{ fontSize: 13, color: "var(--muted)" }}>{course.year ?? "—"}</span></span>
+                    <span><span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Nivel: </span><span style={{ fontSize: 13, color: "var(--muted)" }}>{levelName ?? course.level ?? "—"}</span></span>
+                    <span><span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Curso: </span><span style={{ fontSize: 13, color: "var(--muted)" }}>{course.name ?? "—"}</span></span>
+                  </div>
+                  <div style={{ lineHeight: "1.5" }}>
+                    <span><span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Materia: </span><span style={{ fontSize: 13, color: "var(--muted)" }}>{examInfo.class_name ?? "—"}</span></span>
+                  </div>
+                  <div style={{ lineHeight: "1.5" }}>
+                    <span><span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>Nombre: </span><span style={{ fontSize: 13, color: "var(--muted)" }}>{profile.name ?? "—"}</span></span>
+                  </div>
+                </div>
+
+                {/* Col der: solo Volver */}
+                <div>
+                  {phase === "ready" && (
+                    <button className="btnRegresar" onClick={() => onClose(false)}>← Volver</button>
+                  )}
+                </div>
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, position: "relative" }}>
+              {/* Fila 4: Título (izq) | Cronómetro + Botón apilados (der) */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
                 <div>
                   <h2 style={{ margin: 0, fontSize: 18 }}>{examInfo.title}</h2>
                   {examInfo.tiempo_minutos && (
@@ -459,48 +469,28 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
                     </span>
                   )}
                 </div>
-
-                {/* Cronómetro centrado */}
-                {phase !== "done" && (
-                  <div style={{
-                    position: "absolute", left: "50%", transform: "translateX(-50%)",
-                    fontFamily: "monospace", fontSize: 30, fontWeight: 700,
-                    color: phase === "active" ? timerColor : "var(--muted)",
-                    pointerEvents: "none",
-                  }}>
-                    {formatTime(secondsLeft)}
-                  </div>
-                )}
-
-                {/* T29/T30 — Botón */}
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                  {phase !== "done" && (
+                    <div style={{ fontFamily: "monospace", fontSize: 30, fontWeight: 700, color: phase === "active" ? timerColor : "var(--muted)" }}>
+                      {formatTime(secondsLeft)}
+                    </div>
+                  )}
                   {phase === "done" && calificacionFinal !== null && (
                     <div style={{ textAlign: "right" }}>
-                      <span style={{ fontSize: 16, color: "var(--muted)", position: "relative", top: -2, right: 5 }}>Calificación: </span>
-                      <span style={{
-                        fontFamily: "monospace", fontSize: 30, fontWeight: 700,
-                        color: calificacionFinal >= 70 ? "#16a34a" : "#dc2626",
-                      }}>
+                      <span style={{ fontSize: 16, color: "var(--muted)", marginRight: 4 }}>Calificación:</span>
+                      <span style={{ fontFamily: "monospace", fontSize: 30, fontWeight: 700, color: calificacionFinal >= 70 ? "#16a34a" : "#dc2626" }}>
                         {calificacionFinal.toFixed(2)}
                       </span>
                     </div>
                   )}
-                  <div style={{ width: 0 }} />
-
-                  {(phase === "ready") && (
-                    <button className="btn" style={{ padding: "10px 22px" }} onClick={handleIniciar}>
-                      Iniciar
-                    </button>
+                  {phase === "ready" && (
+                    <button className="btn" style={{ padding: "10px 22px" }} onClick={handleIniciar}>Iniciar</button>
                   )}
                   {phase === "starting" && (
                     <button className="btn" disabled style={{ padding: "10px 22px" }}>Iniciando...</button>
                   )}
                   {phase === "active" && (
-                    <button className="btn"
-                      style={{ padding: "10px 22px", background: "#dc2626", color: "#fff" }}
-                      onClick={handleSubmit}>
-                      Terminar
-                    </button>
+                    <button className="btn" style={{ padding: "10px 22px", background: "#15803d", color: "#fff" }} onClick={handleSubmit}>Terminar</button>
                   )}
                   {phase === "submitting" && (
                     <button className="btn" disabled style={{ padding: "10px 22px" }}>Enviando...</button>

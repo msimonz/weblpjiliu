@@ -1,4 +1,3 @@
-import Image from "next/image";
 
 export default function Header({
   userLabel,
@@ -39,17 +38,13 @@ export default function Header({
       >
         {/* IZQUIERDA: logo (bucket) + | + texto */}
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          {logoUrl ? (
-            // ✅ logo desde URL pública (no Next/Image para evitar config de domains)
+          {logoUrl && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={logoUrl}
               alt="logo"
               style={{ height: 42, width: "auto", objectFit: "contain" }}
             />
-          ) : (
-            // fallback si no pasas logoUrl
-            <Image src="/logo.png" alt="JILIU" width={34} height={34} />
           )}
 
           <div
