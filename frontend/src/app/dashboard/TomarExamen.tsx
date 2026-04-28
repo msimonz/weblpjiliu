@@ -451,22 +451,23 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
                   </div>
                 </div>
 
-                {/* Col der: solo Volver */}
-                <div>
-                  {phase === "ready" && (
-                    <button className="btnRegresar" onClick={() => onClose(false)}>← Volver</button>
-                  )}
-                </div>
+                {/* Col der: vacía */}
+                <div />
               </div>
 
-              {/* Fila 4: Título (izq) | Cronómetro + Botón apilados (der) */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-                <div>
-                  <h2 style={{ margin: 0, fontSize: 18 }}>{examInfo.title}</h2>
-                  {examInfo.tiempo_minutos && (
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                      {examInfo.tiempo_minutos} min · {preguntas.length} preguntas
-                    </span>
+              {/* Fila 4: Título+Volver (izq) | Cronómetro+Iniciar (der) */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
+                <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 8 }}>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 18 }}>{examInfo.title}</h2>
+                    {examInfo.tiempo_minutos && (
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        {examInfo.tiempo_minutos} min · {preguntas.length} preguntas
+                      </span>
+                    )}
+                  </div>
+                  {phase === "ready" && (
+                    <button className="btnRegresar" style={{ alignSelf: "flex-start" }} onClick={() => onClose(false)}>← Volver</button>
                   )}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
@@ -483,18 +484,20 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
                       </span>
                     </div>
                   )}
-                  {phase === "ready" && (
-                    <button className="btn" style={{ padding: "10px 22px" }} onClick={handleIniciar}>Iniciar</button>
-                  )}
-                  {phase === "starting" && (
-                    <button className="btn" disabled style={{ padding: "10px 22px" }}>Iniciando...</button>
-                  )}
-                  {phase === "active" && (
-                    <button className="btn" style={{ padding: "10px 22px", background: "#15803d", color: "#fff" }} onClick={handleSubmit}>Terminar</button>
-                  )}
-                  {phase === "submitting" && (
-                    <button className="btn" disabled style={{ padding: "10px 22px" }}>Enviando...</button>
-                  )}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {phase === "ready" && (
+                      <button className="btn" style={{ padding: "10px 22px" }} onClick={handleIniciar}>Iniciar</button>
+                    )}
+                    {phase === "starting" && (
+                      <button className="btn" disabled style={{ padding: "10px 22px" }}>Iniciando...</button>
+                    )}
+                    {phase === "active" && (
+                      <button className="btn" style={{ padding: "10px 22px", background: "#15803d", color: "#fff" }} onClick={handleSubmit}>Terminar</button>
+                    )}
+                    {phase === "submitting" && (
+                      <button className="btn" disabled style={{ padding: "10px 22px" }}>Enviando...</button>
+                    )}
+                  </div>
                 </div>
               </div>
 
