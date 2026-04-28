@@ -730,7 +730,7 @@ export default function DashboardPage() {
                             <col style={{ width: "14%" }} />
                             <col style={{ width: "5%" }} />
                             <col style={{ width: "14%" }} />
-                            <col style={{ width: "16%" }} />
+                            <col style={{ width: "19%" }} />
                           </colgroup>
                           <thead>
                             <tr style={{ background: "transparent" }}>
