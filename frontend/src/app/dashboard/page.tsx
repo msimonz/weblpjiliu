@@ -719,8 +719,8 @@ export default function DashboardPage() {
                           }}
                         >
                           <colgroup>
-                            <col style={{ width: "18%" }} />
-                            <col style={{ width: "13%" }} />
+                            <col style={{ width: "17%" }} />
+                            <col style={{ width: "14%" }} />
                             <col style={{ width: "5%" }} />
                             <col style={{ width: "14%" }} />
                             <col style={{ width: "13%" }} />
