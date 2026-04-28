@@ -144,6 +144,19 @@ monitorRouter.get("/teachers", requireAuth, requireMonitor, async (req, res) => 
 // T18 — GET /api/monitor/modules
 // Módulos del año lectivo activo
 // ============================================================
+monitorRouter.get("/levels", requireAuth, requireMonitor, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("level")
+      .select("id,name")
+      .order("id", { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ items: data || [] });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 monitorRouter.get("/modules", requireAuth, requireMonitor, async (req, res) => {
   try {
     const course = await getMonitorCourse(req, res);

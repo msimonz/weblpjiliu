@@ -1154,6 +1154,8 @@ export default function AdminPage() {
     setAssignMatFilter("ALL");
     setAssignProfFilter("ALL");
     setAssignModFilter("ALL");
+    setMsg(null);
+    setOkMsg(null);
   }
 
   async function ecHandleSavePercent(evalId: number) {
@@ -2369,7 +2371,7 @@ export default function AdminPage() {
                   type="button"
                   className="btn"
                   style={{ padding: "10px 16px", whiteSpace: "nowrap", background: "#4b5563", borderColor: "#4b5563" }}
-                  onClick={() => { setNewCourseLevel(0); setNewCourseYear(""); setNewCourseName(""); }}
+                  onClick={() => { setNewCourseLevel(0); setNewCourseYear(""); setNewCourseName(""); setMsg(null); setOkMsg(null); }}
                 >
                   Cancelar
                 </button>
@@ -2583,6 +2585,8 @@ export default function AdminPage() {
                     setTblFilterModule("");
                     setTblFilterGroup("");
                     setTblFilterName("");
+                    setMsg(null);
+                    setOkMsg(null);
                     loadAll(adminYear);
                   }}
                 >
@@ -3077,7 +3081,7 @@ export default function AdminPage() {
                   type="button"
                   className="btn"
                   style={{ padding: "10px 16px", whiteSpace: "nowrap", background: "#4b5563", borderColor: "#4b5563" }}
-                  onClick={() => { setNewType(""); loadAll(adminYear); }}
+                  onClick={() => { setNewType(""); setMsg(null); setOkMsg(null); loadAll(adminYear); }}
                 >
                   Cancelar
                 </button>

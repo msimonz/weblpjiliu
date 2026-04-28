@@ -18,6 +18,7 @@ type TeacherClass = {
   level: number;
   id_module: number | null;
   id_group: number | null;
+  id_course?: number | null;
   module?: { id: number; name: string } | null;
   group?: { id: number; name: string } | null;
 };
@@ -830,24 +831,28 @@ export default function TeacherPage() {
   const createClassesFiltered = useMemo(() => {
     const levelNum = createLevelFilter && createLevelFilter !== "all" ? Number(createLevelFilter) : null;
     if (levelNum === null) return [];
+    const courseNum = cCourse ? Number(cCourse) : null;
     return myClasses.filter((c) => {
       if (c.id_group) return false;
       if (Number(c.level) !== levelNum) return false;
+      if (courseNum !== null && Number(c.id_course) !== courseNum) return false;
       if (createModuleFilter) {
         const modName = c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "—");
         if (modName !== createModuleFilter) return false;
       }
       return true;
     });
-  }, [myClasses, createLevelFilter, createModuleFilter]);
+  }, [myClasses, createLevelFilter, cCourse, createModuleFilter]);
 
   const createClassOptions = useMemo(() => {
     const levelNum = createLevelFilter && createLevelFilter !== "all" ? Number(createLevelFilter) : null;
     if (levelNum === null) return [];
+    const courseNum = cCourse ? Number(cCourse) : null;
     const out: { value: string; label: string }[] = [];
     for (const c of myClasses) {
       if (c.id_group) continue;
       if (Number(c.level) !== levelNum) continue;
+      if (courseNum !== null && Number(c.id_course) !== courseNum) continue;
       if (createModuleFilter) {
         const modName = c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "—");
         if (modName !== createModuleFilter) continue;
@@ -858,12 +863,17 @@ export default function TeacherPage() {
     for (const c of myClasses) {
       if (!c.id_group) continue;
       if (Number(c.level) !== levelNum) continue;
+      if (courseNum !== null && Number(c.id_course) !== courseNum) continue;
+      if (createModuleFilter) {
+        const modName = c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "—");
+        if (modName !== createModuleFilter) continue;
+      }
       if (seenGrpIds.has(c.id_group)) continue;
       seenGrpIds.add(c.id_group);
       out.push({ value: `grp:${c.id_group}`, label: c.group?.name ?? `Grupo ${c.id_group}` });
     }
     return out.sort((a, b) => a.label.localeCompare(b.label, "es"));
-  }, [myClasses, createLevelFilter, createModuleFilter]);
+  }, [myClasses, createLevelFilter, cCourse, createModuleFilter]);
 
   useEffect(() => {
     setCCourse("");
@@ -880,6 +890,7 @@ export default function TeacherPage() {
   }, [createModuleFilter]);
 
   useEffect(() => {
+    setCreateModuleFilter("");
     setCreateClassFilter("all");
 
     setTitleOther("");
@@ -1375,8 +1386,10 @@ export default function TeacherPage() {
     const out: { value: string; label: string }[] = [];
     const levelNum = createLevelFilter && createLevelFilter !== "all" ? Number(createLevelFilter) : null;
     if (levelNum === null) return out;
+    const courseNum = cCourse ? Number(cCourse) : null;
     for (const c of myClasses) {
       if (Number(c.level) !== levelNum) continue;
+      if (courseNum !== null && Number(c.id_course) !== courseNum) continue;
       const name = classModuleName(c);
       if (!seen.has(name)) {
         seen.add(name);
@@ -1384,7 +1397,7 @@ export default function TeacherPage() {
       }
     }
     return out;
-  }, [myClasses, createLevelFilter]);
+  }, [myClasses, createLevelFilter, cCourse]);
 
   const flatRowsFiltered = useMemo<FlatGradeRow[]>(() => {
     return flatRows.filter((r) => {
@@ -1986,10 +1999,10 @@ export default function TeacherPage() {
                 <select
                   className="select"
                   style={{ width: "100%" }}
-                  value={view}
+                  value=""
                   onChange={(e) => {
                     const next = e.target.value as TeacherView;
-                    resetView(view);
+                    resetView(next);
                     setView(next);
                     setMsg(null);
                     if (next === "DASHBOARD") loadDashboard(teacherYear);
@@ -2509,10 +2522,12 @@ export default function TeacherPage() {
                       setCCourse("");
                       setCreateModuleFilter("");
                       setCreateClassFilter("all");
-                  
+                      setCType("");
+                      setCTypeOther("");
                       setTitleOther("");
                       setCPercent(0);
                       setEditPercents({});
+                      setMsg(null);
                     }}
                   >
                     Cancelar
@@ -2800,6 +2815,7 @@ export default function TeacherPage() {
                     onClick={() => {
                       setUpsertLevelFilter("");
                       setUpsertCourseFilter("all");
+                      setThFilterLevel("");
                       setThFilterModule("");
                       setThFilterGroup("");
                       setThFilterClass("");
@@ -2809,6 +2825,7 @@ export default function TeacherPage() {
                       setGradeDraft({});
                       setEditingRow({});
                       setRowSnapshot({});
+                      setMsg(null);
                     }}
                   >
                     Cancelar

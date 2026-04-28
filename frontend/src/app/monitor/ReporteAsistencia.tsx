@@ -22,11 +22,14 @@ type DetalleTodasRow   = { id_student: string; name: string | null; cedula: stri
 type FechaInfo         = { fecha: string; class_id?: number | null; class_name?: string | null; teacher_name: string | null; profesor_asistio: boolean; profesor_reemplazo: string | null };
 type ConsultaTodasResp = { fechas: FechaInfo[]; detalle: DetalleTodasRow[] };
 
+type LevelItem = { id: number; name: string };
+
 type Props = { me: Record<string, unknown> };
 
 export default function ReporteAsistencia({ me }: Props) {
-  const course = me?.course as { id: number; name: string; year: number } | null;
+  const course = me?.course as { id: number; name: string; year: number; level: number } | null;
 
+  const [levels,    setLevels]    = useState<LevelItem[]>([]);
   const [modules,   setModules]   = useState<ModuleItem[]>([]);
   const [classes,   setClasses]   = useState<ClassItem[]>([]);
   const [fechas,    setFechas]    = useState<SesionFecha[]>([]);
@@ -42,8 +45,11 @@ export default function ReporteAsistencia({ me }: Props) {
   const [loadingDetalle,   setLoadingDetalle]   = useState(false);
   const [filtroAsistencia, setFiltroAsistencia] = useState<"todas" | "asistio" | "no_asistio">("todas");
 
-  // Carga módulos al montar
+  // Carga niveles y módulos al montar
   useEffect(() => {
+    apiFetch("/api/monitor/levels")
+      .then((r: { items?: LevelItem[] }) => setLevels(r?.items || []))
+      .catch(() => {});
     apiFetch("/api/monitor/modules")
       .then((r: { items?: ModuleItem[] }) => setModules(r?.items || []))
       .catch(() => {});
@@ -120,6 +126,7 @@ export default function ReporteAsistencia({ me }: Props) {
       });
 
   const selectedClass = classes.find((c) => String(c.id) === classId);
+  const levelName     = levels.find((l) => l.id === course?.level)?.name ?? (course?.level ? `Año ${course.level}` : "—");
 
   function handleDescargar() {
     if (isTodasMode) {
@@ -162,6 +169,13 @@ export default function ReporteAsistencia({ me }: Props) {
 
       {/* Filtros + botones */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20, alignItems: "flex-end" }}>
+
+        <div style={{ flex: "0 0 auto", width: "clamp(80px, 10%, 140px)" }}>
+          <div className="label">Nivel</div>
+          <div className="select" style={{ cursor: "default", userSelect: "none" }}>
+            {levelName}
+          </div>
+        </div>
 
         <div style={{ flex: "0 0 auto", width: "clamp(80px, 10%, 140px)" }}>
           <div className="label">Curso</div>
@@ -276,15 +290,15 @@ export default function ReporteAsistencia({ me }: Props) {
         <div style={{ color: "var(--muted)", textAlign: "center", padding: 20 }}>Cargando asistencia...</div>
       ) : isTodasMode && todasData && todasData.detalle.length > 0 ? (
         // ── Modo TODAS las fechas ──
-        <div style={{ overflowX: "auto", borderRadius: 14, border: "1px solid var(--stroke)" }}>
+        <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "60vh", borderRadius: 14, border: "1px solid var(--stroke)" }}>
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead>
               <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                <th rowSpan={2} style={{ position: "sticky", left: 0, zIndex: 3, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
-                <th rowSpan={2} style={{ position: "sticky", left: 90, zIndex: 3, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
-                <th style={{ padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }} rowSpan={2}>Inasistencias</th>
+                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
+                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
+                <th rowSpan={2} style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
                 {todasData.fechas.map((fi, i) => (
-                  <th key={i} style={{ padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
+                  <th key={i} style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
                     {fmtFecha(fi.fecha)}
                     {fi.class_name && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>{fi.class_name}</div>}
                   </th>
@@ -292,7 +306,7 @@ export default function ReporteAsistencia({ me }: Props) {
               </tr>
               <tr style={{ background: "rgba(14,165,233,.04)" }}>
                 {todasData.fechas.map((fi, i) => (
-                  <th key={i} style={{ padding: "4px 12px 8px", textAlign: "center", fontWeight: 400, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
+                  <th key={i} style={{ position: "sticky", top: 40, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 4%, var(--bg0))", padding: "4px 12px 8px", textAlign: "center", fontWeight: 400, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
                     {fi.profesor_asistio
                       ? `Prof: ${fi.teacher_name ?? "—"}`
                       : `Prof-remp: ${fi.profesor_reemplazo ?? fi.teacher_name ?? "—"}`}
@@ -342,27 +356,29 @@ export default function ReporteAsistencia({ me }: Props) {
         </div>
       ) : detalleFiltered.length > 0 ? (
         // ── Modo una fecha ──
-        <div style={{ overflowX: "auto", borderRadius: 14, border: "1px solid var(--stroke)" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "60vh", borderRadius: 14, border: "1px solid var(--stroke)" }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead>
               <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                <th style={{ padding: "10px 12px", textAlign: "left" }}>Cédula</th>
-                <th style={{ padding: "10px 12px", textAlign: "left" }}>Nombre</th>
-                <th style={{ padding: "10px 12px", textAlign: "center" }}>Inasistencias</th>
-                <th style={{ padding: "10px 12px", textAlign: "left" }}>Materia</th>
-                <th style={{ padding: "10px 12px", textAlign: "center" }}>{fmtFecha(fecha)}</th>
+                <th style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90 }}>Cédula</th>
+                <th style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150 }}>Nombre</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center" }}>Inasistencias</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left" }}>Materia</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center" }}>{fmtFecha(fecha)}</th>
               </tr>
             </thead>
             <tbody>
-              {detalleFiltered.map((d, idx) => (
-                <tr key={d.id_student} style={{ borderTop: "1px solid var(--stroke)", background: idx % 2 === 0 ? "transparent" : "rgba(14,165,233,.03)" }}>
-                  <td style={{ padding: "8px 12px", color: "var(--muted)" }}>{d.cedula ?? "—"}</td>
-                  <td style={{ padding: "8px 12px", fontWeight: 500 }}>{d.name ?? "—"}</td>
-                  <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: d.asistio ? "#15803d" : "#dc2626" }}>
+              {detalleFiltered.map((d, idx) => {
+                const stickyBg = idx % 2 === 0 ? "var(--bg0)" : "color-mix(in srgb, rgb(14,165,233) 3%, var(--bg0))";
+                return (
+                <tr key={d.id_student} style={{ background: idx % 2 === 0 ? "transparent" : "rgba(14,165,233,.03)" }}>
+                  <td style={{ position: "sticky", left: 0, zIndex: 1, background: stickyBg, padding: "8px 12px", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>{d.cedula ?? "—"}</td>
+                  <td style={{ position: "sticky", left: 90, zIndex: 1, background: stickyBg, padding: "8px 12px", fontWeight: 500, borderTop: "1px solid var(--stroke)" }}>{d.name ?? "—"}</td>
+                  <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: d.asistio ? "#15803d" : "#dc2626", borderTop: "1px solid var(--stroke)" }}>
                     {d.asistio ? 0 : 1}
                   </td>
-                  <td style={{ padding: "8px 12px", color: "var(--muted)" }}>{selectedClass?.name ?? "—"}</td>
-                  <td style={{ padding: "8px 12px", textAlign: "center" }}>
+                  <td style={{ padding: "8px 12px", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>{selectedClass?.name ?? "—"}</td>
+                  <td style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
                     <span style={{
                       display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
                       background: d.asistio ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
@@ -375,7 +391,8 @@ export default function ReporteAsistencia({ me }: Props) {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

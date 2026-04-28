@@ -18,6 +18,7 @@ export default function MonitorPage() {
   const [meLoading, setMeLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [view, setView]       = useState<MonitorView>("");
+  const [viewKey, setViewKey] = useState(0);
   const [logoUrl, setLogoUrl] = useState<string>("");
 
   useEffect(() => {
@@ -134,8 +135,11 @@ export default function MonitorPage() {
                 <select
                   className="select"
                   style={{ width: "100%", marginTop: 6 }}
-                  value={view}
-                  onChange={(e) => setView(e.target.value as MonitorView)}
+                  value=""
+                  onChange={(e) => {
+                    setView(e.target.value as MonitorView);
+                    setViewKey((k) => k + 1);
+                  }}
                 >
                   <option value="" disabled>Selecciona una opción...</option>
                   <option value="REGISTRAR">Registrar asistencia</option>
@@ -152,8 +156,8 @@ export default function MonitorPage() {
           </div>
 
           {/* Vistas */}
-          {view === "REGISTRAR" && <RegistrarAsistencia me={meData} />}
-          {view === "CONSULTAR" && <ReporteAsistencia me={meData} />}
+          {view === "REGISTRAR" && <RegistrarAsistencia key={viewKey} me={meData} />}
+          {view === "CONSULTAR" && <ReporteAsistencia key={viewKey} me={meData} />}
         </div>
       </main>
 

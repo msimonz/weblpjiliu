@@ -94,6 +94,7 @@ export default function SecretariaPage() {
 
   // View
   const [view, setView] = useState<SecView>("");
+  const [viewKey, setViewKey] = useState(0);
 
   // Catálogos
   const [courses, setCourses] = useState<Course[]>([]);
@@ -524,9 +525,10 @@ export default function SecretariaPage() {
               <select
                 className="select"
                 style={{ width: "100%" }}
-                value={view}
+                value=""
                 onChange={e => {
                   setView(e.target.value as SecView);
+                  setViewKey((k) => k + 1);
                   resetFiltersAndGrid();
                   loadAll(adminYear);
                 }}
@@ -562,7 +564,7 @@ export default function SecretariaPage() {
           {msg && <div className="msgError" style={{ marginTop: 12 }}>{msg}</div>}
 
           {/* ── Vista: Consultar asistencia ── */}
-          {view === "CONSULTAR" && <ConsultarAsistencia />}
+          {view === "CONSULTAR" && <ConsultarAsistencia key={viewKey} />}
 
           {/* ── Vista: Consultar notas ── */}
           {view === "NOTAS" && (
@@ -575,7 +577,7 @@ export default function SecretariaPage() {
               <div style={{ display: "flex", gap: 12, marginTop: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
 
                 <div style={{ flex: "1 1 140px" }}>
-                  <div className="label">Año</div>
+                  <div className="label">Nivel</div>
                   <select
                     className="select"
                     value={String(upsertLevelFilter)}

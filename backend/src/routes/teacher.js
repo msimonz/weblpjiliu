@@ -45,7 +45,9 @@ async function getTeacherClasses(teacherId, year) {
     ? (data || []).filter((r) => Number(r.course?.year) === Number(year))
     : (data || []);
 
-  const classes = filtered.map((r) => r.class).filter(Boolean);
+  const classes = filtered
+    .map((r) => r.class ? { ...r.class, id_course: r.id_course ?? null } : null)
+    .filter(Boolean);
 
   const groupIds = [...new Set(classes.map((c) => Number(c.id_group)).filter(Boolean))];
   if (groupIds.length > 0) {

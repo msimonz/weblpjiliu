@@ -11,12 +11,13 @@ function fmtFecha(iso: string) {
   return `${d}-${MESES[Number(m) - 1]}-${y}`;
 }
 
-type CourseItem    = { id: number; name: string };
-type ModuleItem    = { id: number; name: string };
-type ClassItem     = { id: number; name: string };
-type SesionFecha   = { id: number; fecha_clase: string };
-type DetalleRow    = { id_student: string; name: string | null; cedula: string | null; asistio: boolean; motivo: string };
-type SesionInfo    = { id: number; id_teacher: string; profesor_asistio: boolean; profesor_reemplazo: string | null; teacher_name: string | null };
+type LevelItem      = { id: number; name: string };
+type CourseItem     = { id: number; name: string; level: number };
+type ModuleItem     = { id: number; name: string };
+type ClassItem      = { id: number; name: string };
+type SesionFecha    = { id: number; fecha_clase: string };
+type DetalleRow     = { id_student: string; name: string | null; cedula: string | null; asistio: boolean; motivo: string };
+type SesionInfo     = { id: number; id_teacher: string; profesor_asistio: boolean; profesor_reemplazo: string | null; teacher_name: string | null };
 type AsistenciaEntry   = { fecha: string; class_id?: number | null; asistio: boolean; motivo: string };
 type DetalleTodasRow   = { id_student: string; name: string | null; cedula: string | null; asistencia: AsistenciaEntry[] };
 type FechaInfo         = { fecha: string; class_id?: number | null; class_name?: string | null; teacher_name: string | null; profesor_asistio: boolean; profesor_reemplazo: string | null };
@@ -25,6 +26,7 @@ type ConsultaTodasResp = { fechas: FechaInfo[]; detalle: DetalleTodasRow[] };
 type Props = { courses: CourseItem[] };
 
 export default function ReporteAsistenciaProfesor({ courses }: Props) {
+  const [levels,    setLevels]    = useState<LevelItem[]>([]);
   const [courseId,  setCourseId]  = useState("");
   const [modules,   setModules]   = useState<ModuleItem[]>([]);
   const [classes,   setClasses]   = useState<ClassItem[]>([]);
@@ -33,6 +35,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
   const [sesion,    setSesion]    = useState<SesionInfo | null>(null);
   const [todasData, setTodasData] = useState<ConsultaTodasResp | null>(null);
 
+  const [levelId,  setLevelId]  = useState("");
   const [moduleId, setModuleId] = useState("");
   const [classId,  setClassId]  = useState("");
   const [fecha,    setFecha]    = useState("");
@@ -41,6 +44,13 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
   const [loadingFechas,    setLoadingFechas]    = useState(false);
   const [loadingDetalle,   setLoadingDetalle]   = useState(false);
   const [filtroAsistencia, setFiltroAsistencia] = useState<"todas" | "asistio" | "no_asistio">("todas");
+
+  // Cargar niveles al montar
+  useEffect(() => {
+    apiFetch("/api/teacher/levels")
+      .then((r: { items?: LevelItem[] }) => setLevels(r?.items || []))
+      .catch(() => {});
+  }, []);
 
   // Curso → módulos
   useEffect(() => {
@@ -104,14 +114,23 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
   }, [courseId, moduleId, classId, fecha]);
 
   function handleCancelar() {
-    setCourseId(""); setModuleId(""); setClassId(""); setFecha("");
+    setLevelId(""); setCourseId(""); setModuleId(""); setClassId(""); setFecha("");
     setModules([]); setClasses([]); setFechas([]);
     setDetalle([]); setSesion(null); setTodasData(null);
     setFiltroAsistencia("todas");
   }
 
-  const isTodasMode = fecha === "todas" || classId === "todas";
-  const hasData = isTodasMode
+  // Niveles que tienen al menos un curso disponible para este profesor
+  const availableLevelIds = new Set(courses.map((c) => c.level));
+  const displayedLevels   = levels.filter((l) => availableLevelIds.has(l.id));
+
+  // Cursos filtrados por nivel seleccionado
+  const filteredCourses = levelId
+    ? courses.filter((c) => String(c.level) === levelId)
+    : courses;
+
+  const isTodasMode    = fecha === "todas" || classId === "todas";
+  const hasData        = isTodasMode
     ? (todasData?.detalle?.length ?? 0) > 0
     : detalle.length > 0;
 
@@ -172,14 +191,33 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
       {/* Filtros + botones */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20, alignItems: "flex-end" }}>
 
+        {/* Nivel */}
+        <div style={{ flex: "0 0 auto", width: "clamp(100px, 12%, 160px)" }}>
+          <div className="label">Nivel</div>
+          <select
+            className="select"
+            style={{ width: "100%" }}
+            value={levelId}
+            onChange={(e) => {
+              setLevelId(e.target.value);
+              setCourseId("");
+            }}
+          >
+            <option value="">Todos...</option>
+            {displayedLevels.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+        </div>
+
+        {/* Curso */}
         <div style={{ flex: "0 0 auto", width: "clamp(100px, 14%, 180px)" }}>
           <div className="label">Curso</div>
           <select className="select" style={{ width: "100%" }} value={courseId} onChange={(e) => setCourseId(e.target.value)}>
             <option value="">Selecciona...</option>
-            {courses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {filteredCourses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
 
+        {/* Módulo */}
         <div style={{ flex: "1 1 140px" }}>
           <div className="label">Módulo</div>
           <select className="select" style={{ width: "100%" }} value={moduleId} onChange={(e) => setModuleId(e.target.value)} disabled={!courseId || loadingModules}>
@@ -189,6 +227,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
           </select>
         </div>
 
+        {/* Materia */}
         <div style={{ flex: "1 1 140px" }}>
           <div className="label">Materia</div>
           <select className="select" style={{ width: "100%" }} value={classId} onChange={(e) => setClassId(e.target.value)} disabled={!moduleId}>
@@ -198,6 +237,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
           </select>
         </div>
 
+        {/* Fecha clase */}
         <div style={{ flex: "1 1 140px" }}>
           <div className="label">Fecha clase</div>
           <select className="select" style={{ width: "100%" }} value={fecha} onChange={(e) => setFecha(e.target.value)} disabled={!classId || loadingFechas}>
@@ -283,15 +323,15 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
       {loadingDetalle ? (
         <div style={{ color: "var(--muted)", textAlign: "center", padding: 20 }}>Cargando asistencia...</div>
       ) : isTodasMode && todasData && todasData.detalle.length > 0 ? (
-        <div style={{ overflowX: "auto", borderRadius: 14, border: "1px solid var(--stroke)" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "60vh", borderRadius: 14, border: "1px solid var(--stroke)" }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead>
               <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                <th style={{ padding: "10px 12px", textAlign: "left" }} rowSpan={2}>Cédula</th>
-                <th style={{ padding: "10px 12px", textAlign: "left" }} rowSpan={2}>Nombre</th>
-                <th style={{ padding: "10px 12px", textAlign: "center" }} rowSpan={2}>Inasistencias</th>
+                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
+                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
+                <th rowSpan={2} style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
                 {todasData.fechas.map((fi, i) => (
-                  <th key={i} style={{ padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
+                  <th key={i} style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
                     {fmtFecha(fi.fecha)}
                     {fi.class_name && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>{fi.class_name}</div>}
                   </th>
@@ -299,7 +339,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
               </tr>
               <tr style={{ background: "rgba(14,165,233,.04)" }}>
                 {todasData.fechas.map((fi, i) => (
-                  <th key={i} style={{ padding: "4px 12px 8px", textAlign: "center", fontWeight: 400, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>
+                  <th key={i} style={{ position: "sticky", top: 40, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 4%, var(--bg0))", padding: "4px 12px 8px", textAlign: "center", fontWeight: 400, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>
                     {fi.profesor_asistio
                       ? `Prof: ${fi.teacher_name ?? "—"}`
                       : `Prof-remp: ${fi.profesor_reemplazo ?? fi.teacher_name ?? "—"}`}
@@ -310,20 +350,21 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
             <tbody>
               {todasDetalleFiltered.map((d, idx) => {
                 const inasistencias = d.asistencia.filter((a) => !a.asistio).length;
+                const stickyBg = idx % 2 === 0 ? "var(--bg0)" : "color-mix(in srgb, rgb(14,165,233) 3%, var(--bg0))";
                 return (
-                  <tr key={d.id_student} style={{ borderTop: "1px solid var(--stroke)", background: idx % 2 === 0 ? "transparent" : "rgba(14,165,233,.03)" }}>
-                    <td style={{ padding: "8px 12px", color: "var(--muted)" }}>{d.cedula ?? "—"}</td>
-                    <td style={{ padding: "8px 12px", fontWeight: 500 }}>{d.name ?? "—"}</td>
-                    <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: inasistencias > 0 ? "#dc2626" : "#15803d" }}>
+                  <tr key={d.id_student} style={{ background: idx % 2 === 0 ? "transparent" : "rgba(14,165,233,.03)" }}>
+                    <td style={{ position: "sticky", left: 0, zIndex: 1, background: stickyBg, padding: "8px 12px", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>{d.cedula ?? "—"}</td>
+                    <td style={{ position: "sticky", left: 90, zIndex: 1, background: stickyBg, padding: "8px 12px", fontWeight: 500, borderTop: "1px solid var(--stroke)" }}>{d.name ?? "—"}</td>
+                    <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: inasistencias > 0 ? "#dc2626" : "#15803d", borderTop: "1px solid var(--stroke)" }}>
                       {inasistencias}
                     </td>
                     {todasData.fechas.map((fi, i) => {
                       const entry = d.asistencia.find((a) => a.fecha === fi.fecha && (!fi.class_id || a.class_id === fi.class_id));
                       if (!entry) return (
-                        <td key={i} style={{ padding: "8px 12px", textAlign: "center", color: "var(--muted)" }}>—</td>
+                        <td key={i} style={{ padding: "8px 12px", textAlign: "center", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>—</td>
                       );
                       return (
-                        <td key={i} style={{ padding: "8px 12px", textAlign: "center" }}>
+                        <td key={i} style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
                           <span style={{
                             display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
                             background: entry.asistio ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
@@ -344,27 +385,29 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
           </table>
         </div>
       ) : detalleFiltered.length > 0 ? (
-        <div style={{ overflowX: "auto", borderRadius: 14, border: "1px solid var(--stroke)" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "60vh", borderRadius: 14, border: "1px solid var(--stroke)" }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead>
               <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                <th style={{ padding: "10px 12px", textAlign: "left" }}>Cédula</th>
-                <th style={{ padding: "10px 12px", textAlign: "left" }}>Nombre</th>
-                <th style={{ padding: "10px 12px", textAlign: "center" }}>Inasistencias</th>
-                <th style={{ padding: "10px 12px", textAlign: "left" }}>Materia</th>
-                <th style={{ padding: "10px 12px", textAlign: "center" }}>{fmtFecha(fecha)}</th>
+                <th style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90 }}>Cédula</th>
+                <th style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150 }}>Nombre</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center" }}>Inasistencias</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left" }}>Materia</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center" }}>{fmtFecha(fecha)}</th>
               </tr>
             </thead>
             <tbody>
-              {detalleFiltered.map((d, idx) => (
-                <tr key={d.id_student} style={{ borderTop: "1px solid var(--stroke)", background: idx % 2 === 0 ? "transparent" : "rgba(14,165,233,.03)" }}>
-                  <td style={{ padding: "8px 12px", color: "var(--muted)" }}>{d.cedula ?? "—"}</td>
-                  <td style={{ padding: "8px 12px", fontWeight: 500 }}>{d.name ?? "—"}</td>
-                  <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: d.asistio ? "#15803d" : "#dc2626" }}>
+              {detalleFiltered.map((d, idx) => {
+                const stickyBg = idx % 2 === 0 ? "var(--bg0)" : "color-mix(in srgb, rgb(14,165,233) 3%, var(--bg0))";
+                return (
+                <tr key={d.id_student} style={{ background: idx % 2 === 0 ? "transparent" : "rgba(14,165,233,.03)" }}>
+                  <td style={{ position: "sticky", left: 0, zIndex: 1, background: stickyBg, padding: "8px 12px", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>{d.cedula ?? "—"}</td>
+                  <td style={{ position: "sticky", left: 90, zIndex: 1, background: stickyBg, padding: "8px 12px", fontWeight: 500, borderTop: "1px solid var(--stroke)" }}>{d.name ?? "—"}</td>
+                  <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: d.asistio ? "#15803d" : "#dc2626", borderTop: "1px solid var(--stroke)" }}>
                     {d.asistio ? 0 : 1}
                   </td>
-                  <td style={{ padding: "8px 12px", color: "var(--muted)" }}>{selectedClass?.name ?? "—"}</td>
-                  <td style={{ padding: "8px 12px", textAlign: "center" }}>
+                  <td style={{ padding: "8px 12px", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>{selectedClass?.name ?? "—"}</td>
+                  <td style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
                     <span style={{
                       display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
                       background: d.asistio ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
@@ -377,7 +420,8 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
