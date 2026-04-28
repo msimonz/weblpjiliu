@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
@@ -79,7 +80,7 @@ type GridGradeRow = {
   attempts?: number | null;
 };
 
-type AssignRow = { id_class: number; class_name: string; id_teacher: string | null; id_course: number; course_name: string; id_module: number | null; module_name: string | null };
+type AssignRow = { id_class: number; class_name: string; id_teacher: string | null; id_course: number; course_name: string; id_module: number | null; module_name: string | null; id_group: number | null; group_name: string | null };
 
 type GradeGridResponse = {
   class: { id: number; name: string; level: number } | null;
@@ -103,7 +104,7 @@ type AdminView =
   | "HABILITAR_EXAMENES"
   | "ANIO_LECTIVO";
 
-type EvalCrudMode = "class" | "module" | "group";
+type EvalCrudMode = "class" | "group";
 
 const ROLE_OPTIONS = [
   { value: "S", label: "Estudiante" },
@@ -209,6 +210,11 @@ export default function AdminPage() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [view, setView] = useState<AdminView>("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuExpanded, setMenuExpanded] = useState<"data_maestra" | "evaluaciones" | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuPanelRef = useRef<HTMLDivElement | null>(null);
+  const [menuRect, setMenuRect] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const [courses, setCourses] = useState<Course[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
@@ -253,9 +259,10 @@ export default function AdminPage() {
   const [selClass, setSelClass] = useState<string>("");
   const [selAssignCourse, setSelAssignCourse] = useState<string>("");
   const [assignGrid, setAssignGrid] = useState<AssignRow[]>([]);
+  const [assignModFilter, setAssignModFilter] = useState<string>("ALL");
+  const [assignGroupFilter, setAssignGroupFilter] = useState<string>("ALL");
   const [assignMatFilter, setAssignMatFilter] = useState<string>("ALL");
   const [assignProfFilter, setAssignProfFilter] = useState<string>("ALL");
-  const [assignModFilter, setAssignModFilter] = useState<string>("ALL");
   const [assignEdits, setAssignEdits] = useState<Record<string, string>>({}); // key: `${id_class}_${id_course}`
   const [assignLoading, setAssignLoading] = useState(false);
   const [assignSaving, setAssignSaving] = useState(false);
@@ -350,7 +357,7 @@ export default function AdminPage() {
   const [ecCourseId, setEcCourseId] = useState<string>("");
   const [ecTeacherId, setEcTeacherId] = useState<string>("");
   const [ecTeachers, setEcTeachers] = useState<UserMini[]>([]);
-  const [ecRowTeachers, setEcRowTeachers] = useState<UserMini[]>([]);
+  const [ecAssignMap, setEcAssignMap] = useState<Record<number, string | null>>({});
   const [ecType, setEcType] = useState<string>("");
   const [ecTypeOther, setEcTypeOther] = useState<string>("");
   const [ecTitle, setEcTitle] = useState<string>("");
@@ -402,6 +409,17 @@ export default function AdminPage() {
     const { data } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
     setLogoUrl(data.publicUrl);
   }, []);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handleClick(e: MouseEvent) {
+      const inTrigger = menuRef.current?.contains(e.target as Node);
+      const inPanel   = menuPanelRef.current?.contains(e.target as Node);
+      if (!inTrigger && !inPanel) setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [menuOpen]);
 
   useEffect(() => {
     (async () => {
@@ -482,14 +500,19 @@ export default function AdminPage() {
   const assignVisibleRows = useMemo(() => {
     let rows = assignGrid;
     if (assignModFilter !== "ALL") rows = rows.filter((r) => String(r.id_module) === assignModFilter);
+    if (assignGroupFilter !== "ALL") rows = rows.filter((r) => String(r.id_group) === assignGroupFilter);
     if (assignMatFilter === "WITH") rows = rows.filter((r) => r.id_teacher != null);
     else if (assignMatFilter === "WITHOUT") rows = rows.filter((r) => r.id_teacher == null);
     else if (assignMatFilter !== "ALL") rows = rows.filter((r) => String(r.id_class) === assignMatFilter);
     if (assignProfFilter === "WITH") rows = rows.filter((r) => r.id_teacher != null);
     else if (assignProfFilter === "WITHOUT") rows = [];
     else if (assignProfFilter !== "ALL") rows = rows.filter((r) => r.id_teacher === assignProfFilter);
-    return rows;
-  }, [assignGrid, assignModFilter, assignMatFilter, assignProfFilter]);
+    return [...rows].sort((a, b) => {
+      const cmp = (x: string | null | undefined, y: string | null | undefined) =>
+        (x ?? "").localeCompare(y ?? "", "es", { sensitivity: "base" });
+      return cmp(a.module_name, b.module_name) || cmp(a.group_name, b.group_name) || cmp(a.class_name, b.class_name);
+    });
+  }, [assignGrid, assignModFilter, assignGroupFilter, assignMatFilter, assignProfFilter]);
 
   const assignMultiCourse = useMemo(
     () => new Set(assignGrid.map((r) => r.id_course)).size > 1,
@@ -502,9 +525,10 @@ export default function AdminPage() {
     const showOrphans =
       (assignProfFilter === "ALL" || assignProfFilter === "WITHOUT") &&
       assignMatFilter === "ALL" &&
-      assignModFilter === "ALL";
+      assignModFilter === "ALL" &&
+      assignGroupFilter === "ALL";
     return showOrphans ? orphans : [];
-  }, [assignGrid, assignProfFilter, assignMatFilter, assignModFilter, teachers]);
+  }, [assignGrid, assignProfFilter, assignMatFilter, assignModFilter, assignGroupFilter, teachers]);
 
   const availableModulesForCreate = useMemo(() => {
     return [...modules].sort((a, b) => a.name.localeCompare(b.name, "es"));
@@ -655,56 +679,60 @@ export default function AdminPage() {
 
   const ecModules = useMemo(() => {
     if (!ecEffectiveLevel) return [];
-    if (ecEffectiveLevel === -1) return [...modules].sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? "")));
-    const ids = new Set(
-      classes
-        .filter((c) => Number(c.level) === ecEffectiveLevel)
-        .map((c) => c.id_module)
-        .filter((x): x is number => x !== null && Number.isFinite(x) && x > 0)
-    );
-    return modules.filter((m) => ids.has(m.id));
-  }, [classes, modules, ecEffectiveLevel]);
+    const sortFn = (a: ModuleItem, b: ModuleItem) => String(a.name ?? "").localeCompare(String(b.name ?? ""), "es", { sensitivity: "base" });
+    if (ecMode === "group") {
+      // Solo módulos que tienen clases realmente asignadas a un grupo (id_group != null)
+      const ids = new Set(
+        classes
+          .filter((c) => (ecEffectiveLevel === -1 || Number(c.level) === ecEffectiveLevel) && c.groups && c.groups.length > 0)
+          .map((c) => c.id_module)
+          .filter((x): x is number => x != null && Number.isFinite(x) && x > 0)
+      );
+      return modules.filter((m) => ids.has(m.id)).sort(sortFn);
+    } else {
+      const ids = new Set(
+        classes
+          .filter((c) => (ecEffectiveLevel === -1 || Number(c.level) === ecEffectiveLevel) && (!c.groups || c.groups.length === 0))
+          .map((c) => c.id_module)
+          .filter((x): x is number => x !== null && Number.isFinite(x) && x > 0)
+      );
+      return modules.filter((m) => ids.has(m.id)).sort(sortFn);
+    }
+  }, [classes, modules, ecEffectiveLevel, ecMode]);
 
   const ecGroups = useMemo(() => {
     if (!ecEffectiveLevel) return [];
     const sortFn = (a: GroupMini, b: GroupMini) => String(a.name ?? "").localeCompare(String(b.name ?? ""));
-    if (ecModuleId) {
-      const direct = groups.filter((g) => Number(g.id_module) === Number(ecModuleId));
-      if (direct.length > 0) return direct.sort(sortFn);
-      const map = new Map<number, GroupMini>();
+    // Solo grupos que tienen al menos una clase asignada en el nivel seleccionado
+    const groupIdsWithClasses = new Set(
       classes
-        .filter((c) => Number(c.id_module) === Number(ecModuleId))
-        .forEach((c) => (c.groups || []).forEach((g) => { if (!map.has(g.id)) map.set(g.id, g); }));
-      return Array.from(map.values()).sort(sortFn);
-    }
-    if (ecEffectiveLevel === -1) return [...groups].sort(sortFn);
-    const moduleIds = new Set(
-      classes
-        .filter((c) => Number(c.level) === ecEffectiveLevel)
-        .map((c) => c.id_module)
-        .filter((x): x is number => x !== null && Number.isFinite(x) && x > 0)
+        .filter((c) => (ecEffectiveLevel === -1 || Number(c.level) === ecEffectiveLevel) && c.groups && c.groups.length > 0)
+        .flatMap((c) => c.groups.map((g) => g.id))
     );
-    return groups
-      .filter((g) => g.id_module != null && moduleIds.has(g.id_module))
-      .sort(sortFn);
+    const base = groups.filter((g) => groupIdsWithClasses.has(g.id));
+    if (ecModuleId) return base.filter((g) => Number(g.id_module) === Number(ecModuleId)).sort(sortFn);
+    return base.sort(sortFn);
   }, [groups, classes, ecModuleId, ecEffectiveLevel]);
 
   const ecClasses = useMemo(() => {
     if (!ecEffectiveLevel) return [];
     let filtered = classes;
     if (ecEffectiveLevel > 0) filtered = filtered.filter((c) => Number(c.level) === ecEffectiveLevel);
-    if (ecModuleId) {
-      const groupIdsOfModule = new Set(
-        groups.filter((g) => Number(g.id_module) === Number(ecModuleId)).map((g) => g.id)
-      );
-      filtered = filtered.filter((c) =>
-        Number(c.id_module) === Number(ecModuleId) ||
-        (c.groups || []).some((g) => groupIdsOfModule.has(Number(g.id)))
-      );
+    if (ecMode === "group") {
+      if (ecGroupId) {
+        filtered = filtered.filter((c) => (c.groups || []).some((g) => Number(g.id) === Number(ecGroupId)));
+      } else if (ecModuleId) {
+        const groupIdsOfModule = new Set(groups.filter((g) => Number(g.id_module) === Number(ecModuleId)).map((g) => g.id));
+        filtered = filtered.filter((c) => (c.groups || []).some((g) => groupIdsOfModule.has(Number(g.id))));
+      } else {
+        filtered = [];
+      }
+    } else {
+      filtered = filtered.filter((c) => !c.groups || c.groups.length === 0);
+      if (ecModuleId) filtered = filtered.filter((c) => Number(c.id_module) === Number(ecModuleId));
     }
-    if (ecGroupId) filtered = filtered.filter((c) => (c.groups || []).some((g) => Number(g.id) === Number(ecGroupId)));
     return filtered;
-  }, [classes, groups, ecEffectiveLevel, ecModuleId, ecGroupId]);
+  }, [classes, groups, ecEffectiveLevel, ecModuleId, ecGroupId, ecMode]);
 
   const ecCourses = useMemo(() => {
     if (!ecLevel) return [];
@@ -791,36 +819,38 @@ export default function AdminPage() {
     setEcCourseId("");
   }, [ecLevel]);
 
-  // Helper: construir params de profesores según cascada
-  function buildTeacherParams(_opts: { withMode?: boolean } = {}) {
-    const params = new URLSearchParams();
-    if (ecClassId)       params.set("class_id",  ecClassId);
-    else if (ecGroupId)  params.set("group_id",  ecGroupId);
-    else if (ecModuleId) params.set("module_id", ecModuleId);
-    else if (ecCourseId) params.set("course_id", ecCourseId);
-    else if (ecEffectiveLevel > 0) params.set("level", String(ecEffectiveLevel));
-    return params;
-  }
 
-  // EVAL_CRUD: profesores para filas de evaluaciones existentes
-  useEffect(() => {
-    if (view !== "EVAL_CRUD" || !ecEffectiveLevel) { setEcRowTeachers([]); return; }
-    const params = buildTeacherParams();
-    apiFetch(`/api/admin/teachers?${params.toString()}`)
-      .then((res) => setEcRowTeachers(res?.items || []))
-      .catch(() => setEcRowTeachers([]));
-  }, [view, ecEffectiveLevel, ecCourseId, ecModuleId, ecGroupId, ecClassId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // EVAL_CRUD: profesores para formulario de creación (solo módulo/grupo)
+  // EVAL_CRUD: pre-cargar mapa class→teacher una sola vez al entrar a la vista
   useEffect(() => {
     if (view !== "EVAL_CRUD") return;
-    if (ecMode === "class") { setEcTeachers([]); setEcTeacherId(""); return; }
+    apiFetch("/api/admin/assignment-grid")
+      .then((data) => {
+        const map: Record<number, string | null> = {};
+        (data.rows || []).forEach((r: AssignRow) => { map[r.id_class] = r.id_teacher; });
+        setEcAssignMap(map);
+      })
+      .catch(() => setEcAssignMap({}));
+  }, [view]);
+
+  // EVAL_CRUD: calcular lista de profesores y teacher seleccionado de forma local (sin API extra)
+  useEffect(() => {
+    if (view !== "EVAL_CRUD") return;
+    if (ecMode === "class") {
+      const tid = ecClassId ? (ecAssignMap[Number(ecClassId)] ?? "") : "";
+      setEcTeacherId(tid);
+      setEcTeachers(tid ? teachers.filter((t) => t.id === tid) : []);
+      return;
+    }
     setEcTeacherId("");
-    const params = buildTeacherParams();
-    apiFetch(`/api/admin/teachers?${params.toString()}`)
-      .then((res) => setEcTeachers(res?.items || []))
-      .catch(() => setEcTeachers([]));
-  }, [view, ecMode, ecEffectiveLevel, ecCourseId, ecModuleId, ecGroupId]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!ecGroupId) {
+      setEcTeachers(teachers);
+      return;
+    }
+    const teacherIds = new Set(
+      ecClasses.map((c) => ecAssignMap[c.id]).filter((id): id is string => !!id)
+    );
+    setEcTeachers(teacherIds.size > 0 ? teachers.filter((t) => teacherIds.has(t.id)) : teachers);
+  }, [view, ecMode, ecClassId, ecGroupId, ecAssignMap, ecClasses, teachers]);
 
   useEffect(() => {
     setEcGroupId("");
@@ -834,6 +864,18 @@ export default function AdminPage() {
   // EVAL_CRUD: limpiar mensajes al cambiar cualquier filtro o modo
   useEffect(() => { setMsg(null); setOkMsg(null); },
     [ecLevel, ecCourseId, ecModuleId, ecGroupId, ecClassId, ecType, ecMode]);
+
+  // EVAL_CRUD: auto-fill título cuando tipo=Examen
+  useEffect(() => {
+    if (types.find((t) => String(t.id) === ecType)?.type !== "Examen") return;
+    if (ecMode === "class" && ecClassId) {
+      const cls = classes.find((c) => String(c.id) === ecClassId);
+      if (cls) setEcTitle(cls.name);
+    } else if (ecMode === "group" && ecGroupId) {
+      const grp = groups.find((g) => String(g.id) === ecGroupId);
+      if (grp) setEcTitle(grp.name);
+    }
+  }, [ecType, ecMode, ecClassId, ecGroupId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // EVAL_CRUD: reset completo al cambiar modo
   useEffect(() => {
@@ -850,20 +892,16 @@ export default function AdminPage() {
     setEcEditPercents({});
   }, [ecMode]);
 
-  // EVAL_CRUD: cargar evaluaciones existentes dinámicamente por nivel + filtros opcionales
+  // EVAL_CRUD: cargar evaluaciones existentes — carga todo al inicio y filtra por cualquier cambio
   useEffect(() => {
     if (view !== "EVAL_CRUD") return;
 
-    if (ecLevel === 0) {
-      setEcExisting([]);
-      setEcEditPercents({});
-      setEcEditTeachers({});
-      return;
-    }
-
     const params = new URLSearchParams();
-    if (ecLevel > 0) params.set("level", String(ecLevel)); // -1 = Todos → no filtrar por nivel
-    if (ecCourseId) params.set("course_id", ecCourseId);
+    if (ecLevel > 0) params.set("level", String(ecLevel));
+    if (ecCourseId)  params.set("course_id",  ecCourseId);
+    if (ecModuleId)  params.set("module_id",  ecModuleId);
+    if (ecMode === "group" && ecGroupId)   params.set("group_id",  ecGroupId);
+    if (ecMode === "class" && ecClassId)   params.set("class_id",  ecClassId);
 
     let cancelled = false;
     setEcLoadingExisting(true);
@@ -886,7 +924,7 @@ export default function AdminPage() {
       .finally(() => { if (!cancelled) setEcLoadingExisting(false); });
 
     return () => { cancelled = true; };
-  }, [view, ecLevel, ecCourseId]);
+  }, [view, ecMode, ecLevel, ecCourseId, ecModuleId, ecGroupId, ecClassId]);
 
   useEffect(() => {
     setGridClassInfo(null);
@@ -1069,9 +1107,10 @@ export default function AdminPage() {
       const data = await apiFetch(`/api/admin/assignment-grid?${params}`);
       setAssignGrid(data.rows || []);
       setAssignEdits({});
+      setAssignModFilter("ALL");
+      setAssignGroupFilter("ALL");
       setAssignMatFilter("ALL");
       setAssignProfFilter("ALL");
-      setAssignModFilter("ALL");
     } catch (e) {
       showErr((e as { message?: string })?.message || "Error cargando asignaciones");
     } finally {
@@ -1176,6 +1215,7 @@ export default function AdminPage() {
         id_class:   ev.id_class,
         id_module:  ev.id_module ?? null,
         id_group:   ev.id_group  ?? null,
+        id_teacher: null,
         title:      ev.title,
         percent:    Number(ev.percent),
         courseName: course ? String(course.name) : String(ev.id_course),
@@ -1219,7 +1259,6 @@ export default function AdminPage() {
     const relevantExisting = ecExisting.filter((ev) => {
       if (Number(ev.id_course) !== id_course) return false;
       if (ecMode === "class")  return Number(ev.id_class)  === Number(ecClassId);
-      if (ecMode === "module") return String(ev.id_module) === ecModuleId;
       if (ecMode === "group")  return String(ev.id_group)  === ecGroupId;
       return false;
     });
@@ -1230,30 +1269,51 @@ export default function AdminPage() {
       );
     }
 
-    // ── Examen: abrir interfaz CrearExamen en lugar del flujo normal ──
+    // ── Examen: abrir interfaz CrearExamen (por Materia o por Grupo) ──
     const selectedTypeName = (!isOtherType
       ? types.find(t => t.id === id_type)?.type
       : type_text) || "";
     if (selectedTypeName === "Examen") {
-      if (ecMode !== "class") return showErr("Los exámenes se crean por Materia. Selecciona el modo 'Materia'.");
-      const id_class = Number(ecClassId);
-      if (!id_class) return showErr("Selecciona una materia.");
       const course = courses.find(c => c.id === id_course);
-      const cls    = classes.find(c => c.id === id_class);
-      const mod    = cls?.id_module ? modules.find(m => m.id === cls.id_module) : null;
-      const lev    = levels.find(l => l.id === ecLevel);
-      setCrearExamenCtx({
-        id_course,
-        id_class,
-        id_module:  cls?.id_module  ?? null,
-        id_group:   null,
-        title,
-        percent,
-        courseName: course ? String(course.name) : String(id_course),
-        className:  cls?.name ?? String(id_class),
-        moduleName: mod?.name ?? cls?.module_name ?? null,
-        levelName:  lev?.name ?? null,
-      });
+      if (ecMode === "class") {
+        const id_class = Number(ecClassId);
+        if (!id_class) return showErr("Selecciona una materia.");
+        const cls = classes.find(c => c.id === id_class);
+        const mod = cls?.id_module ? modules.find(m => m.id === cls.id_module) : null;
+        const lev = levels.find(l => l.id === ecLevel);
+        setCrearExamenCtx({
+          id_course,
+          id_class,
+          id_module:  cls?.id_module ?? null,
+          id_group:   null,
+          id_teacher: ecTeacherId || null,
+          title,
+          percent,
+          courseName: course ? String(course.name) : String(id_course),
+          className:  cls?.name ?? String(id_class),
+          moduleName: mod?.name ?? cls?.module_name ?? null,
+          levelName:  lev?.name ?? null,
+        });
+      } else {
+        const id_group = Number(ecGroupId);
+        if (!id_group) return showErr("Selecciona un grupo.");
+        const grp = groups.find(g => g.id === id_group);
+        const mod = grp?.id_module ? modules.find(m => m.id === grp.id_module) : null;
+        const lev = levels.find(l => l.id === ecLevel);
+        setCrearExamenCtx({
+          id_course,
+          id_class:   null,
+          id_module:  grp?.id_module ?? null,
+          id_group,
+          id_teacher: ecTeacherId || null,
+          title,
+          percent,
+          courseName: course ? String(course.name) : String(id_course),
+          className:  grp?.name ?? String(id_group),
+          moduleName: mod?.name ?? null,
+          levelName:  lev?.name ?? null,
+        });
+      }
       setShowCrearExamen(true);
       return;
     }
@@ -1270,20 +1330,12 @@ export default function AdminPage() {
             id_type: id_type || undefined, type_text: isOtherType ? type_text : undefined }),
         });
       } else {
-        const scope = ecMode;
-        const id_module = Number(ecModuleId) || undefined;
-        const id_group = ecMode === "group" ? Number(ecGroupId) : undefined;
-
-        if (scope === "module" && !id_module) {
-          setEcCreating(false); return showErr("Selecciona un módulo.");
-        }
-        if (scope === "group" && !id_group) {
-          setEcCreating(false); return showErr("Selecciona un grupo.");
-        }
+        const id_group = Number(ecGroupId);
+        if (!id_group) { setEcCreating(false); return showErr("Selecciona un grupo."); }
 
         await apiFetch("/api/admin/evaluations/bulk", {
           method: "POST",
-          body: JSON.stringify({ scope, id_module, id_group, id_course, id_teacher, percent, title,
+          body: JSON.stringify({ id_group, id_course, id_teacher, percent, title,
             id_type: id_type || undefined, type_text: isOtherType ? type_text : undefined }),
         });
       }
@@ -2077,29 +2129,145 @@ export default function AdminPage() {
               alignItems: "flex-end",
             }}
           >
-            <div style={{ flex: 4 }}>
+            <div style={{ flex: 4, position: "relative" }} ref={menuRef}>
               <div className="label">¿Qué quieres hacer?</div>
-              <select
-                className="select"
-                style={{ width: "100%" }}
-                value={view}
-                onChange={(e) => { setView(e.target.value as AdminView); loadAll(adminYear); }}
-              >
-                <option value="" disabled>¿Qué quieres hacer?...</option>
-                <optgroup label="── Data maestra ────">
-                  <option value="COURSES">        Crear/Editar curso</option>
-                  <option value="CLASSES">        Crear materia</option>
-                  <option value="TYPES">        Crear tipo evaluacion</option>
-                  <option value="USERS">        Crear/Actualizar persona</option>
-                  <option value="ASSIGN_TEACHER">        Asignar materias a profesor</option>
-                  <option value="ANIO_LECTIVO">        Asignar año Lectivo</option>
-                </optgroup>
-                <optgroup label="── Evaluaciones ────">
-                  <option value="EVAL_CRUD">        Gestionar evaluaciones</option>
-                  <option value="HABILITAR_EXAMENES">        Agendar exámenes</option>
-                  <option value="UPSERT">        Gestionar notas</option>
-                </optgroup>
-              </select>
+              {(() => {
+                const LABELS: Record<string, string> = {
+                  COURSES: "Crear/Editar Curso",
+                  CLASSES: "Crear materia",
+                  TYPES: "Crear tipo evaluacion",
+                  USERS: "Crear/Actualizar persona",
+                  ASSIGN_TEACHER: "Asignar materias a profesor",
+                  ANIO_LECTIVO: "Asignar año lectivo",
+                  EVAL_CRUD: "Crear/Eliminar evaluaciones",
+                  HABILITAR_EXAMENES: "Agendar examenes",
+                  UPSERT: "Gestionar notas",
+                };
+                const triggerLabel = view ? (LABELS[view] ?? "Selecciona opcion...") : "Selecciona opcion...";
+
+                function pickView(v: AdminView) {
+                  setView(v);
+                  loadAll(adminYear);
+                  setMenuOpen(false);
+                  setMenuExpanded(null);
+                }
+
+                const itemStyle: React.CSSProperties = {
+                  padding: "9px 14px",
+                  cursor: "pointer",
+                  fontSize: 14,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  borderRadius: 8,
+                };
+                const subItemStyle: React.CSSProperties = {
+                  padding: "8px 14px 8px 64px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  borderRadius: 8,
+                };
+
+                return (
+                  <div style={{ position: "relative", width: "100%" }}>
+                    <button
+                      type="button"
+                      className="select"
+                      style={{ width: "100%", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
+                      onClick={e => {
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        setMenuRect({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+                        setMenuOpen(o => !o);
+                      }}
+                    >
+                      <span>{triggerLabel}</span>
+                      <span style={{ fontSize: 10, marginLeft: 6 }}>{menuOpen ? "▲" : "▼"}</span>
+                    </button>
+
+                    {menuOpen && menuRect && typeof document !== "undefined" && createPortal(
+                      <div ref={menuPanelRef} style={{
+                        position: "fixed",
+                        top: menuRect.top,
+                        left: menuRect.left,
+                        width: menuRect.width,
+                        zIndex: 99999,
+                        background: "var(--bg0)",
+                        border: "1px solid var(--stroke)",
+                        borderRadius: 12,
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+                        padding: 6,
+                      }}>
+                        {/* 1. Crear data maestra */}
+                        <div
+                          style={{ ...itemStyle, fontWeight: 600, background: menuExpanded === "data_maestra" ? "color-mix(in srgb, var(--stroke) 60%, transparent)" : "transparent" }}
+                          onMouseEnter={e => (e.currentTarget.style.background = "color-mix(in srgb, var(--stroke) 50%, transparent)")}
+                          onMouseLeave={e => (e.currentTarget.style.background = menuExpanded === "data_maestra" ? "color-mix(in srgb, var(--stroke) 60%, transparent)" : "transparent")}
+                          onClick={() => setMenuExpanded(x => x === "data_maestra" ? null : "data_maestra")}
+                        >
+                          <span style={{ width: 20, flexShrink: 0, lineHeight: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: menuExpanded === "data_maestra" ? 13 : 25, transform: menuExpanded === "data_maestra" ? "none" : "scaleX(0.6)" }}>{menuExpanded === "data_maestra" ? "▼" : "►"}</span>
+                          <span>Crear data maestra</span>
+                        </div>
+                        {menuExpanded === "data_maestra" && (["COURSES","CLASSES","TYPES","USERS","ANIO_LECTIVO"] as AdminView[]).map(v => (
+                          <div
+                            key={v}
+                            style={{ ...subItemStyle, fontWeight: view === v ? 700 : 400, color: view === v ? "var(--accent)" : "inherit", background: "transparent" }}
+                            onMouseEnter={e => (e.currentTarget.style.background = "color-mix(in srgb, var(--stroke) 50%, transparent)")}
+                            onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                            onClick={() => pickView(v)}
+                          >
+                            {LABELS[v]}
+                          </div>
+                        ))}
+
+                        {/* 2. Asignar materias a profesor */}
+                        <div
+                          style={{ ...itemStyle, fontWeight: view === "ASSIGN_TEACHER" ? 700 : 400, color: view === "ASSIGN_TEACHER" ? "var(--accent)" : "inherit", background: "transparent" }}
+                          onMouseEnter={e => (e.currentTarget.style.background = "color-mix(in srgb, var(--stroke) 50%, transparent)")}
+                          onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                          onClick={() => pickView("ASSIGN_TEACHER")}
+                        >
+                          <span style={{ width: 20, flexShrink: 0 }} />
+                          <span>Asignar materias a profesor</span>
+                        </div>
+
+                        {/* 3. Gestionar notas */}
+                        <div
+                          style={{ ...itemStyle, fontWeight: view === "UPSERT" ? 700 : 400, color: view === "UPSERT" ? "var(--accent)" : "inherit", background: "transparent" }}
+                          onMouseEnter={e => (e.currentTarget.style.background = "color-mix(in srgb, var(--stroke) 50%, transparent)")}
+                          onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                          onClick={() => pickView("UPSERT")}
+                        >
+                          <span style={{ width: 20, flexShrink: 0 }} />
+                          <span>Gestionar notas</span>
+                        </div>
+
+                        {/* 4. Gestionar evaluaciones */}
+                        <div
+                          style={{ ...itemStyle, fontWeight: 600, background: menuExpanded === "evaluaciones" ? "color-mix(in srgb, var(--stroke) 60%, transparent)" : "transparent" }}
+                          onMouseEnter={e => (e.currentTarget.style.background = "color-mix(in srgb, var(--stroke) 50%, transparent)")}
+                          onMouseLeave={e => (e.currentTarget.style.background = menuExpanded === "evaluaciones" ? "color-mix(in srgb, var(--stroke) 60%, transparent)" : "transparent")}
+                          onClick={() => setMenuExpanded(x => x === "evaluaciones" ? null : "evaluaciones")}
+                        >
+                          <span style={{ width: 20, flexShrink: 0, lineHeight: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: menuExpanded === "evaluaciones" ? 13 : 25, transform: menuExpanded === "evaluaciones" ? "none" : "scaleX(0.6)" }}>{menuExpanded === "evaluaciones" ? "▼" : "►"}</span>
+                          <span>Gestionar evaluaciones</span>
+                        </div>
+                        {menuExpanded === "evaluaciones" && (["EVAL_CRUD","HABILITAR_EXAMENES"] as AdminView[]).map(v => (
+                          <div
+                            key={v}
+                            style={{ ...subItemStyle, fontWeight: view === v ? 700 : 400, color: view === v ? "var(--accent)" : "inherit", background: "transparent" }}
+                            onMouseEnter={e => (e.currentTarget.style.background = "color-mix(in srgb, var(--stroke) 50%, transparent)")}
+                            onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                            onClick={() => pickView(v)}
+                          >
+                            {LABELS[v]}
+                          </div>
+                        ))}
+                      </div>,
+                      document.body
+                    )}
+                  </div>
+                );
+              })()}
             </div>
             {anioLectivoItems.length > 0 && (
               <div style={{ flex: 1 }}>
@@ -2510,9 +2678,8 @@ export default function AdminPage() {
               <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
                 <div className="label" style={{ margin: 0, whiteSpace: "nowrap" }}>Crear evaluación por</div>
                 <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-                  {(["module", "group", "class"] as EvalCrudMode[]).map((m) => {
+                  {(["group", "class"] as EvalCrudMode[]).map((m) => {
                     const labels: Record<EvalCrudMode, string> = {
-                      module: "Módulo",
                       group: "Grupo",
                       class: "Materia",
                     };
@@ -2535,10 +2702,11 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              {/* ── Fila 1: Año, Curso, [Profesor], Crear, Cancelar ── */}
+              {/* ── Fila 1: Nivel, Curso, Módulo, Grupo, Materia ── */}
               {(() => {
-                const scopeReady = ecMode === "class" ? !!ecClassId : ecMode === "module" ? !!ecModuleId : !!ecGroupId;
-                const cols = ecMode === "class" ? "1fr 1fr auto auto" : "1fr 1fr 1fr auto auto";
+                const cols = ecMode === "group"
+                  ? "0.5fr 0.55fr 1.25fr 1fr 1.25fr"
+                  : "0.5fr 0.55fr 1.25fr 1.25fr";
                 return (
                   <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, alignItems: "end", marginBottom: 12 }}>
                     <div>
@@ -2568,61 +2736,6 @@ export default function AdminPage() {
                         ))}
                       </select>
                     </div>
-                    {ecMode !== "class" && (
-                      <div>
-                        <div className="label">Profesor</div>
-                        <select
-                          className="select"
-                          value={ecTeacherId}
-                          onChange={(e) => setEcTeacherId(e.target.value)}
-                        >
-                          <option value="">Seleccionar profesor...</option>
-                          {ecTeachers.map((t) => (
-                            <option key={t.id} value={t.id}>{t.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-                    <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-                      <button
-                        className="btn"
-                        style={{ marginTop: 0, padding: "12px 48px", opacity: scopeReady ? 1 : 0.35, whiteSpace: "nowrap" }}
-                        disabled={ecCreating || !scopeReady || isHistoricalYear}
-                        title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
-                        onClick={ecHandleCreate}
-                      >
-                        {ecCreating ? "..." : "Crear"}
-                      </button>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-                      <button
-                        type="button"
-                        style={{
-                          padding: "12px 20px",
-                          border: "none",
-                          borderRadius: 16,
-                          background: "#4b5563",
-                          color: "#ffffff",
-                          fontWeight: 800,
-                          cursor: "pointer",
-                          whiteSpace: "nowrap",
-                        }}
-                        onClick={ecHandleCancel}
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* ── Fila 2: Módulo, Grupo, Materia, Tipo, Título, % ── */}
-              {(() => {
-                const grupoDisabled = !ecLevel;
-                const materiaDisabled = !ecLevel;
-                const scopeReady = ecMode === "class" ? !!ecClassId : ecMode === "module" ? !!ecModuleId : !!ecGroupId;
-                return (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1.5fr 70px", gap: 12, alignItems: "end" }}>
                     <div>
                       <div className="label">Módulo</div>
                       <select
@@ -2637,41 +2750,66 @@ export default function AdminPage() {
                         ))}
                       </select>
                     </div>
-                    <div style={{ opacity: grupoDisabled ? 0.4 : 1, pointerEvents: grupoDisabled ? "none" : "auto" }}>
-                      <div className="label">Grupo</div>
-                      <select
-                        className="select"
-                        value={ecGroupId}
-                        onChange={(e) => setEcGroupId(e.target.value)}
-                        disabled={grupoDisabled}
-                      >
-                        <option value="" style={{ fontWeight: 700 }}>Todos</option>
-                        {ecGroups.map((g) => (
-                          <option key={g.id} value={String(g.id)}>{g.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div style={{ opacity: materiaDisabled ? 0.4 : 1, pointerEvents: materiaDisabled ? "none" : "auto" }}>
+                    {ecMode === "group" && (
+                      <div>
+                        <div className="label">Grupo</div>
+                        <select
+                          className="select"
+                          value={ecGroupId}
+                          onChange={(e) => setEcGroupId(e.target.value)}
+                          disabled={!ecLevel}
+                        >
+                          <option value="" style={{ fontWeight: 700 }}>Todos</option>
+                          {ecGroups.map((g) => (
+                            <option key={g.id} value={String(g.id)}>{g.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div style={{ opacity: !ecLevel ? 0.4 : 1, pointerEvents: !ecLevel ? "none" : "auto" }}>
                       <div className="label">Materia</div>
-                      <select
-                        className="select"
-                        value={ecClassId}
-                        onChange={(e) => {
-                          setEcClassId(e.target.value);
-                          if (types.find(t => String(t.id) === ecType)?.type === "Examen" && e.target.value) {
-                            const cls = classes.find(c => String(c.id) === e.target.value);
-                            if (cls) setEcTitle(cls.name);
-                          }
-                        }}
-                        disabled={materiaDisabled}
-                      >
-                        <option value="" style={{ fontWeight: 700 }}>Todos</option>
-                        {ecClasses.map((c) => (
-                          <option key={c.id} value={String(c.id)}>{c.name}</option>
-                        ))}
-                      </select>
+                      {ecMode === "group" ? (
+                        <select
+                          className="select"
+                          value=""
+                          onChange={() => {}}
+                          style={{ color: "var(--muted)", opacity: 0.75 }}
+                        >
+                          <option value="" hidden>— Ver materias del grupo —</option>
+                          {ecClasses.map((c) => (
+                            <option key={c.id} value={String(c.id)}>{c.name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <select
+                          className="select"
+                          value={ecClassId}
+                          onChange={(e) => {
+                            setEcClassId(e.target.value);
+                          }}
+                          disabled={!ecLevel}
+                        >
+                          <option value="" style={{ fontWeight: 700 }}>Todos</option>
+                          {ecClasses.map((c) => (
+                            <option key={c.id} value={String(c.id)}>{c.name}</option>
+                          ))}
+                        </select>
+                      )}
                     </div>
-                    <div style={{ opacity: scopeReady ? 1 : 0.35, pointerEvents: scopeReady ? "auto" : "none" }}>
+                  </div>
+                );
+              })()}
+
+              {/* ── Fila 2: Tipo, Título, Profesor, %, Cancelar, Crear ── */}
+              {(() => {
+                const scopeReady = ecMode === "class" ? !!ecClassId : !!ecGroupId;
+                const profDisabled = ecMode === "class";
+                const profLabel = ecMode === "class"
+                  ? (ecTeachers[0]?.name ?? (ecClassId ? "Sin profesor asignado" : "—"))
+                  : undefined;
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr 1fr 70px auto auto", gap: 12, alignItems: "end" }}>
+                    <div>
                       <div className="label">Tipo</div>
                       <select
                         className="select"
@@ -2679,12 +2817,7 @@ export default function AdminPage() {
                         onChange={(e) => {
                           setEcType(e.target.value);
                           if (e.target.value !== "__other__") setEcTypeOther("");
-                          if (types.find(t => String(t.id) === e.target.value)?.type === "Examen" && ecClassId) {
-                            const cls = classes.find(c => String(c.id) === ecClassId);
-                            if (cls) setEcTitle(cls.name);
-                          }
                         }}
-                        disabled={!ecLevel}
                       >
                         <option value="" style={{ fontWeight: 700 }}>Todos</option>
                         {types.map((t) => (
@@ -2713,6 +2846,28 @@ export default function AdminPage() {
                         disabled={!scopeReady}
                       />
                     </div>
+                    <div style={{ opacity: (!ecClassId && ecMode === "class") || (!ecGroupId && ecMode === "group") ? 0.4 : 1 }}>
+                      <div className="label">Profesor</div>
+                      {profDisabled ? (
+                        <input
+                          className="input"
+                          value={profLabel ?? ""}
+                          disabled
+                          style={{ color: "var(--muted)" }}
+                        />
+                      ) : (
+                        <select
+                          className="select"
+                          value={ecTeacherId}
+                          onChange={(e) => setEcTeacherId(e.target.value)}
+                        >
+                          <option value="">Seleccionar profesor...</option>
+                          {ecTeachers.map((t) => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
                     <div style={{ opacity: scopeReady ? 1 : 0.35, pointerEvents: scopeReady ? "auto" : "none" }}>
                       <div className="label">%</div>
                       <input
@@ -2728,13 +2883,42 @@ export default function AdminPage() {
                         onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                       />
                     </div>
+                    <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+                      <button
+                        type="button"
+                        style={{
+                          padding: "12px 20px",
+                          border: "none",
+                          borderRadius: 16,
+                          background: "#4b5563",
+                          color: "#ffffff",
+                          fontWeight: 800,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
+                        onClick={ecHandleCancel}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+                      <button
+                        className="btn"
+                        style={{ marginTop: 0, padding: "12px 48px", opacity: scopeReady ? 1 : 0.35, whiteSpace: "nowrap" }}
+                        disabled={ecCreating || !scopeReady || isHistoricalYear}
+                        title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
+                        onClick={ecHandleCreate}
+                      >
+                        {ecCreating ? "..." : "Crear"}
+                      </button>
+                    </div>
                   </div>
                 );
               })()}
             </div>
 
             {/* ── Evaluaciones existentes (card separado) ── */}
-            {ecLevel !== 0 && (
+            {view === "EVAL_CRUD" && (
               <div className="card" style={{ marginTop: 18 }}>
                 <div
                   style={{
@@ -2810,7 +2994,7 @@ export default function AdminPage() {
                             }
                           >
                             <option value="">Sin profesor</option>
-                            {(ecRowTeachers.length > 0 ? ecRowTeachers : teachers).map((t) => (
+                            {teachers.map((t) => (
                               <option key={t.id} value={t.id}>{t.name}</option>
                             ))}
                           </select>
@@ -2962,7 +3146,7 @@ export default function AdminPage() {
 
           {view === "ASSIGN_TEACHER" && (
             <div className="card" style={{ marginTop: 18 }}>
-              <h2 style={{ marginTop: 0 }}>Asignar Materias a un Profesor</h2>
+              <h2 style={{ marginTop: 0 }}>Asignar materias a profesor</h2>
 
               {/* Filtros + botones — distribuidos en todo el ancho */}
               <div style={{ display: "flex", gap: 12, alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -2977,6 +3161,8 @@ export default function AdminPage() {
                       setSelAssignLevel(lv);
                       setSelAssignCourse("ALL");
                       setAssignEdits({});
+                      setAssignModFilter("ALL");
+                      setAssignGroupFilter("ALL");
                       setAssignMatFilter("ALL");
                       setAssignProfFilter("ALL");
                       if (lv) loadAssignmentGrid("ALL", lv);
@@ -3001,6 +3187,8 @@ export default function AdminPage() {
                       const cv = e.target.value;
                       setSelAssignCourse(cv);
                       setAssignEdits({});
+                      setAssignModFilter("ALL");
+                      setAssignGroupFilter("ALL");
                       setAssignMatFilter("ALL");
                       setAssignProfFilter("ALL");
                       loadAssignmentGrid(cv, selAssignLevel);
@@ -3043,6 +3231,40 @@ export default function AdminPage() {
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                       <tr style={{ background: isDarkThemeEnabled() ? GRILLA.headerBgDark : GRILLA.headerBgLight }}>
+                        {/* Módulo */}
+                        <th style={{ padding: "6px 16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: isDarkThemeEnabled() ? GRILLA.headerTextDark : GRILLA.headerTextLight, borderBottom: GRILLA.headerBottomBorder }}>
+                          <select
+                            className="select"
+                            style={{ fontWeight: 700, fontSize: 13 }}
+                            value={assignModFilter}
+                            onChange={(e) => { setAssignModFilter(e.target.value); setAssignGroupFilter("ALL"); setAssignMatFilter("ALL"); }}
+                          >
+                            <option value="ALL" style={{ color: "#000", fontWeight: 700 }}>Módulo</option>
+                            {[...new Map(assignGrid.filter((r) => r.id_module != null).map((r) => [r.id_module, r])).values()]
+                              .map((r) => (
+                                <option key={r.id_module} value={String(r.id_module)}>{r.module_name}</option>
+                              ))}
+                          </select>
+                        </th>
+                        {/* Grupo — cascade: solo grupos del módulo seleccionado */}
+                        <th style={{ padding: "6px 16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: isDarkThemeEnabled() ? GRILLA.headerTextDark : GRILLA.headerTextLight, borderBottom: GRILLA.headerBottomBorder }}>
+                          <select
+                            className="select"
+                            style={{ fontWeight: 700, fontSize: 13 }}
+                            value={assignGroupFilter}
+                            onChange={(e) => { setAssignGroupFilter(e.target.value); setAssignMatFilter("ALL"); }}
+                          >
+                            <option value="ALL" style={{ color: "#000", fontWeight: 700 }}>Grupo</option>
+                            {[...new Map(
+                              (assignModFilter === "ALL" ? assignGrid : assignGrid.filter((r) => String(r.id_module) === assignModFilter))
+                                .filter((r) => r.id_group != null)
+                                .map((r) => [r.id_group, r])
+                            ).values()].map((r) => (
+                              <option key={r.id_group} value={String(r.id_group)}>{r.group_name}</option>
+                            ))}
+                          </select>
+                        </th>
+                        {/* Materia — cascade: solo materias del módulo + grupo seleccionados */}
                         <th style={{ padding: "6px 16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: isDarkThemeEnabled() ? GRILLA.headerTextDark : GRILLA.headerTextLight, borderBottom: GRILLA.headerBottomBorder }}>
                           <select
                             className="select"
@@ -3050,16 +3272,21 @@ export default function AdminPage() {
                             value={assignMatFilter}
                             onChange={(e) => { setAssignMatFilter(e.target.value); if (e.target.value === "WITHOUT") setAssignProfFilter("ALL"); }}
                           >
-                            <option value="ALL" style={{ color: "#000", fontWeight: 700 }}>Todas</option>
+                            <option value="ALL" style={{ color: "#000", fontWeight: 700 }}>Materia</option>
                             <option value="WITH" style={{ color: "#000", fontWeight: 700 }}>Con Profesor</option>
                             <option value="WITHOUT" style={{ color: "#000", fontWeight: 700 }}>Sin Profesor</option>
                             {assignGrid
+                              .filter((r) =>
+                                (assignModFilter === "ALL" || String(r.id_module) === assignModFilter) &&
+                                (assignGroupFilter === "ALL" || String(r.id_group) === assignGroupFilter)
+                              )
                               .filter((r, i, arr) => arr.findIndex((x) => x.id_class === r.id_class) === i)
                               .map((r) => (
                                 <option key={r.id_class} value={String(r.id_class)}>{r.class_name}</option>
                               ))}
                           </select>
                         </th>
+                        {/* Profesor */}
                         <th style={{ padding: "6px 16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: isDarkThemeEnabled() ? GRILLA.headerTextDark : GRILLA.headerTextLight, borderBottom: GRILLA.headerBottomBorder }}>
                           <select
                             className="select"
@@ -3067,7 +3294,7 @@ export default function AdminPage() {
                             value={assignProfFilter}
                             onChange={(e) => { setAssignProfFilter(e.target.value); setAssignMatFilter("ALL"); }}
                           >
-                            <option value="ALL" style={{ color: "#000", fontWeight: 700 }}>Todos</option>
+                            <option value="ALL" style={{ color: "#000", fontWeight: 700 }}>Profesor</option>
                             <option value="WITH" style={{ color: "#000", fontWeight: 700 }}>Con Materias asignadas</option>
                             <option value="WITHOUT" style={{ color: "#000", fontWeight: 700 }}>Sin Materias asignadas</option>
                             {teachers.map((t) => (
@@ -3085,6 +3312,8 @@ export default function AdminPage() {
                             key={key}
                             style={{ background: getGrillaBaseRowBg(idx, isDarkThemeEnabled()), borderBottom: GRILLA.rowBottomBorder }}
                           >
+                            <td style={{ padding: "0 12px", color: "var(--muted)", fontSize: 12 }}>{r.module_name ?? "—"}</td>
+                            <td style={{ padding: "0 12px", color: "var(--muted)", fontSize: 12 }}>{r.group_name ?? ""}</td>
                             <td style={{ padding: "0 12px" }}>
                               {assignMultiCourse
                                 ? <>{r.class_name} <span style={{ color: "var(--muted)", fontSize: 11 }}>· {r.course_name}</span></>
@@ -3117,13 +3346,15 @@ export default function AdminPage() {
                           key={`orphan-${t.id}`}
                           style={{ background: getGrillaBaseRowBg(assignVisibleRows.length + idx, isDarkThemeEnabled()), borderBottom: GRILLA.rowBottomBorder, opacity: 0.65 }}
                         >
+                          <td style={{ padding: "0 12px" }}></td>
+                          <td style={{ padding: "0 12px" }}></td>
                           <td style={{ padding: "0 12px", fontStyle: "italic" }}>--</td>
                           <td style={{ padding: "0 12px" }}>{t.name}</td>
                         </tr>
                       ))}
                       {assignVisibleRows.length === 0 && assignOrphanTeachers.length === 0 && (
                         <tr>
-                          <td colSpan={2} style={{ padding: "14px 16px", textAlign: "center", color: "var(--muted)", fontSize: 14 }}>
+                          <td colSpan={4} style={{ padding: "14px 16px", textAlign: "center", color: "var(--muted)", fontSize: 14 }}>
                             Sin resultados para el filtro seleccionado
                           </td>
                         </tr>
@@ -3396,7 +3627,7 @@ export default function AdminPage() {
                 }}
               >
                 <div>
-                  <h2 style={{ margin: 0 }}>Gestionar Notas</h2>
+                  <h2 style={{ margin: 0 }}>Gestionar notas</h2>
                 </div>
 
               </div>
@@ -3405,9 +3636,9 @@ export default function AdminPage() {
               {okMsg && <div className="msgOk"    style={{ marginTop: 12 }}>{okMsg}</div>}
 
               <div style={{ display: "flex", gap: 12, marginTop: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
-                {/* Año */}
+                {/* Nivel */}
                 <div style={{ flex: "1 1 140px" }}>
-                  <div className="label">Año</div>
+                  <div className="label">Nivel</div>
                   <select
                     className="select"
                     value={String(upsertLevelFilter)}

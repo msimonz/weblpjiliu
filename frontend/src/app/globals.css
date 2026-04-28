@@ -538,12 +538,16 @@ button{
   --table-head-bg: transparent;
   --table-head-text: #000000;
   --table-row-hover-bg: rgba(14, 165, 233, 0.08);
+  --tr-odd-bg: #edf5fb;
+  --tr-even-bg: #ffffff;
 }
 html.dark .teacher-solid-table,
 html[data-theme="dark"] .teacher-solid-table {
   --table-head-bg: #111827;
   --table-head-text: #f8fafc;
   --table-row-hover-bg: rgba(59, 130, 246, 0.12);
+  --tr-odd-bg: #071e30;
+  --tr-even-bg: #051422;
 }
 @media (prefers-color-scheme: dark) {
   .teacher-solid-table {

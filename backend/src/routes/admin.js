@@ -470,7 +470,6 @@ adminRouter.get("/classes", requireAuth, requireAdminOrSecretary, async (req, re
   const year = toInt(req.query.year) || (await getAnioLectivoVigente());
   const [
     { data: classData, error: classErr },
-    { data: cgData,    error: cgErr },
     { data: grpData,   error: grpErr },
   ] = await Promise.all([
     supabaseAdmin
@@ -480,44 +479,25 @@ adminRouter.get("/classes", requireAuth, requireAdminOrSecretary, async (req, re
       .order("level", { ascending: true })
       .order("name",  { ascending: true }),
     supabaseAdmin
-      .from("class_group")
-      .select("id_class,id_group"),
-    supabaseAdmin
       .from("group")
       .select("id,name")
       .eq("year", year),
   ]);
 
   if (classErr) return res.status(500).json({ error: classErr.message });
-  if (cgErr)    return res.status(500).json({ error: cgErr.message });
   if (grpErr)   return res.status(500).json({ error: grpErr.message });
 
   const grpMap = new Map((grpData || []).map((g) => [g.id, g.name]));
 
-  // id_class → [{ id, name }]
-  const cgMap = new Map();
-  for (const cg of cgData || []) {
-    if (!cgMap.has(cg.id_class)) cgMap.set(cg.id_class, []);
-    cgMap.get(cg.id_class).push({ id: cg.id_group, name: grpMap.get(cg.id_group) || "" });
-  }
-
-  const items = (classData || []).map((c) => {
-    let groups = cgMap.get(c.id) || [];
-    // Fallback: si class_group no tiene entrada pero class.id_group está seteado
-    if (groups.length === 0 && c.id_group) {
-      const grpName = grpMap.get(c.id_group);
-      if (grpName) groups = [{ id: c.id_group, name: grpName }];
-    }
-    return {
-      id: c.id,
-      name: c.name,
-      level: c.level,
-      id_module: c.id_module,
-      module_name: c.module?.name || null,
-      created_at: c.created_at,
-      groups,
-    };
-  });
+  const items = (classData || []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    level: c.level,
+    id_module: c.id_module,
+    module_name: c.module?.name || null,
+    created_at: c.created_at,
+    groups: c.id_group ? [{ id: c.id_group, name: grpMap.get(c.id_group) || "" }] : [],
+  }));
 
   return res.json({ items });
 });
@@ -585,14 +565,6 @@ adminRouter.post("/classes", requireAuth, requireAdmin, async (req, res) => {
       .maybeSingle();
 
     if (classErr) return res.status(500).json({ error: classErr.message });
-
-    if (id_group) {
-      const { error: cgErr } = await supabaseAdmin
-        .from("class_group")
-        .upsert({ id_class: createdClass.id, id_group }, { onConflict: "id_class,id_group" });
-
-      if (cgErr) return res.status(500).json({ error: cgErr.message });
-    }
 
     return res.json({ item: createdClass });
   } catch (e) {
@@ -1146,6 +1118,9 @@ adminRouter.post("/evaluations", requireAuth, requireAdmin, async (req, res) => 
 
     if (clsErr) return res.status(500).json({ error: clsErr.message });
     if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
+    if (cls.id_group) return res.status(400).json({
+      error: "Esta materia pertenece a un grupo de evaluación. Las evaluaciones deben crearse a nivel de grupo.",
+    });
 
     const { data: course, error: cErr } = await supabaseAdmin
       .from("course")
@@ -1171,13 +1146,12 @@ adminRouter.post("/evaluations", requireAuth, requireAdmin, async (req, res) => 
       .from("evaluation")
       .insert({
         id_course,
-        id_class,
         id_teacher,
         id_type: typeId,
         percent,
         title,
         id_module: cls.id_module || null,
-        id_group: cls.id_group || null,
+        id_class,
       })
       .select("id,title,percent,created_at,id_course,id_class,id_type,id_teacher")
       .maybeSingle();
@@ -1397,17 +1371,10 @@ adminRouter.delete("/evaluations/:id", requireAuth, requireAdmin, async (req, re
   }
 });
 
-// POST /api/admin/evaluations/bulk — crear evaluaciones por módulo o grupo
-// scope: "module" | "group"
+// POST /api/admin/evaluations/bulk — crear evaluación de grupo
 adminRouter.post("/evaluations/bulk", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const scope = cleanStr(req.body?.scope);
-    if (scope !== "module" && scope !== "group") {
-      return res.status(400).json({ error: "scope debe ser 'module' o 'group'" });
-    }
-
-    const id_module = toInt(req.body?.id_module);
-    const id_group = toInt(req.body?.id_group);
+    const id_group  = toInt(req.body?.id_group);
     const id_course = toInt(req.body?.id_course);
     const id_teacher = cleanStr(req.body?.id_teacher);
     const percent = Number(req.body?.percent);
@@ -1415,12 +1382,7 @@ adminRouter.post("/evaluations/bulk", requireAuth, requireAdmin, async (req, res
     const id_type = toInt(req.body?.id_type);
     const type_text = cleanStr(req.body?.type_text);
 
-    if (scope === "module" && !id_module) {
-      return res.status(400).json({ error: "id_module requerido para scope=module" });
-    }
-    if (scope === "group" && !id_group) {
-      return res.status(400).json({ error: "id_group requerido para scope=group" });
-    }
+    if (!id_group)   return res.status(400).json({ error: "id_group requerido" });
     if (!id_teacher) return res.status(400).json({ error: "id_teacher requerido" });
     if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
       return res.status(400).json({ error: "percent inválido (1..100)" });
@@ -1432,17 +1394,26 @@ adminRouter.post("/evaluations/bulk", requireAuth, requireAdmin, async (req, res
       catch (err) { return handleYearError(res, err); }
     }
 
+    const { data: grp, error: grpErr } = await supabaseAdmin
+      .from("group")
+      .select("id,id_module")
+      .eq("id", id_group)
+      .maybeSingle();
+
+    if (grpErr) return res.status(500).json({ error: grpErr.message });
+    if (!grp?.id) return res.status(404).json({ error: "Grupo no existe" });
+
     const vigente = await getAnioLectivoVigente();
     const typeId = await resolveEvaluationTypeId(id_type, type_text, vigente);
 
-    // Una sola evaluación vinculada al módulo o grupo directamente
     const row = {
       id_course: id_course || null,
       id_teacher,
       id_type: typeId,
       percent,
       title,
-      ...(scope === "module" ? { id_module } : { id_group, ...(id_module ? { id_module } : {}) }),
+      id_group,
+      id_module: grp.id_module,
     };
 
     const { data, error } = await supabaseAdmin
@@ -2195,7 +2166,7 @@ adminRouter.get("/assignment-grid", requireAuth, requireAdmin, async (req, res) 
 
     // 2) Determine classes scope (union of all levels from selected courses)
     const levelSet = [...new Set(coursesList.map((c) => c.level))];
-    let classQuery = supabaseAdmin.from("class").select("id,name,level,id_module").order("name");
+    let classQuery = supabaseAdmin.from("class").select("id,name,level,id_module,id_group").order("name");
     if (levelSet.length === 1) classQuery = classQuery.eq("level", levelSet[0]);
     else classQuery = classQuery.in("level", levelSet);
 
@@ -2210,12 +2181,19 @@ adminRouter.get("/assignment-grid", requireAuth, requireAdmin, async (req, res) 
     if (clsErr) return res.status(500).json({ error: clsErr.message });
     if (ctErr)  return res.status(500).json({ error: ctErr.message });
 
-    // 3) Build module map
+    // 3) Build module and group maps
     const moduleIds = [...new Set((classData || []).map((c) => c.id_module).filter(Boolean))];
     const moduleMap = new Map();
     if (moduleIds.length > 0) {
       const { data: modData } = await supabaseAdmin.from("module").select("id,name").in("id", moduleIds);
       for (const m of modData || []) moduleMap.set(m.id, m.name);
+    }
+
+    const groupIds = [...new Set((classData || []).map((c) => c.id_group).filter(Boolean))];
+    const groupMap = new Map();
+    if (groupIds.length > 0) {
+      const { data: grpData } = await supabaseAdmin.from("group").select("id,name").in("id", groupIds);
+      for (const g of grpData || []) groupMap.set(g.id, g.name);
     }
 
     // 4) Build key map: "id_class_id_course" -> id_teacher
@@ -2235,6 +2213,8 @@ adminRouter.get("/assignment-grid", requireAuth, requireAdmin, async (req, res) 
           course_name: course.name,
           id_module:   cls.id_module ?? null,
           module_name: cls.id_module ? (moduleMap.get(cls.id_module) ?? null) : null,
+          id_group:    cls.id_group ?? null,
+          group_name:  cls.id_group ? (groupMap.get(cls.id_group) ?? null) : null,
         });
       }
     }
@@ -2300,13 +2280,15 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
   try {
     const id_course      = toInt(req.body?.id_course);
     const id_class       = toInt(req.body?.id_class);
+    const id_group       = toInt(req.body?.id_group);
+    const id_teacher     = cleanStr(req.body?.id_teacher) || req.auth.user.id;
     const title          = cleanStr(req.body?.title);
     const percent        = Number(req.body?.percent);
     const tiempo_minutos = toInt(req.body?.tiempo_minutos);
     const preguntas      = req.body?.preguntas;
 
     if (!id_course) return res.status(400).json({ error: "id_course requerido" });
-    if (!id_class)  return res.status(400).json({ error: "id_class requerido" });
+    if (!id_class && !id_group) return res.status(400).json({ error: "id_class o id_group requerido" });
     if (!title)     return res.status(400).json({ error: "title requerido" });
     if (!Number.isFinite(percent) || percent <= 0 || percent > 100)
       return res.status(400).json({ error: "percent inválido (1..100)" });
@@ -2315,9 +2297,8 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
     if (!Array.isArray(preguntas))
       return res.status(400).json({ error: "preguntas debe ser un array" });
 
-    // Validar rango de preguntas
-    if (preguntas.length < 4 || preguntas.length > 20)
-      return res.status(400).json({ error: "El examen debe tener entre 4 y 20 preguntas" });
+    if (preguntas.length < 1)
+      return res.status(400).json({ error: "El examen debe tener al menos 1 pregunta" });
 
     // Validar tipos permitidos
     const TIPOS_VALIDOS = ["multiple_multi", "multiple_single", "falso_verdadero", "emparejamiento"];
@@ -2335,7 +2316,6 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
       if (!p?.respuesta_correcta)
         return res.status(400).json({ error: `Pregunta ${i + 1}: respuesta_correcta requerida` });
 
-      // Verificar que respuesta_correcta no esté vacía
       const rc = p.respuesta_correcta;
       const rcVacia =
         (Array.isArray(rc) && rc.length === 0) ||
@@ -2349,44 +2329,75 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
     if (Math.abs(sumaPuntos - 100) > 0.01)
       return res.status(400).json({ error: `La suma de puntos debe ser 100 (actual: ${sumaPuntos})` });
 
-    // Verificar que la materia exista
-    const { data: cls, error: clsErr } = await supabaseAdmin
-      .from("class")
-      .select("id,name,level,id_module,id_group")
-      .eq("id", id_class)
-      .maybeSingle();
-    if (clsErr) return res.status(500).json({ error: clsErr.message });
-    if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
+    // Resolver scope: por materia o por grupo
+    let id_module_resolved = null;
+    let id_class_resolved  = null;
+    let id_group_resolved  = null;
+    let courseYear         = null;
 
-    // Verificar que el curso exista y coincida con el nivel de la materia
-    const { data: course, error: cErr } = await supabaseAdmin
-      .from("course")
-      .select("id,name,level,year")
-      .eq("id", id_course)
-      .maybeSingle();
-    if (cErr) return res.status(500).json({ error: cErr.message });
-    if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
-    if (Number(course.level) !== Number(cls.level))
-      return res.status(400).json({ error: "El curso no corresponde al nivel de la materia" });
+    if (id_class) {
+      const { data: cls, error: clsErr } = await supabaseAdmin
+        .from("class")
+        .select("id,name,level,id_module,id_group")
+        .eq("id", id_class)
+        .maybeSingle();
+      if (clsErr) return res.status(500).json({ error: clsErr.message });
+      if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
+      if (cls.id_group) return res.status(400).json({
+        error: "Esta materia pertenece a un grupo de evaluación. Los exámenes deben crearse a nivel de grupo.",
+      });
+
+      const { data: course, error: cErr } = await supabaseAdmin
+        .from("course")
+        .select("id,name,level,year")
+        .eq("id", id_course)
+        .maybeSingle();
+      if (cErr) return res.status(500).json({ error: cErr.message });
+      if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
+      if (Number(course.level) !== Number(cls.level))
+        return res.status(400).json({ error: "El curso no corresponde al nivel de la materia" });
+
+      id_class_resolved  = id_class;
+      id_module_resolved = cls.id_module || null;
+      courseYear         = course.year;
+    } else {
+      const { data: grp, error: grpErr } = await supabaseAdmin
+        .from("group")
+        .select("id,id_module")
+        .eq("id", id_group)
+        .maybeSingle();
+      if (grpErr) return res.status(500).json({ error: grpErr.message });
+      if (!grp?.id) return res.status(404).json({ error: "Grupo no existe" });
+
+      const { data: course, error: cErr } = await supabaseAdmin
+        .from("course")
+        .select("id,name,level,year")
+        .eq("id", id_course)
+        .maybeSingle();
+      if (cErr) return res.status(500).json({ error: cErr.message });
+      if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
+
+      id_group_resolved  = id_group;
+      id_module_resolved = grp.id_module || null;
+      courseYear         = course.year;
+    }
 
     try { await requireAnioVigenteForCourse(id_course); }
     catch (err) { return handleYearError(res, err); }
 
-    // Resolver id del tipo 'Examen' para el año vigente
-    const examenTypeId = await resolveEvaluationTypeId(null, "Examen", course.year);
+    const examenTypeId = await resolveEvaluationTypeId(null, "Examen", courseYear);
 
-    // Insertar registro maestro en evaluation
     const { data: evalData, error: evalErr } = await supabaseAdmin
       .from("evaluation")
       .insert({
         id_course,
-        id_class,
-        id_teacher: req.auth.user.id,
+        id_class:  id_class_resolved,
+        id_group:  id_group_resolved,
+        id_teacher,
         id_type: examenTypeId,
         percent,
         title,
-        id_module: cls.id_module || null,
-        id_group:  cls.id_group  || null,
+        id_module: id_module_resolved,
         tiempo_minutos,
       })
       .select("id,title,percent,tiempo_minutos,created_at")
@@ -2577,8 +2588,8 @@ adminRouter.put("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "percent inválido (1..100)" });
     if (!Array.isArray(preguntas))
       return res.status(400).json({ error: "preguntas debe ser un array" });
-    if (preguntas.length < 4 || preguntas.length > 20)
-      return res.status(400).json({ error: "El examen debe tener entre 4 y 20 preguntas" });
+    if (preguntas.length < 1)
+      return res.status(400).json({ error: "El examen debe tener al menos 1 pregunta" });
 
     const TIPOS_VALIDOS = ["multiple_multi", "multiple_single", "falso_verdadero", "emparejamiento"];
     for (let i = 0; i < preguntas.length; i++) {

@@ -60,6 +60,7 @@ type GridGradeRow = {
 
 type GradeGridResponse = {
   class: { id: number; name: string; level: number } | null;
+  group?: { id: number; name: string; level?: number | null } | null;
   evaluations: EvalItem[];
   students: StudentRow[];
   grades: GridGradeRow[];
@@ -107,6 +108,8 @@ type DashboardAssignment = {
   course_name: string;
   module_id: number | null;
   module_name: string;
+  group_id: number | null;
+  group_name: string;
 };
 
 type TeacherDashboardResponse = {
@@ -240,12 +243,12 @@ export default function TeacherPage() {
   const [evalLevelFilter, setEvalLevelFilter] = useState<LevelValue>("all");
   const [evalCourseFilter, setEvalCourseFilter] = useState<number | "all">("all");
   const [evalModuleFilter, setEvalModuleFilter] = useState<string>("");
-  const [evalClassFilter, setEvalClassFilter] = useState<number | "all">("all");
+  const [evalClassFilter, setEvalClassFilter] = useState<number | string>("all");
 
   // CREATE
   const [createLevelFilter, setCreateLevelFilter] = useState<LevelValue>("");
   const [createModuleFilter, setCreateModuleFilter] = useState<string>("");
-  const [createClassFilter, setCreateClassFilter] = useState<number | "all">("all");
+  const [createClassFilter, setCreateClassFilter] = useState<string>("all");
 
   // CrearExamen overlay
   const [showCrearExamen, setShowCrearExamen]             = useState(false);
@@ -559,11 +562,20 @@ export default function TeacherPage() {
   }, [dashAssignments, dashLevelFilter]);
 
   const dashAssignmentsFiltered = useMemo(() => {
-    return dashAssignments.filter((a) => {
-      if (dashLevelFilter !== "all" && a.level !== dashLevelFilter) return false;
-      if (dashCourseFilter !== "all" && a.course_id !== dashCourseFilter) return false;
-      return true;
-    });
+    const cmp = (a: string, b: string) => a.localeCompare(b, "es", { sensitivity: "base" });
+    return dashAssignments
+      .filter((a) => {
+        if (dashLevelFilter !== "all" && a.level !== dashLevelFilter) return false;
+        if (dashCourseFilter !== "all" && a.course_id !== dashCourseFilter) return false;
+        return true;
+      })
+      .sort((a, b) =>
+        a.level - b.level ||
+        cmp(String(a.course_name ?? ""), String(b.course_name ?? "")) ||
+        cmp(String(a.module_name ?? ""), String(b.module_name ?? "")) ||
+        cmp(String(a.group_name ?? ""), String(b.group_name ?? "")) ||
+        cmp(String(a.class_name ?? ""), String(b.class_name ?? ""))
+      );
   }, [dashAssignments, dashLevelFilter, dashCourseFilter]);
 
   // =========================
@@ -636,18 +648,32 @@ export default function TeacherPage() {
 
   const evalClassOptions = useMemo(() => {
     const levelNum = evalLevelFilter !== "all" && evalLevelFilter !== "" ? Number(evalLevelFilter) : null;
-    return myClasses
-      .filter((c) => {
-        if (levelNum !== null && Number(c.level) !== levelNum) return false;
-        if (evalModuleFilter) {
-          const modName = c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "");
-          if (modName !== evalModuleFilter) return false;
-        }
-        return true;
-      })
-      .map((c) => ({ id: c.id, name: String(c.name ?? "") }))
-      .sort((a, b) => a.name.localeCompare(b.name, "es"));
-  }, [myClasses, evalLevelFilter, evalModuleFilter]);
+    const out: { value: string; label: string }[] = [];
+
+    // Materias sin grupo de evaluación
+    for (const c of myClasses) {
+      if (c.id_group) continue;
+      if (levelNum !== null && Number(c.level) !== levelNum) continue;
+      if (evalModuleFilter) {
+        const modName = c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "");
+        if (modName !== evalModuleFilter) continue;
+      }
+      out.push({ value: String(c.id), label: String(c.name ?? "") });
+    }
+
+    // Grupos asignados al profesor
+    const seenGrpIds = new Set<number>();
+    for (const ev of items) {
+      if (!ev.id_group || !ev.group) continue;
+      if (levelNum !== null && Number(ev.course?.level) !== levelNum) continue;
+      if (evalModuleFilter && ev.module?.name !== evalModuleFilter) continue;
+      if (seenGrpIds.has(ev.id_group)) continue;
+      seenGrpIds.add(ev.id_group);
+      out.push({ value: `grp:${ev.id_group}`, label: ev.group.name });
+    }
+
+    return out.sort((a, b) => a.label.localeCompare(b.label, "es"));
+  }, [myClasses, items, evalLevelFilter, evalModuleFilter]);
 
   const evalItemsFiltered = useMemo(() => {
     let list = [...items];
@@ -667,15 +693,19 @@ export default function TeacherPage() {
 
     if (evalModuleFilter) {
       list = list.filter((e) => {
-        const cls = myClassesMap.get(Number(e.id_class));
-        const modName = (cls?.module?.name ?? (cls?.id_module ? `Módulo ${cls.id_module}` : ""))
-          || (e.module?.name ?? (e.id_module ? `Módulo ${e.id_module}` : ""));
+        const modName = e.module?.name ?? (e.id_module ? `Módulo ${e.id_module}` : "");
         return modName === evalModuleFilter;
       });
     }
 
     if (evalClassFilter !== "all") {
-      list = list.filter((e) => Number(e.id_class) === Number(evalClassFilter));
+      const val = String(evalClassFilter);
+      if (val.startsWith("grp:")) {
+        const grpId = Number(val.slice(4));
+        list = list.filter((e) => Number(e.id_group) === grpId);
+      } else {
+        list = list.filter((e) => Number(e.id_class) === Number(evalClassFilter));
+      }
     }
 
     return list;
@@ -801,6 +831,7 @@ export default function TeacherPage() {
     const levelNum = createLevelFilter && createLevelFilter !== "all" ? Number(createLevelFilter) : null;
     if (levelNum === null) return [];
     return myClasses.filter((c) => {
+      if (c.id_group) return false;
       if (Number(c.level) !== levelNum) return false;
       if (createModuleFilter) {
         const modName = c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "—");
@@ -808,6 +839,30 @@ export default function TeacherPage() {
       }
       return true;
     });
+  }, [myClasses, createLevelFilter, createModuleFilter]);
+
+  const createClassOptions = useMemo(() => {
+    const levelNum = createLevelFilter && createLevelFilter !== "all" ? Number(createLevelFilter) : null;
+    if (levelNum === null) return [];
+    const out: { value: string; label: string }[] = [];
+    for (const c of myClasses) {
+      if (c.id_group) continue;
+      if (Number(c.level) !== levelNum) continue;
+      if (createModuleFilter) {
+        const modName = c.module?.name ?? (c.id_module ? `Módulo ${c.id_module}` : "—");
+        if (modName !== createModuleFilter) continue;
+      }
+      out.push({ value: String(c.id), label: String(c.name ?? "") });
+    }
+    const seenGrpIds = new Set<number>();
+    for (const c of myClasses) {
+      if (!c.id_group) continue;
+      if (Number(c.level) !== levelNum) continue;
+      if (seenGrpIds.has(c.id_group)) continue;
+      seenGrpIds.add(c.id_group);
+      out.push({ value: `grp:${c.id_group}`, label: c.group?.name ?? `Grupo ${c.id_group}` });
+    }
+    return out.sort((a, b) => a.label.localeCompare(b.label, "es"));
   }, [myClasses, createLevelFilter, createModuleFilter]);
 
   useEffect(() => {
@@ -838,7 +893,14 @@ export default function TeacherPage() {
     let filtered = items.filter(it => Number(it.class?.level) === Number(createLevelFilter));
     if (cCourse) filtered = filtered.filter(it => Number(it.id_course) === Number(cCourse));
     if (createModuleFilter) filtered = filtered.filter(it => (it.module?.name ?? "") === createModuleFilter);
-    if (createClassFilter !== "all") filtered = filtered.filter(it => Number(it.id_class) === Number(createClassFilter));
+    if (createClassFilter !== "all") {
+      if (createClassFilter.startsWith("grp:")) {
+        const grpId = Number(createClassFilter.slice(4));
+        filtered = filtered.filter(it => Number(it.id_group) === grpId);
+      } else {
+        filtered = filtered.filter(it => Number(it.id_class) === Number(createClassFilter));
+      }
+    }
     return filtered;
   }, [items, createLevelFilter, cCourse, createModuleFilter, createClassFilter]);
 
@@ -851,12 +913,17 @@ export default function TeacherPage() {
 
   useEffect(() => {
     if (selectedTypeNameForCreate === "Examen" && createClassFilter !== "all") {
-      const cls = createClassesFiltered.find(c => c.id === Number(createClassFilter));
-      if (cls) setTitleOther(cls.name);
+      if (createClassFilter.startsWith("grp:")) {
+        const opt = createClassOptions.find(o => o.value === createClassFilter);
+        if (opt) setTitleOther(opt.label);
+      } else {
+        const cls = createClassesFiltered.find(c => c.id === Number(createClassFilter));
+        if (cls) setTitleOther(cls.name);
+      }
     } else if (selectedTypeNameForCreate !== "Examen") {
       setTitleOther("");
     }
-  }, [selectedTypeNameForCreate, createClassFilter, createClassesFiltered]);
+  }, [selectedTypeNameForCreate, createClassFilter, createClassesFiltered, createClassOptions]);
 
   async function handleSaveCreateEvalPercent(evalId: number) {
     const val = Number(editPercents[evalId]);
@@ -936,6 +1003,7 @@ export default function TeacherPage() {
         id_class:   ev.id_class  ?? 0,
         id_module:  ev.id_module ?? null,
         id_group:   ev.id_group  ?? null,
+        id_teacher: null,
         title:      ev.title,
         percent:    Number(ev.percent),
         courseName: course ? String(course.name) : String(ev.id_course),
@@ -962,7 +1030,11 @@ export default function TeacherPage() {
       return setMsg("Selecciona una materia.");
     }
 
-    const id_class = Number(createClassFilter);
+    const isGroupSelection = createClassFilter.startsWith("grp:");
+    const selectedGroupId = isGroupSelection ? Number(createClassFilter.slice(4)) : null;
+    const groupClass = isGroupSelection ? myClasses.find(c => Number(c.id_group) === selectedGroupId) : null;
+    if (isGroupSelection && !groupClass) return setMsg("No se encontró una materia para este grupo.");
+    const id_class = isGroupSelection ? groupClass!.id : Number(createClassFilter);
 
     let id_type = Number(cType);
     const isOtherType = cType === "__other__";
@@ -980,7 +1052,7 @@ export default function TeacherPage() {
     }
 
     const totalExisting = items
-      .filter((it) => Number(it.id_class) === id_class)
+      .filter((it) => isGroupSelection ? Number(it.id_group) === selectedGroupId : Number(it.id_class) === id_class)
       .reduce((s, e) => s + Number(e.percent), 0);
     if (totalExisting + percent > 100) {
       return setMsg(
@@ -992,17 +1064,19 @@ export default function TeacherPage() {
     const selectedTypeName = (!isOtherType ? types.find(t => t.id === Number(cType))?.type : type_text) || "";
     if (selectedTypeName === "Examen") {
       const course = coursesForCreate.find(c => c.id === id_course);
-      const cls    = createClassesFiltered.find(c => c.id === id_class);
+      const cls    = myClasses.find(c => c.id === id_class);
       const lev    = levels.find(l => l.id === Number(createLevelFilter));
+      const label  = isGroupSelection ? (createClassOptions.find(o => o.value === createClassFilter)?.label ?? String(id_class)) : (cls?.name ?? String(id_class));
       setCrearExamenCtx({
         id_course,
         id_class,
         id_module:  cls?.id_module  ?? null,
-        id_group:   null,
+        id_group:   selectedGroupId,
+        id_teacher: null,
         title,
         percent,
         courseName: course ? String(course.name) : String(id_course),
-        className:  cls?.name ?? String(id_class),
+        className:  label,
         moduleName: cls?.module?.name ?? null,
         levelName:  lev?.name ?? null,
       });
@@ -1076,8 +1150,14 @@ export default function TeacherPage() {
     const ids = upsertLevelFilter === "all"
       ? myClasses.map((c) => c.id)
       : myClasses.filter((c) => Number(c.level) === Number(upsertLevelFilter)).map((c) => c.id);
-    if (ids.length === 0) return;
-    loadAllGradeGrids(ids);
+    const levelNum = upsertLevelFilter === "all" ? null : Number(upsertLevelFilter);
+    const groupIds = [...new Set(
+      items
+        .filter((e) => e.id_group && (!levelNum || Number(e.course?.level) === levelNum))
+        .map((e) => e.id_group!)
+    )];
+    if (ids.length === 0 && groupIds.length === 0) return;
+    loadAllGradeGrids(ids, groupIds);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [upsertLevelFilter]);
 
@@ -1108,16 +1188,17 @@ export default function TeacherPage() {
     const studentMap = new Map<string, FlatGradeRow>();
 
     for (const section of allSections) {
-      if (!section.class) continue;
-      const classId = section.class.id;
-      const classEntry = myClasses.find((c) => c.id === classId);
-      const lvl = Number(section.class.level);
+      const isGroupSection = !section.class && !!section.group;
+      if (!section.class && !isGroupSection) continue;
+      const classId = section.class?.id ?? -(section.group!.id); // negative ID for groups
+      const classEntry = section.class ? myClasses.find((c) => c.id === classId) : null;
+      const lvl = Number(section.class?.level ?? section.group?.level ?? 0);
       const lvlName = levelMap[lvl] ?? `Año ${lvl}`;
       const moduleId = classEntry?.id_module ? Number(classEntry.id_module) : null;
       const moduleName = classEntry?.module?.name ?? (moduleId ? `Módulo ${moduleId}` : "—");
-      const groupId = classEntry?.id_group ? Number(classEntry.id_group) : null;
-      const groupName = classEntry?.group?.name ?? (groupId ? `Grupo ${groupId}` : "—");
-      const className = section.class.name;
+      const groupId = isGroupSection ? section.group!.id : (classEntry?.id_group ? Number(classEntry.id_group) : null);
+      const groupName = isGroupSection ? section.group!.name : (classEntry?.group?.name ?? (groupId ? `Grupo ${groupId}` : "—"));
+      const className = isGroupSection ? section.group!.name : section.class!.name;
       const ctx: SectionContext = { classId, className, moduleId, moduleName, groupId, groupName };
       const sectionEvals = section.evaluations || [];
       const sectionGrades = section.grades || [];
@@ -1209,14 +1290,15 @@ export default function TeacherPage() {
     const seenIds = new Set<number>();
     const out: { value: string; label: string }[] = [];
     const levelNum = upsertLevelFilter && upsertLevelFilter !== "all" ? Number(upsertLevelFilter) : null;
-    // Count how many classes share the same name at this level (for label disambiguation)
     const nameCounts = new Map<string, number>();
     for (const c of myClasses) {
+      if (c.id_group) continue;
       if (levelNum !== null && Number(c.level) !== levelNum) continue;
       if (thFilterModule && classModuleName(c) !== thFilterModule) continue;
       nameCounts.set(c.name, (nameCounts.get(c.name) ?? 0) + 1);
     }
     for (const c of myClasses) {
+      if (c.id_group) continue;
       if (levelNum !== null && Number(c.level) !== levelNum) continue;
       if (thFilterModule && classModuleName(c) !== thFilterModule) continue;
       if (seenIds.has(c.id)) continue;
@@ -1225,16 +1307,29 @@ export default function TeacherPage() {
       const label = hasDupe ? `${c.name} (${classModuleName(c)})` : c.name;
       out.push({ value: String(c.id), label });
     }
+    // Add teacher's group evaluations
+    const seenGrpIds = new Set<number>();
+    for (const ev of items) {
+      if (!ev.id_group || !ev.group) continue;
+      if (levelNum !== null && Number(ev.course?.level) !== levelNum) continue;
+      if (thFilterModule && ev.module?.name !== thFilterModule) continue;
+      if (seenGrpIds.has(ev.id_group)) continue;
+      seenGrpIds.add(ev.id_group);
+      out.push({ value: `grp:${ev.id_group}`, label: ev.group.name });
+    }
     return out;
-  }, [myClasses, upsertLevelFilter, thFilterModule]);
+  }, [myClasses, upsertLevelFilter, thFilterModule, items]);
 
-  const ctxMatches = (r: FlatGradeRow) =>
-    r.allSectionContexts.some(
+  const ctxMatches = (r: FlatGradeRow) => {
+    const isGrpFilter = thFilterClass.startsWith("grp:");
+    const grpFilterId = isGrpFilter ? Number(thFilterClass.slice(4)) : null;
+    return r.allSectionContexts.some(
       (ctx) =>
         (!thFilterModule || ctx.moduleName === thFilterModule) &&
         (!thFilterGroup || ctx.groupName === thFilterGroup) &&
-        (!thFilterClass || ctx.classId === Number(thFilterClass))
+        (!thFilterClass || (isGrpFilter ? ctx.groupId === grpFilterId : ctx.classId === Number(thFilterClass)))
     );
+  };
 
   const thCedulaOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -1311,7 +1406,7 @@ export default function TeacherPage() {
     // Build the set of class IDs in scope based on the active module/class filter
     const levelNum = upsertLevelFilter && upsertLevelFilter !== "all" ? Number(upsertLevelFilter) : null;
     let scopeClassIds: Set<number> | null = null;
-    if (thFilterClass) {
+    if (thFilterClass && !thFilterClass.startsWith("grp:")) {
       scopeClassIds = new Set([Number(thFilterClass)]);
     } else if (thFilterModule) {
       scopeClassIds = new Set<number>();
@@ -1337,7 +1432,7 @@ export default function TeacherPage() {
     return 260 + 150 + visibleEvals.length * 170 + 160;
   }, [visibleEvals]);
 
-  async function loadAllGradeGrids(classIds: number[]) {
+  async function loadAllGradeGrids(classIds: number[], groupIds: number[] = []) {
     const myId = ++loadIdRef.current;
     setMsg(null);
     setGLoadingRoster(true);
@@ -1347,13 +1442,26 @@ export default function TeacherPage() {
     setRowSnapshot({});
 
     try {
-      const batchRes = await apiFetch(
-        `/api/teacher/grade-grids-batch?class_ids=${classIds.join(",")}`
-      ) as { sections: GradeGridResponse[] };
+      const fetches: Promise<GradeGridResponse[]>[] = [];
 
-      if (myId !== loadIdRef.current) return; // descartamos carga obsoleta
+      if (classIds.length > 0) {
+        fetches.push(
+          apiFetch(`/api/teacher/grade-grids-batch?class_ids=${classIds.join(",")}`)
+            .then((r: { sections: GradeGridResponse[] }) => (r?.sections ?? []).filter((s) => s?.class))
+        );
+      }
+      for (const gid of groupIds) {
+        fetches.push(
+          apiFetch(`/api/teacher/group-grade-grid?group_id=${gid}`)
+            .then((r: GradeGridResponse) => (r?.group ? [r] : []))
+            .catch(() => [])
+        );
+      }
 
-      const sections = (batchRes?.sections ?? []).filter((r) => r?.class);
+      const results = await Promise.all(fetches);
+      if (myId !== loadIdRef.current) return;
+
+      const sections = results.flat();
       setAllSections(sections);
 
       const drafts: Record<string, string> = {};
@@ -1379,8 +1487,13 @@ export default function TeacherPage() {
     const ids = upsertLevelFilter === "all"
       ? myClasses.map((c) => c.id)
       : myClasses.filter((c) => Number(c.level) === Number(upsertLevelFilter)).map((c) => c.id);
-    if (ids.length === 0) return;
-    loadAllGradeGrids(ids);
+    const levelNum = upsertLevelFilter === "all" ? null : Number(upsertLevelFilter);
+    const groupIds = [...new Set(
+      items
+        .filter((e) => e.id_group && (!levelNum || Number(e.course?.level) === levelNum))
+        .map((e) => e.id_group!)
+    )];
+    loadAllGradeGrids(ids, groupIds);
   }
 
   function getEvaluationColumnLabel(ev: EvalItem, _countsMap: Map<string, number>) {
@@ -1888,7 +2001,7 @@ export default function TeacherPage() {
                   }}
                 >
                   <option value="" disabled>¿Qué quieres hacer?...</option>
-                  <option value="DASHBOARD">Ver Materias Asignadas</option>
+                  <option value="DASHBOARD">Ver materias asignadas</option>
                   <option value="UPSERT">Gestionar notas de Estudiantes</option>
                   <option value="CREATE" disabled={isHistoricalYear}>Gestionar Evaluaciones</option>
                   <option value="ATTEND_REPORT">Reporte de asistencia</option>
@@ -2059,6 +2172,9 @@ export default function TeacherPage() {
                             <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, whiteSpace: "nowrap", fontWeight: 700 }}>
                               Módulo
                             </th>
+                            <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, whiteSpace: "nowrap", fontWeight: 700 }}>
+                              Grupo
+                            </th>
                             <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, fontWeight: 700 }}>
                               Materia
                             </th>
@@ -2067,7 +2183,7 @@ export default function TeacherPage() {
                         <tbody>
                           {dashAssignmentsFiltered.length === 0 ? (
                             <tr>
-                              <td colSpan={4} style={{ padding: 16, color: "var(--muted)" }}>
+                              <td colSpan={5} style={{ padding: 16, color: "var(--muted)" }}>
                                 Sin resultados para el filtro seleccionado.
                               </td>
                             </tr>
@@ -2084,6 +2200,9 @@ export default function TeacherPage() {
                                   </td>
                                   <td style={{ padding: "6px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg }}>
                                     {a.module_name || "—"}
+                                  </td>
+                                  <td style={{ padding: "6px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg, whiteSpace: "nowrap" }}>
+                                    {a.group_name || "—"}
                                   </td>
                                   <td style={{ padding: "6px 12px", borderBottom: GRILLA.rowBottomBorder, background: bg }}>
                                     {a.class_name}
@@ -2174,17 +2293,17 @@ export default function TeacherPage() {
                             ))}
                           </select>
                         </th>
-                        {/* Materia */}
+                        {/* Materia/Grupo */}
                         <th style={{ textAlign: "left", padding: "6px 10px", borderBottom: GRILLA.headerBottomBorder, whiteSpace: "nowrap" }}>
                           <select
                             className="select"
                             value={evalClassFilter === "all" ? "all" : String(evalClassFilter)}
-                            onChange={(e) => setEvalClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+                            onChange={(e) => setEvalClassFilter(e.target.value === "all" ? "all" : e.target.value)}
                             style={{ fontSize: 13, padding: "3px 6px", fontWeight: 700, color: isDarkTheme ? GRILLA.headerTextDark : GRILLA.headerTextLight }}
                           >
                             <option value="all" style={{ fontWeight: 700 }}>Materia</option>
-                            {evalClassOptions.map((c) => (
-                              <option key={c.id} value={String(c.id)}>{c.name}</option>
+                            {evalClassOptions.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
                             ))}
                           </select>
                         </th>
@@ -2308,7 +2427,7 @@ export default function TeacherPage() {
           {view === "CREATE" && (
             <div className="card" style={{ marginTop: 18 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                <div><h2 style={{ margin: 0 }}>Crear evaluación</h2></div>
+                <div><h2 style={{ margin: 0 }}>Gestionar evaluaciones</h2></div>
               </div>
 
               {/* Fila dropdowns */}
@@ -2363,20 +2482,18 @@ export default function TeacherPage() {
                   </select>
                 </div>
 
-                {/* Materia */}
+                {/* Materia / Grupo */}
                 <div style={{ flex: "2 1 180px" }}>
-                  <div className="label">Materia</div>
+                  <div className="label">{createClassOptions.some(o => o.value.startsWith("grp:")) ? "Materia/Grupo" : "Materia"}</div>
                   <select
                     className="select"
-                    value={createClassFilter === "all" ? "all" : String(createClassFilter)}
+                    value={createClassFilter}
                     disabled={createLevelFilter === ""}
-                    onChange={(e) =>
-                      setCreateClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))
-                    }
+                    onChange={(e) => setCreateClassFilter(e.target.value)}
                   >
-                    <option value="all" style={{ fontWeight: 700 }}>Materia</option>
-                    {createClassesFiltered.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
+                    <option value="all" style={{ fontWeight: 700 }}>{createClassOptions.some(o => o.value.startsWith("grp:")) ? "Materia/Grupo" : "Materia"}</option>
+                    {createClassOptions.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
                   </select>
                 </div>
@@ -2658,16 +2775,16 @@ export default function TeacherPage() {
                   </select>
                 </div>
 
-                {/* Materia */}
+                {/* Materia/Grupo */}
                 <div style={{ flex: "2 1 180px" }}>
-                  <div className="label">Materia</div>
+                  <div className="label">{thClassOptions.some(o => o.value.startsWith("grp:")) ? "Materia/Grupo" : "Materia"}</div>
                   <select
                     className="select"
                     value={thFilterClass}
                     disabled={upsertLevelFilter === ""}
-                    onChange={(e) => { setThFilterClass(e.target.value); /* stores class ID */ }}
+                    onChange={(e) => { setThFilterClass(e.target.value); }}
                   >
-                    <option value="" style={{ fontWeight: 700 }}>Materia</option>
+                    <option value="" style={{ fontWeight: 700 }}>{thClassOptions.some(o => o.value.startsWith("grp:")) ? "Materia/Grupo" : "Materia"}</option>
                     {thClassOptions.map((o) => (
                       <option key={o.value} value={o.value} style={{ color: "#000" }}>{o.label}</option>
                     ))}
@@ -2701,19 +2818,8 @@ export default function TeacherPage() {
 
               {upsertLevelFilter === "" ? null : (
                 <div style={{ marginTop: 16 }}>
-                  {/* Fila 2: label selección (izq) + Descargar (der) */}
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-                    <div style={{ fontWeight: 900 }}>
-                      {thFilterClass
-                        ? `Materia: ${myClasses.find(c => c.id === Number(thFilterClass))?.name ?? ""}`
-                        : thFilterGroup
-                          ? `Grupo: ${thFilterGroup}${thFilterModule ? ` · ${thFilterModule}` : ""} — Todas las materias`
-                          : thFilterModule
-                            ? `Módulo: ${thFilterModule} — Todos los grupos — Todas las materias`
-                            : upsertCourseFilter !== "all"
-                              ? `Curso: ${coursesForUpsert.find(c => c.id === Number(upsertCourseFilter))?.name ?? "—"} — Todos`
-                              : `${levels.find(l => l.id === Number(upsertLevelFilter))?.name ?? `Nivel ${upsertLevelFilter}`} — Todos`}
-                    </div>
+                  {/* Fila 2: Descargar */}
+                  <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
                     {flatRowsFiltered.length > 0 && visibleEvals.length > 0 && (
                       <button
                         type="button"

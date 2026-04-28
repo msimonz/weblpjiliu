@@ -31,6 +31,9 @@ type GradeItem = {
 
 type SummaryItem = {
   class_id: number;
+  group_id: number | null;
+  group_name: string | null;
+  classes: Array<{ id: number; name: string }>;
   name: string;
   module_name: string | null;
   weighted: number | null;
@@ -125,6 +128,8 @@ export default function DashboardPage() {
   const [verExamenInfo, setVerExamenInfo]     = useState<ExamAvailableItem | null>(null);
   const [verExamenEvalId, setVerExamenEvalId] = useState<number | null>(null);
   const [examLinkMsg, setExamLinkMsg]         = useState<string | null>(null);
+  const [hoveredGroupId, setHoveredGroupId]   = useState<number | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
 
   useEffect(() => {
     const { data: logoData } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
@@ -266,12 +271,14 @@ export default function DashboardPage() {
     setOpenSug(false);
   }
 
-  async function handleConsult(classOverride?: { id: number; name: string }) {
+  async function handleConsult(classOverride?: { id: number; name: string; group_id?: number | null }) {
     const classId = classOverride?.id ?? selectedClass?.id;
-    if (!classId) return;
+    const groupId = classOverride?.group_id;
+    if (!classId && !groupId) return;
 
     if (classOverride) {
       setSelectedClass({ id: classOverride.id, name: classOverride.name, level } as ClassItem);
+      setSelectedGroupId(classOverride.group_id ?? null);
       setQ(classOverride.name);
       setOpenSug(false);
     }
@@ -279,7 +286,8 @@ export default function DashboardPage() {
     setError(null);
     setLoadingGrades(true);
     try {
-      const url = `/api/student/grades?class_id=${classId}${courseId ? `&course_id=${courseId}` : ""}`;
+      const scope = groupId ? `group_id=${groupId}` : `class_id=${classId}`;
+      const url = `/api/student/grades?${scope}${courseId ? `&course_id=${courseId}` : ""}`;
       const res = await apiFetch(url);
       setItems(res?.items || []);
       setWeighted(typeof res?.weighted === "number" ? res.weighted : null);
@@ -308,22 +316,31 @@ export default function DashboardPage() {
     return m;
   }, [examAvailable]);
 
-  // Orden: 1) con nota  2) con examen activo sin rendir  3) resto — alfabético dentro de cada grupo
+  const examByGroupId = useMemo(() => {
+    const m = new Map<number, ExamAvailableItem[]>();
+    for (const ex of examAvailable) {
+      if (ex.group_id) {
+        const arr = m.get(ex.group_id) ?? [];
+        arr.push(ex);
+        m.set(ex.group_id, arr);
+      }
+    }
+    return m;
+  }, [examAvailable]);
+
+  const hasGroups = useMemo(() => summaryItems.some(s => s.group_id !== null), [summaryItems]);
+
+  // Orden: 1) con nota  2) sin nota — alfabético por módulo luego materia dentro de cada grupo
   const sortedSummaryItems = useMemo(() => {
+    const cmp = (x: string | null, y: string | null) =>
+      (x ?? "").localeCompare(y ?? "", "es", { sensitivity: "base" });
     return [...summaryItems].sort((a, b) => {
-      const aGrade = a.weighted !== null;
-      const bGrade = b.weighted !== null;
-      const aExam  = !aGrade && (examByClassId.get(a.class_id)?.some(e => !e.ya_rendido) ?? false);
-      const bExam  = !bGrade && (examByClassId.get(b.class_id)?.some(e => !e.ya_rendido) ?? false);
-
-      const rank = (hasGrade: boolean, hasExam: boolean) =>
-        hasGrade ? 0 : hasExam ? 1 : 2;
-
-      const diff = rank(aGrade, aExam) - rank(bGrade, bExam);
-      if (diff !== 0) return diff;
-      return a.name.localeCompare(b.name, "es", { sensitivity: "base" });
+      const aGrade = a.weighted !== null ? 0 : 1;
+      const bGrade = b.weighted !== null ? 0 : 1;
+      if (aGrade !== bGrade) return aGrade - bGrade;
+      return cmp(a.module_name, b.module_name) || cmp(a.name, b.name);
     });
-  }, [summaryItems, examByClassId]);
+  }, [summaryItems]);
 
   const PASS_GRADE = summaryStats?.pass_grade ?? 70;
   const gradeTextColor = (value: number | null) => {
@@ -702,42 +719,31 @@ export default function DashboardPage() {
                           }}
                         >
                           <colgroup>
-                            <col style={{ width: "22%" }} />
-                            <col style={{ width: "38%" }} />
-                            <col style={{ width: "16%" }} />
-                            <col style={{ width: "24%" }} />
+                            <col style={{ width: "18%" }} />
+                            <col style={{ width: "6%" }} />
+                            <col style={{ width: "5%" }} />
+                            <col style={{ width: "14%" }} />
+                            <col style={{ width: "20%" }} />
                           </colgroup>
                           <thead>
                             <tr style={{ background: "transparent" }}>
-                              <th
-                                className="fit-th fit-wrap fit-tight"
-                                style={{ background: "transparent", color: "#000" }}
-                              >
+                              <th className="fit-th fit-wrap fit-tight" style={{ background: "transparent", color: "#000" }}>
                                 <b>Módulo</b>
                               </th>
-                              <th
-                                className="fit-th fit-wrap"
-                                style={{ background: "transparent", color: "#000" }}
-                              >
-                                <b>Materia</b>
+                              <th className="fit-th fit-wrap" colSpan={2} style={{ background: "transparent", color: "#000" }}>
+                                <b>{hasGroups ? "Materia/Grupo" : "Materia"}</b>
                               </th>
-                              <th
-                                className="fit-th fit-num fit-tight"
-                                style={{ background: "transparent", color: "#000" }}
-                              >
+                              <th className="fit-th fit-num fit-tight" style={{ background: "transparent", color: "#000" }}>
                                 <b>Nota final</b>
                               </th>
-                              <th
-                                className="fit-th fit-num fit-tight"
-                                style={{ background: "transparent", color: "#000" }}
-                              ></th>
+                              <th className="fit-th fit-num fit-tight" style={{ background: "transparent", color: "#000" }}></th>
                             </tr>
                           </thead>
                           <tbody>
                             {summaryLoading ? (
                               <tr className="table-row-hover">
                                 <td
-                                  colSpan={4}
+                                  colSpan={5}
                                   className="fit-td fit-wrap"
                                   style={{ color: "var(--muted)" }}
                                 >
@@ -747,7 +753,7 @@ export default function DashboardPage() {
                             ) : sortedSummaryItems.length === 0 ? (
                               <tr className="table-row-hover">
                                 <td
-                                  colSpan={4}
+                                  colSpan={5}
                                   className="fit-td fit-wrap"
                                   style={{ color: "var(--muted)" }}
                                 >
@@ -755,73 +761,110 @@ export default function DashboardPage() {
                                 </td>
                               </tr>
                             ) : (
-                              sortedSummaryItems.map((s) => (
-                                <tr key={s.class_id} className="table-row-hover">
-                                  <td
-                                    className="fit-td fit-wrap"
-                                    style={{ color: "var(--muted)", fontSize: 11 }}
-                                  >
-                                    {s.module_name ?? "—"}
-                                  </td>
+                              sortedSummaryItems.flatMap((s, sIdx) => {
+                                const isGroup = !!s.group_id && s.classes.length > 0;
+                                const rowSpan = isGroup ? s.classes.length : 1;
+                                const isOdd   = sIdx % 2 === 0;
+                                const noteColor = s.weighted === null ? "var(--text)" : gradeTextColor(s.weighted);
+                                const noteText  = s.weighted === null ? "—" : s.weighted.toFixed(2);
+                                const groupTdBg = isOdd ? "var(--tr-odd-bg)" : "var(--tr-even-bg)";
 
-                                  <td
-                                    className="fit-td fit-wrap"
-                                    style={{ fontWeight: 500, color: "var(--text)" }}
-                                  >
-                                    {s.name}
-                                  </td>
-
-                                  <td
-                                    className="fit-td fit-num"
-                                    style={{
-                                      fontWeight: 600,
-                                      color:
-                                        s.weighted === null
-                                          ? "var(--text)"
-                                          : gradeTextColor(s.weighted),
-                                    }}
-                                  >
-                                    {s.weighted === null ? "-" : s.weighted.toFixed(2)}
-                                  </td>
-
-                                  <td className="fit-td fit-num">
-                                    {/* T26/T27 — botón naranja si hay examen activo y no rendido */}
-                                    {(() => {
-                                      if (!isHistoricalYear) {
-                                        const avList = examByClassId.get(s.class_id) ?? [];
-                                        const av = avList.find(e => !e.ya_rendido);
-                                        if (av) {
-                                          return (
-                                            <button
-                                              type="button"
-                                              className="btn fit-btn"
-                                              style={{
-                                                background: "linear-gradient(180deg,#fb923c 0%,#f97316 100%)",
-                                                color: "#fff",
-                                                border: "1px solid rgba(251,146,60,.82)",
-                                                boxShadow: "0 4px 12px rgba(249,115,22,.3)",
-                                                whiteSpace: "nowrap",
-                                              }}
-                                              onClick={() => setTomarExamenInfo(av)}
-                                            >
-                                              Tomar Examen
-                                            </button>
-                                          );
-                                        }
-                                      }
+                                // Botón de acción (Detalle o Tomar Examen)
+                                const actionBtn = (() => {
+                                  if (!isHistoricalYear) {
+                                    const avList = isGroup
+                                      ? (examByGroupId.get(s.group_id!) ?? [])
+                                      : (examByClassId.get(s.class_id) ?? []);
+                                    const av = avList.find(e => !e.ya_rendido);
+                                    if (av) {
                                       return (
                                         <button
                                           type="button"
-                                          onClick={() => handleConsult({ id: s.class_id, name: s.name })}
-                                          className="btn actionBtn fit-btn"
+                                          className="btn fit-btn"
+                                          style={{
+                                            background: "linear-gradient(180deg,#fb923c 0%,#f97316 100%)",
+                                            color: "#fff",
+                                            border: "1px solid rgba(251,146,60,.82)",
+                                            boxShadow: "0 4px 12px rgba(249,115,22,.3)",
+                                            whiteSpace: "nowrap",
+                                          }}
+                                          onClick={() => setTomarExamenInfo(av)}
                                         >
-                                          Detalle
+                                          Tomar Examen
                                         </button>
                                       );
-                                    })()}
-                                  </td>
-                                </tr>
-                              ))
+                                    }
+                                  }
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleConsult({ id: s.class_id, name: s.name, group_id: s.group_id })}
+                                      className="btn actionBtn fit-btn"
+                                    >
+                                      Detalle
+                                    </button>
+                                  );
+                                })();
+
+                                if (!isGroup) {
+                                  // ── Fila individual: inline bg para zebra coherente con grupos ──
+                                  const soloBg = isOdd ? "var(--tr-odd-bg)" : "var(--tr-even-bg)";
+                                  return [(
+                                    <tr key={`solo_${s.class_id}`} className="table-row-hover">
+                                      <td className="fit-td fit-wrap" style={{ backgroundColor: soloBg, color: "var(--muted)", fontSize: 11 }}>
+                                        {s.module_name ?? "—"}
+                                      </td>
+                                      <td className="fit-td fit-wrap" colSpan={2} style={{ backgroundColor: soloBg, fontWeight: 500, color: "var(--text)" }}>
+                                        {s.name}
+                                      </td>
+                                      <td className="fit-td fit-num" style={{ backgroundColor: soloBg, fontWeight: 600, color: noteColor }}>
+                                        {noteText}
+                                      </td>
+                                      <td className="fit-td fit-num" style={{ backgroundColor: soloBg }}>{actionBtn}</td>
+                                    </tr>
+                                  )];
+                                }
+
+                                // ── Grupo: background forzado inline; hover coordinado via estado ──
+                                const isGrpHovered = hoveredGroupId === s.group_id;
+                                const tdBg = isGrpHovered ? "var(--table-row-hover-bg)" : groupTdBg;
+                                const grpHandlers = {
+                                  onMouseEnter: () => setHoveredGroupId(s.group_id!),
+                                  onMouseLeave: () => setHoveredGroupId(null),
+                                };
+                                return s.classes.map((cls, idx) => (
+                                  <tr key={`grp_${s.group_id}_${cls.id}`} className="table-row-hover" {...grpHandlers}>
+                                    {idx === 0 && (
+                                      <td className="fit-td fit-wrap" rowSpan={rowSpan}
+                                        style={{ backgroundColor: tdBg, color: "var(--muted)", fontSize: 11, verticalAlign: "middle" }}>
+                                        {s.module_name ?? "—"}
+                                      </td>
+                                    )}
+                                    {idx === 0 && (
+                                      <td className="fit-td fit-wrap" rowSpan={rowSpan}
+                                        style={{ backgroundColor: tdBg, fontWeight: 600, color: "var(--text)", verticalAlign: "middle", whiteSpace: "nowrap" }}>
+                                        {s.group_name}
+                                      </td>
+                                    )}
+                                    <td className="fit-td fit-wrap"
+                                      style={{ backgroundColor: tdBg, color: "var(--muted)", fontSize: 12, padding: "5px 8px", borderBottom: idx < rowSpan - 1 ? "none" : undefined }}>
+                                      {cls.name}
+                                    </td>
+                                    {idx === 0 && (
+                                      <td className="fit-td fit-num" rowSpan={rowSpan}
+                                        style={{ backgroundColor: tdBg, fontWeight: 600, color: noteColor, verticalAlign: "middle" }}>
+                                        {noteText}
+                                      </td>
+                                    )}
+                                    {idx === 0 && (
+                                      <td className="fit-td fit-num" rowSpan={rowSpan}
+                                        style={{ backgroundColor: tdBg, verticalAlign: "middle" }}>
+                                        {actionBtn}
+                                      </td>
+                                    )}
+                                  </tr>
+                                ));
+                              })
                             )}
                           </tbody>
                         </table>
@@ -844,6 +887,7 @@ export default function DashboardPage() {
                         class_id: selectedClass.id,
                         class_name: selectedClass.name,
                         module_name: null,
+                        group_id: null,
                         fecha_ini: "",
                         fecha_fin: "",
                         fecha_limite_ver: null,
@@ -864,7 +908,7 @@ export default function DashboardPage() {
                       >
                         <div>
                           <div className="label" style={{ fontWeight: 500 }}>
-                            Materia
+                            {selectedGroupId ? "Grupo" : "Materia"}
                           </div>
                           <div style={{ fontWeight: 600, fontSize: 16, color: "var(--text)" }}>
                             {selectedClass.name}

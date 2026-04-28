@@ -47,7 +47,6 @@ async function getTeacherClasses(teacherId, year) {
 
   const classes = filtered.map((r) => r.class).filter(Boolean);
 
-  // id_group en class no tiene FK a group; resolvemos nombres por separado
   const groupIds = [...new Set(classes.map((c) => Number(c.id_group)).filter(Boolean))];
   if (groupIds.length > 0) {
     const { data: groups } = await supabaseAdmin
@@ -136,12 +135,14 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
       getLevelMap(year),
       supabaseAdmin
         .from("class_teacher")
-        .select("id_class, id_course, course:course(id,name,year), class:class(id,name,level,id_module,module:module(id,name))")
+        .select("id_class, id_course, course:course(id,name,year), class:class(id,name,level,id_module,id_group,module:module(id,name))")
         .eq("id_teacher", teacherId)
         .order("id_class", { ascending: true })
         .then(({ data }) => (data || []).filter((r) => Number(r.course?.year) === Number(year))),
     ]);
     const cleanClasses = (teacherClasses || []).filter(Boolean);
+
+    const classGroupMap = new Map(cleanClasses.map((cls) => [Number(cls.id), cls.group ?? null]));
 
     const groupsMap = new Map();
 
@@ -214,17 +215,31 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
 
     const assignments = assignData
       .filter((r) => r.class?.id)
-      .map((r) => ({
-        class_id: r.id_class,
-        class_name: r.class?.name || "",
-        level: Number(r.class?.level || 0),
-        level_label: levelLabel(Number(r.class?.level || 0), levelMap),
-        course_id: r.id_course || null,
-        course_name: r.course?.name || "",
-        module_id: r.class?.id_module || null,
-        module_name: r.class?.module?.name || "",
-      }))
-      .sort((a, b) => a.level - b.level || a.class_name.localeCompare(b.class_name, "es"));
+      .map((r) => {
+        const group = classGroupMap.get(Number(r.class?.id)) ?? r.class?.group ?? null;
+        return {
+          class_id: r.id_class,
+          class_name: r.class?.name || "",
+          level: Number(r.class?.level || 0),
+          level_label: levelLabel(Number(r.class?.level || 0), levelMap),
+          course_id: r.id_course || null,
+          course_name: r.course?.name || "",
+          module_id: r.class?.id_module || null,
+          module_name: r.class?.module?.name || "",
+          group_id: r.class?.id_group || null,
+          group_name: group?.name || "",
+        };
+      })
+      .sort((a, b) => {
+        const cmp = (x, y) => String(x ?? "").localeCompare(String(y ?? ""), "es");
+        return (
+          a.level - b.level ||
+          cmp(a.course_name, b.course_name) ||
+          cmp(a.module_name, b.module_name) ||
+          cmp(a.group_name, b.group_name) ||
+          cmp(a.class_name, b.class_name)
+        );
+      });
 
     return res.json({
       summary: {
@@ -636,13 +651,12 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
       .from("evaluation")
       .insert({
         id_course: courseIdNum,
-        id_class: classIdNum,
         id_teacher: teacherId,
         id_type: Number(typeId),
         percent: p,
         title: t,
-        id_group: cls.id_group ?? null,
         id_module: cls.id_module ?? null,
+        ...(cls.id_group ? { id_group: cls.id_group } : { id_class: classIdNum }),
       })
       .select("id,title,percent,created_at,id_course,id_class,id_type")
       .maybeSingle();
@@ -801,6 +815,70 @@ teacherRouter.delete("/evaluations/:id", requireAuth, requireTeacher, async (req
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error eliminando evaluación" });
+  }
+});
+
+/**
+ * Group grade grid — evaluaciones de grupo del profesor
+ * GET /api/teacher/group-grade-grid?group_id=1
+ */
+teacherRouter.get("/group-grade-grid", requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const teacherId = req.auth.user.id;
+    const groupId = Number(req.query.group_id);
+    if (!groupId) return res.status(400).json({ error: "group_id requerido" });
+
+    // Verify teacher has at least one evaluation for this group
+    const { data: evRows, error: evErr } = await supabaseAdmin
+      .from("evaluation")
+      .select(`id,title,percent,created_at,id_course,id_class,id_group,id_type,
+        course:course(id,name,level,year),
+        class:class(id,name,level),
+        evaluation_type:evaluation_type(id,type),
+        group:group(id,name)`)
+      .eq("id_group", groupId)
+      .eq("id_teacher", teacherId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true });
+
+    if (evErr) return res.status(500).json({ error: evErr.message });
+    const evals = evRows || [];
+    if (evals.length === 0) return res.status(403).json({ error: "Sin evaluaciones de grupo asignadas" });
+
+    const group = evals[0].group ?? { id: groupId, name: `Grupo ${groupId}` };
+    const level = evals[0].course?.level ?? null;
+
+    const courseIds = [...new Set(evals.map((e) => Number(e.id_course)).filter(Boolean))];
+    const studentsRaw = courseIds.length > 0 ? await getStudentsByCourseIds(courseIds) : [];
+
+    let courseNameMap = new Map();
+    if (courseIds.length > 0) {
+      const { data: cRows } = await supabaseAdmin.from("course").select("id,name").in("id", courseIds);
+      courseNameMap = new Map((cRows || []).map((c) => [Number(c.id), c.name]));
+    }
+
+    const students = (studentsRaw || []).map((u) => ({
+      id: u.id, name: u.name, cedula: u.cedula,
+      id_course: u.id_course,
+      course_name: courseNameMap.get(Number(u.id_course)) || null,
+    }));
+
+    const examIds = evals.map((e) => e.id);
+    const studentIds = students.map((s) => s.id);
+    let grades = [];
+    if (examIds.length > 0 && studentIds.length > 0) {
+      const { data: gRows, error: gErr } = await supabaseAdmin
+        .from("grades")
+        .select("id_student,id_exam,grade,attempts")
+        .in("id_exam", examIds)
+        .in("id_student", studentIds);
+      if (gErr) return res.status(500).json({ error: gErr.message });
+      grades = gRows || [];
+    }
+
+    return res.json({ class: null, group: { ...group, level }, evaluations: evals, students, grades });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error cargando grilla de grupo" });
   }
 });
 

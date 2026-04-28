@@ -574,7 +574,7 @@ export default function HabilitarExamenes({ courses }: Props) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ background: "var(--stroke)", textAlign: "left" }}>
-                {["Módulo","Materia","Examen","Curso","Desde","Hasta","Estado","Límite revisión","Acciones"].map((h, i) => (
+                {["Módulo", filterGroupId ? "Grupo" : filterClassId ? "Materia" : "Materia/Grupo","Examen","Curso","Desde","Hasta","Estado","Límite revisión","Acciones"].map((h, i) => (
                   <th key={h} style={{
                     padding: "8px 10px", fontWeight: (i === 4 || i === 5) ? 400 : 600, fontSize: 13, whiteSpace: "nowrap",
                     ...(i === 3 ? { textAlign: "center" } : {}),
@@ -595,7 +595,12 @@ export default function HabilitarExamenes({ courses }: Props) {
                 return (
                   <tr key={row.rowKey} style={{ background: rowBg, verticalAlign: "middle", opacity: isNew && !ed ? 0.7 : 1 }}>
                     <td style={{ padding: "8px 10px" }}>{row.moduleName ?? "—"}</td>
-                    <td style={{ padding: "8px 10px" }}>{row.className  ?? "—"}</td>
+                    <td style={{ padding: "8px 10px" }}>
+                      {filterGroupId
+                        ? (row.groupName ?? "—")
+                        : (row.className ?? (row.groupName ? `Grupo: ${row.groupName}` : "—"))
+                      }
+                    </td>
                     <td style={{ padding: "8px 10px", fontWeight: 500 }}>{row.examTitle}</td>
 
                     {/* Curso */}

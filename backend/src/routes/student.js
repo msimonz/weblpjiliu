@@ -154,33 +154,31 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   const level = Number(activeCourse.level);
   const activeCourseId = activeCourse.id;
 
-  // 1) Traer TODAS las materias del nivel con nombre de módulo
+  // 1) Traer TODAS las materias del nivel con módulo y grupo
   const { data: classRows, error: classErr } = await supabaseAdmin
     .from("class")
-    .select("id,name,level,module:module(id,name)")
+    .select("id,name,level,id_group,module:module(id,name)")
     .eq("level", level)
     .eq("year", activeCourse.year)
     .order("name", { ascending: true });
 
-  if (classErr) {
-    return res.status(500).json({ error: classErr.message });
-  }
+  if (classErr) return res.status(500).json({ error: classErr.message });
 
   const classes = classRows || [];
 
   if (classes.length === 0) {
     return res.json({
-      blocked: false,
-      course: activeCourse,
-      items: [],
-      stats: {
-        passed: 0,
-        failed: 0,
-        pending: 0,
-        avg_weighted: null,
-        pass_grade: PASS_GRADE,
-      },
+      blocked: false, course: activeCourse, items: [],
+      stats: { passed: 0, failed: 0, pending: 0, avg_weighted: null, pass_grade: PASS_GRADE },
     });
+  }
+
+  // 1b) Obtener nombres de grupos
+  const groupIds = [...new Set(classes.map(c => c.id_group).filter(Boolean))];
+  let groupNameMap = new Map();
+  if (groupIds.length > 0) {
+    const { data: grpData } = await supabaseAdmin.from("group").select("id,name").in("id", groupIds);
+    for (const g of (grpData || [])) groupNameMap.set(Number(g.id), g.name);
   }
 
   // 2) Inicializar mapa con TODAS las materias
@@ -191,112 +189,131 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
       class_id: classId,
       name: String(cls.name ?? `Materia ${classId}`),
       module_name: cls.module?.name ?? null,
+      group_id: cls.id_group ? Number(cls.id_group) : null,
+      group_name: cls.id_group ? (groupNameMap.get(Number(cls.id_group)) ?? null) : null,
       sumW: 0,
       sum: 0,
     });
   }
 
-  // 3) Traer evaluaciones del curso activo
+  // 3) Traer evaluaciones del curso activo (clase y grupo)
   const { data: evals, error: evalErr } = await supabaseAdmin
     .from("evaluation")
-    .select("id,id_class,percent,title")
+    .select("id,id_class,id_group,percent")
     .eq("id_course", activeCourseId);
 
-  if (evalErr) {
-    return res.status(500).json({ error: evalErr.message });
-  }
+  if (evalErr) return res.status(500).json({ error: evalErr.message });
 
   const evaluations = evals || [];
   const evalIds = evaluations.map((e) => Number(e.id));
 
-  // 4) Traer notas del estudiante para esas evaluaciones
+  // 4) Traer notas del estudiante
   let gradeRows = [];
   if (evalIds.length > 0) {
     const { data: gradesData, error: gradesErr } = await supabaseAdmin
       .from("grades")
-      .select("id_exam,grade,id_student,finished_at")
+      .select("id_exam,grade,finished_at")
       .eq("id_student", userId)
       .in("id_exam", evalIds)
-      .not("finished_at", "is", null);  // ignorar placeholders de exámenes en progreso
-
-    if (gradesErr) {
-      return res.status(500).json({ error: gradesErr.message });
-    }
-
+      .not("finished_at", "is", null);
+    if (gradesErr) return res.status(500).json({ error: gradesErr.message });
     gradeRows = gradesData || [];
   }
 
   const gradeMap = new Map();
-  for (const g of gradeRows) {
-    gradeMap.set(Number(g.id_exam), g);
+  for (const g of gradeRows) gradeMap.set(Number(g.id_exam), g);
+
+  // 5) Mapa: group_id → [class_ids]
+  const classesByGroup = new Map();
+  for (const cls of classes) {
+    if (cls.id_group) {
+      const gid = Number(cls.id_group);
+      const arr = classesByGroup.get(gid) ?? [];
+      arr.push(Number(cls.id));
+      classesByGroup.set(gid, arr);
+    }
   }
 
-  // 5) Acumular solo donde existan evaluaciones con nota
+  // 6) Acumular notas: por materia (id_class) y por grupo (id_group → todas sus materias)
   for (const ev of evaluations) {
-    const classId = Number(ev.id_class);
     const percent = Number(ev.percent ?? 0);
+    const g = gradeMap.get(Number(ev.id)) ?? null;
+    const grade = g?.grade == null ? null : Number(g.grade);
+    if (grade === null) continue;
 
-    if (!byClass.has(classId)) {
-      byClass.set(classId, {
-        class_id: classId,
-        name: `Materia ${classId}`,
-        module_name: null,
-        sumW: 0,
-        sum: 0,
+    if (ev.id_class) {
+      const classId = Number(ev.id_class);
+      if (byClass.has(classId)) {
+        byClass.get(classId).sumW += percent;
+        byClass.get(classId).sum  += grade * percent;
+      }
+    } else if (ev.id_group) {
+      for (const classId of (classesByGroup.get(Number(ev.id_group)) ?? [])) {
+        if (byClass.has(classId)) {
+          byClass.get(classId).sumW += percent;
+          byClass.get(classId).sum  += grade * percent;
+        }
+      }
+    }
+  }
+
+  // 7) Construir items: colapsar materias con grupo en un ítem por grupo
+  const groupItems = new Map(); // group_id → item
+  const soloItems  = [];        // materias sin grupo
+
+  for (const x of byClass.values()) {
+    const weighted = x.sumW > 0 ? Number((x.sum / x.sumW).toFixed(2)) : null;
+    if (x.group_id) {
+      if (!groupItems.has(x.group_id)) {
+        groupItems.set(x.group_id, {
+          class_id:   x.class_id,  // referencia al primer class_id del grupo
+          group_id:   x.group_id,
+          group_name: x.group_name,
+          module_name: x.module_name,
+          name:       x.group_name ?? `Grupo ${x.group_id}`,
+          classes:    [],
+          weighted,
+        });
+      }
+      groupItems.get(x.group_id).classes.push({ id: x.class_id, name: x.name });
+    } else {
+      soloItems.push({
+        class_id: x.class_id,
+        group_id: null,
+        group_name: null,
+        module_name: x.module_name,
+        name: x.name,
+        classes: [],
+        weighted,
       });
     }
-
-    const g = gradeMap.get(Number(ev.id)) || null;
-    const grade = g?.grade === null || g?.grade === undefined ? null : Number(g.grade);
-
-    if (grade !== null) {
-      const obj = byClass.get(classId);
-      obj.sumW += percent;
-      obj.sum += grade * percent;
-    }
   }
 
-  // 6) Construir salida final con TODAS las materias
-const items = Array.from(byClass.values())
-  .map((x) => {
-    const weighted = x.sumW > 0 ? Number((x.sum / x.sumW).toFixed(2)) : null;
-    return {
-      class_id: x.class_id,
-      name: x.name,
+  const cmpStr = (a, b) => (a ?? "").localeCompare(b ?? "", "es", { sensitivity: "base" });
+  const items = [...soloItems, ...groupItems.values()]
+    .map((x) => ({
+      class_id:   x.class_id,
+      group_id:   x.group_id   ?? null,
+      group_name: x.group_name ?? null,
+      classes:    x.classes    ?? [],
+      name:       x.name,
       module_name: x.module_name ?? null,
-      weighted,
-    };
-  })
-  .sort((a, b) => {
-    const aHasGrade = a.weighted !== null;
-    const bHasGrade = b.weighted !== null;
+      weighted:   x.weighted,
+    }))
+    .sort((a, b) => {
+      const ag = a.weighted !== null ? 0 : 1;
+      const bg = b.weighted !== null ? 0 : 1;
+      if (ag !== bg) return ag - bg;
+      return cmpStr(a.module_name, b.module_name) || cmpStr(a.name, b.name);
+    });
 
-    if (aHasGrade && !bHasGrade) return -1;
-    if (!aHasGrade && bHasGrade) return 1;
-
-    return a.name.localeCompare(b.name, "es", { sensitivity: "base" });
-  });
-
-  // 7) Stats: solo cuentan materias con nota
-  let passed = 0;
-  let failed = 0;
-  let pending = 0;
-  let avgSum = 0;
-  let avgCount = 0;
-
+  // Stats: grupos y materias cuentan igual, uno cada uno
+  let passed = 0, failed = 0, pending = 0, avgSum = 0, avgCount = 0;
   for (const it of items) {
-    if (it.weighted === null) {
-      pending += 1;
-      continue;
-    }
-
-    avgSum += it.weighted;
-    avgCount += 1;
-
-    if (it.weighted >= PASS_GRADE) passed += 1;
-    else failed += 1;
+    if (it.weighted === null) { pending += 1; continue; }
+    avgSum += it.weighted; avgCount += 1;
+    if (it.weighted >= PASS_GRADE) passed += 1; else failed += 1;
   }
-
   const avg_weighted = avgCount > 0 ? Number((avgSum / avgCount).toFixed(2)) : null;
 
   return res.json({
@@ -316,9 +333,10 @@ const items = Array.from(byClass.values())
 studentRouter.get("/grades", requireAuth, async (req, res) => {
   const userId = req.auth.user.id;
   const classId = Number(req.query.class_id || 0);
+  const groupId = Number(req.query.group_id || 0);
   const requestedCourseId = Number(req.query.course_id || 0);
 
-  if (!classId) return res.status(400).json({ error: "class_id requerido" });
+  if (!classId && !groupId) return res.status(400).json({ error: "class_id o group_id requerido" });
 
   const studentCourse = await getStudentCourse(req, res);
   if (!studentCourse) return;
@@ -335,13 +353,15 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
     if (histEntry?.course?.id) activeCourse = histEntry.course;
   }
 
-  // evaluaciones de esa materia en el curso activo
-  const { data: evals, error: evalErr } = await supabaseAdmin
+  // evaluaciones de esa materia o grupo en el curso activo
+  let evalQuery = supabaseAdmin
     .from("evaluation")
     .select("id,title,percent,created_at,id_type")
     .eq("id_course", activeCourse.id)
-    .eq("id_class", classId)
     .order("created_at", { ascending: true });
+  if (groupId) evalQuery = evalQuery.eq("id_group", groupId);
+  else         evalQuery = evalQuery.eq("id_class", classId);
+  const { data: evals, error: evalErr } = await evalQuery;
 
   if (evalErr) return res.status(500).json({ error: evalErr.message });
 
@@ -556,8 +576,9 @@ studentRouter.get("/exam-available", requireAuth, async (req, res) => {
     .select(`
       id, fecha_ini, fecha_fin, fecha_limite_ver,
       evaluation:evaluation(
-        id, title, tiempo_minutos, id_class,
-        class:class(id, name, module:module(id, name))
+        id, title, tiempo_minutos, id_class, id_group,
+        class:class(id, name, module:module(id, name)),
+        group:group(id, name)
       )
     `)
     .eq("id_course", course.id)
@@ -588,8 +609,9 @@ studentRouter.get("/exam-available", requireAuth, async (req, res) => {
       id_evaluation: ev.id,
       title: ev.title,
       tiempo_minutos: ev.tiempo_minutos,
-      class_id: ev.id_class,
-      class_name: ev.class?.name ?? null,
+      class_id: ev.id_class ?? null,
+      group_id: ev.id_group ?? null,
+      class_name: ev.class?.name ?? ev.group?.name ?? null,
       module_name: ev.class?.module?.name ?? null,
       fecha_ini: s.fecha_ini,
       fecha_fin: s.fecha_fin,

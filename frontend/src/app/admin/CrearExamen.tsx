@@ -27,9 +27,10 @@ type PreguntaState = {
 
 export type CrearExamenCtx = {
   id_course:   number;
-  id_class:    number;
+  id_class:    number | null;
   id_module:   number | null;
   id_group:    number | null;
+  id_teacher:  string | null;
   title:       string;
   percent:     number;
   courseName:  string;
@@ -255,8 +256,9 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
     setSaving(true);
     try {
       // Validar que la suma de porcentajes de la materia quede >= 100
+      const scopeParam = ctx.id_group ? `group_id=${ctx.id_group}` : `class_id=${ctx.id_class}`;
       const { items: allEvals } = await apiFetch(
-        `${apiBase}/evaluations?class_id=${ctx.id_class}`
+        `${apiBase}/evaluations?${scopeParam}`
       );
       const otherPercent = (allEvals as { id: number; percent: number; id_course: number }[])
         .filter(e => e.id_course === ctx.id_course && e.id !== examId)
@@ -305,7 +307,8 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
           preguntas:      payload,
         } : {
           id_course:      ctx.id_course,
-          id_class:       ctx.id_class,
+          ...(ctx.id_class ? { id_class: ctx.id_class } : { id_group: ctx.id_group }),
+          ...(ctx.id_teacher ? { id_teacher: ctx.id_teacher } : {}),
           title:          ctx.title,
           percent:        Number(percent),
           tiempo_minutos: Number(tiempoMinutos),
@@ -504,7 +507,7 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
                   {ctx.levelName  && <div><span style={{ color: "var(--muted)" }}>Año: </span><strong>{ctx.levelName}</strong></div>}
                   <div><span style={{ color: "var(--muted)" }}>Curso: </span><strong>{ctx.courseName}</strong></div>
                   {ctx.moduleName && <div><span style={{ color: "var(--muted)" }}>Módulo: </span><strong>{ctx.moduleName}</strong></div>}
-                  <div><span style={{ color: "var(--muted)" }}>Materia: </span><strong>{ctx.className}</strong></div>
+                  <div><span style={{ color: "var(--muted)" }}>{ctx.id_group ? "Grupo" : "Materia"}: </span><strong>{ctx.className}</strong></div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <div className="label" style={{ margin: 0, whiteSpace: "nowrap" }}>Tiempo (minutos)</div>

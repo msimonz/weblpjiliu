@@ -18,7 +18,6 @@ drop table if exists public.grades              cascade;
 drop table if exists public.attendance          cascade;
 drop table if exists public.evaluation          cascade;
 drop table if exists public.class_teacher       cascade;
-drop table if exists public.class_group         cascade;
 drop table if exists public.user_history        cascade;
 drop table if exists public.user_type           cascade;
 drop table if exists public.evaluation_type     cascade;
@@ -114,18 +113,9 @@ create table public.class (
   level      int not null references public.level(id),
   created_at timestamptz default now(),
   id_module  bigint not null references public.module(id) on update cascade on delete cascade,
-  id_group   smallint not null,
+  id_group   bigint references public.group(id) on update cascade on delete restrict,
   year       smallint not null references public.anio_lectivo(year) on delete restrict,
   constraint class_name_level_module_year_uq unique (name, level, id_module, year)
-);
-
-
--- ------------------------------------------------------------
--- class_group: tabla puente clase ↔ grupo
--- ------------------------------------------------------------
-create table public.class_group (
-  id_class bigint not null references public.class(id) on delete cascade,
-  id_group bigint not null references public.group(id) on delete cascade
 );
 
 
@@ -222,9 +212,10 @@ create table public.evaluation (
   percent        numeric(5,2) not null check (percent >= 0 and percent <= 100),
   title          text not null default 'Evaluación',
   created_at     timestamptz default now(),
-  id_group       bigint not null references public.group(id) on update cascade on delete cascade,
+  id_group       bigint references public.group(id) on update cascade on delete cascade,
   id_module      bigint not null references public.module(id) on update cascade on delete cascade,
-  tiempo_minutos smallint
+  tiempo_minutos smallint,
+  constraint eval_group_or_class_chk check ((id_group is null) <> (id_class is null))
 );
 
 
@@ -433,13 +424,6 @@ create index concurrently if not exists idx_eval_type_year
 
 create index concurrently if not exists idx_materias_year
   on public.materias (year);
-
--- class_group
-create unique index concurrently if not exists idx_class_group_id_class_id_group_uq
-  on public.class_group (id_class, id_group);
-
-create index concurrently if not exists idx_class_group_id_group
-  on public.class_group (id_group);
 
 -- class
 create index concurrently if not exists idx_class_id_module

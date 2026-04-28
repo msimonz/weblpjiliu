@@ -26,7 +26,8 @@ export type ExamAvailableItem = {
   id_evaluation: number;
   title: string;
   tiempo_minutos: number | null;
-  class_id: number;
+  class_id: number | null;
+  group_id: number | null;
   class_name: string | null;
   module_name: string | null;
   fecha_ini: string;
