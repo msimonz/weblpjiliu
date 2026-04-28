@@ -554,6 +554,8 @@ html[data-theme="dark"] .teacher-solid-table {
     --table-head-bg: #111827;
     --table-head-text: #f8fafc;
     --table-row-hover-bg: rgba(59, 130, 246, 0.12);
+    --tr-odd-bg: #071e30;
+    --tr-even-bg: #051422;
   }
 }
 .teacher-solid-table thead,
