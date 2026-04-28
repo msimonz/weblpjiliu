@@ -330,17 +330,24 @@ export default function DashboardPage() {
 
   const hasGroups = useMemo(() => summaryItems.some(s => s.group_id !== null), [summaryItems]);
 
-  // Orden: 1) con nota  2) sin nota — alfabético por módulo luego materia dentro de cada grupo
+  // Orden: 1) examen disponible  2) con nota  3) sin nota — alfabético dentro de cada grupo
   const sortedSummaryItems = useMemo(() => {
     const cmp = (x: string | null, y: string | null) =>
       (x ?? "").localeCompare(y ?? "", "es", { sensitivity: "base" });
+    const priority = (s: SummaryItem) => {
+      const avList = s.group_id
+        ? (examByGroupId.get(s.group_id) ?? [])
+        : (examByClassId.get(s.class_id) ?? []);
+      if (avList.some(e => !e.ya_rendido)) return 0;
+      if (s.weighted !== null) return 1;
+      return 2;
+    };
     return [...summaryItems].sort((a, b) => {
-      const aGrade = a.weighted !== null ? 0 : 1;
-      const bGrade = b.weighted !== null ? 0 : 1;
-      if (aGrade !== bGrade) return aGrade - bGrade;
+      const pa = priority(a), pb = priority(b);
+      if (pa !== pb) return pa - pb;
       return cmp(a.module_name, b.module_name) || cmp(a.name, b.name);
     });
-  }, [summaryItems]);
+  }, [summaryItems, examByClassId, examByGroupId]);
 
   const PASS_GRADE = summaryStats?.pass_grade ?? 70;
   const gradeTextColor = (value: number | null) => {
@@ -723,7 +730,7 @@ export default function DashboardPage() {
                             <col style={{ width: "14%" }} />
                             <col style={{ width: "5%" }} />
                             <col style={{ width: "14%" }} />
-                            <col style={{ width: "13%" }} />
+                            <col style={{ width: "16%" }} />
                           </colgroup>
                           <thead>
                             <tr style={{ background: "transparent" }}>
