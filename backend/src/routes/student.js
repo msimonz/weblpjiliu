@@ -157,7 +157,7 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   // 1) Traer TODAS las materias del nivel con módulo y grupo
   const { data: classRows, error: classErr } = await supabaseAdmin
     .from("class")
-    .select("id,name,level,id_group,module:module(id,name)")
+    .select("id,name,level,id_group,orden,module:module(id,name)")
     .eq("level", level)
     .eq("year", activeCourse.year)
     .order("name", { ascending: true });
@@ -191,6 +191,7 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
       module_name: cls.module?.name ?? null,
       group_id: cls.id_group ? Number(cls.id_group) : null,
       group_name: cls.id_group ? (groupNameMap.get(Number(cls.id_group)) ?? null) : null,
+      orden: cls.orden ?? null,
       sumW: 0,
       sum: 0,
     });
@@ -275,7 +276,7 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
           weighted,
         });
       }
-      groupItems.get(x.group_id).classes.push({ id: x.class_id, name: x.name });
+      groupItems.get(x.group_id).classes.push({ id: x.class_id, name: x.name, orden: x.orden });
     } else {
       soloItems.push({
         class_id: x.class_id,

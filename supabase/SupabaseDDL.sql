@@ -115,6 +115,7 @@ create table public.class (
   id_module  bigint not null references public.module(id) on update cascade on delete cascade,
   id_group   bigint references public.group(id) on update cascade on delete restrict,
   year       smallint not null references public.anio_lectivo(year) on delete restrict,
+  orden      smallint,
   constraint class_name_level_module_year_uq unique (name, level, id_module, year)
 );
 

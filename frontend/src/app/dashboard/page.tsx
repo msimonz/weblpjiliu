@@ -33,7 +33,7 @@ type SummaryItem = {
   class_id: number;
   group_id: number | null;
   group_name: string | null;
-  classes: Array<{ id: number; name: string }>;
+  classes: Array<{ id: number; name: string; orden?: number | null }>;
   name: string;
   module_name: string | null;
   weighted: number | null;
@@ -763,7 +763,6 @@ export default function DashboardPage() {
                             ) : (
                               sortedSummaryItems.flatMap((s, sIdx) => {
                                 const isGroup = !!s.group_id && s.classes.length > 0;
-                                const rowSpan = isGroup ? s.classes.length : 1;
                                 const isOdd   = sIdx % 2 === 0;
                                 const noteColor = s.weighted === null ? "var(--text)" : gradeTextColor(s.weighted);
                                 const noteText  = s.weighted === null ? "—" : s.weighted.toFixed(2);
@@ -825,45 +824,38 @@ export default function DashboardPage() {
                                   )];
                                 }
 
-                                // ── Grupo: background forzado inline; hover coordinado via estado ──
+                                // ── Grupo: fila única con nombre + materias apiladas en una columna ──
                                 const isGrpHovered = hoveredGroupId === s.group_id;
                                 const tdBg = isGrpHovered ? "var(--table-row-hover-bg)" : groupTdBg;
                                 const grpHandlers = {
                                   onMouseEnter: () => setHoveredGroupId(s.group_id!),
                                   onMouseLeave: () => setHoveredGroupId(null),
                                 };
-                                return s.classes.map((cls, idx) => (
-                                  <tr key={`grp_${s.group_id}_${cls.id}`} className="table-row-hover" {...grpHandlers}>
-                                    {idx === 0 && (
-                                      <td className="fit-td fit-wrap" rowSpan={rowSpan}
-                                        style={{ backgroundColor: tdBg, color: "var(--muted)", fontSize: 11, verticalAlign: "middle" }}>
-                                        {s.module_name ?? "—"}
-                                      </td>
-                                    )}
-                                    {idx === 0 && (
-                                      <td className="fit-td fit-wrap" rowSpan={rowSpan}
-                                        style={{ backgroundColor: tdBg, fontWeight: 600, color: "var(--text)", verticalAlign: "middle", whiteSpace: "nowrap" }}>
-                                        {s.group_name}
-                                      </td>
-                                    )}
+                                return [(
+                                  <tr key={`grp_${s.group_id}`} className="table-row-hover" {...grpHandlers}>
                                     <td className="fit-td fit-wrap"
-                                      style={{ backgroundColor: tdBg, color: "var(--muted)", fontSize: 12, padding: "5px 8px", borderBottom: idx < rowSpan - 1 ? "none" : undefined }}>
-                                      {cls.name}
+                                      style={{ backgroundColor: tdBg, color: "var(--muted)", fontSize: 11, verticalAlign: "middle" }}>
+                                      {s.module_name ?? "—"}
                                     </td>
-                                    {idx === 0 && (
-                                      <td className="fit-td fit-num" rowSpan={rowSpan}
-                                        style={{ backgroundColor: tdBg, fontWeight: 600, color: noteColor, verticalAlign: "middle" }}>
-                                        {noteText}
-                                      </td>
-                                    )}
-                                    {idx === 0 && (
-                                      <td className="fit-td fit-num" rowSpan={rowSpan}
-                                        style={{ backgroundColor: tdBg, verticalAlign: "middle" }}>
-                                        {actionBtn}
-                                      </td>
-                                    )}
+                                    <td className="fit-td fit-wrap" colSpan={2}
+                                      style={{ backgroundColor: tdBg, verticalAlign: "middle" }}>
+                                      <div style={{ fontWeight: 600, color: "var(--text)" }}>{s.group_name}</div>
+                                      {[...s.classes].sort((a, b) => (a.orden ?? 999) - (b.orden ?? 999)).map(cls => (
+                                        <div key={cls.id} style={{ paddingLeft: "1rem", color: "var(--muted)", fontSize: 12 }}>
+                                          {cls.name}
+                                        </div>
+                                      ))}
+                                    </td>
+                                    <td className="fit-td fit-num"
+                                      style={{ backgroundColor: tdBg, fontWeight: 600, color: noteColor, verticalAlign: "middle" }}>
+                                      {noteText}
+                                    </td>
+                                    <td className="fit-td fit-num"
+                                      style={{ backgroundColor: tdBg, verticalAlign: "middle" }}>
+                                      {actionBtn}
+                                    </td>
                                   </tr>
-                                ));
+                                )];
                               })
                             )}
                           </tbody>
