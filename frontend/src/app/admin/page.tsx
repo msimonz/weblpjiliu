@@ -293,9 +293,9 @@ export default function AdminPage() {
   const [upsertLevelFilter, setUpsertLevelFilter] = useState<number | "">("");
   const [upsertCourseFilter, setUpsertCourseFilter] = useState<number | "all">("all");
   const [upsertModuleFilter, setUpsertModuleFilter] = useState<number | "all">("all");
-  const [upsertClassFilter, setUpsertClassFilter] = useState<number | "all">("all");
+  const [upsertClassFilter, setUpsertClassFilter] = useState<string>("all");
 
-  const [gridClassInfo, setGridClassInfo] = useState<{
+  const [_gridClassInfo, setGridClassInfo] = useState<{
     id: number;
     name: string;
     level: number;
@@ -651,8 +651,31 @@ export default function AdminPage() {
     return filtered;
   }, [classes, upsertLevelFilter, upsertModuleFilter]);
 
-  const selectedUpsertClass = useMemo(() => {
-    if (upsertClassFilter === "all") return null;
+  // Combined class + group options for the Materia/Grupo dropdown
+  const upsertClassOptions = useMemo(() => {
+    const out: { value: string; label: string }[] = [];
+    // Solo materias que NO pertenecen a ningún grupo de evaluación
+    for (const c of upsertClassesFiltered) {
+      if (c.groups.length > 0) continue;
+      out.push({ value: String(c.id), label: c.name });
+    }
+    // Grupos de evaluación, filtrados por módulo y nivel
+    const validModuleIds = upsertLevelFilter !== "" && upsertLevelFilter !== 0
+      ? new Set(upsertClassesFiltered.map((c) => c.id_module).filter((x): x is number => x != null))
+      : null;
+    const seenGrpIds = new Set<number>();
+    for (const g of groups) {
+      if (upsertModuleFilter !== "all" && Number(g.id_module) !== Number(upsertModuleFilter)) continue;
+      if (validModuleIds !== null && g.id_module != null && !validModuleIds.has(g.id_module)) continue;
+      if (seenGrpIds.has(g.id)) continue;
+      seenGrpIds.add(g.id);
+      out.push({ value: `grp:${g.id}`, label: g.name });
+    }
+    return out;
+  }, [upsertClassesFiltered, groups, upsertLevelFilter, upsertModuleFilter]);
+
+  const _selectedUpsertClass = useMemo(() => {
+    if (upsertClassFilter === "all" || upsertClassFilter.startsWith("grp:")) return null;
     return classes.find((c) => c.id === Number(upsertClassFilter)) || null;
   }, [upsertClassFilter, classes]);
 
@@ -1562,18 +1585,23 @@ export default function AdminPage() {
     level: number | "",
     courseFilter: number | "all",
     moduleFilter: number | "all",
-    classFilter: number | "all"
+    classFilter: string
   ) {
     setMsg(null);
     setGLoadingRoster(true);
     try {
-      const params = new URLSearchParams();
-      if (level !== "" && Number(level) > 0) params.set("level", String(level));
-      if (courseFilter !== "all") params.set("course_id", String(courseFilter));
-      if (moduleFilter !== "all") params.set("module_id", String(moduleFilter));
-      if (classFilter !== "all") params.set("class_id", String(classFilter));
-
-      const res: GradeGridResponse = await apiFetch(`/api/admin/grade-grid?${params.toString()}`);
+      let res: GradeGridResponse;
+      if (classFilter.startsWith("grp:")) {
+        const groupId = classFilter.slice(4);
+        res = await apiFetch(`/api/admin/group-grade-grid?group_id=${groupId}`);
+      } else {
+        const params = new URLSearchParams();
+        if (level !== "" && Number(level) > 0) params.set("level", String(level));
+        if (courseFilter !== "all") params.set("course_id", String(courseFilter));
+        if (moduleFilter !== "all") params.set("module_id", String(moduleFilter));
+        if (classFilter !== "all") params.set("class_id", classFilter);
+        res = await apiFetch(`/api/admin/grade-grid?${params.toString()}`);
+      }
 
       const evals = res?.evaluations || [];
       const roster = res?.students || [];
@@ -1609,11 +1637,11 @@ export default function AdminPage() {
     setRowSnapshot({});
 
     try {
-      if (upsertClassFilter === "all") return;
+      if (upsertClassFilter === "all" || upsertClassFilter.startsWith("grp:")) return;
 
       const courseParam = upsertCourseFilter !== "all" ? `&course_id=${Number(upsertCourseFilter)}` : "";
       const res: GradeGridResponse = await apiFetch(
-        `/api/admin/class-grade-grid?class_id=${Number(upsertClassFilter)}${courseParam}`
+        `/api/admin/class-grade-grid?class_id=${upsertClassFilter}${courseParam}`
       );
 
       const evals = res?.evaluations || [];
@@ -3231,9 +3259,9 @@ export default function AdminPage() {
 
               {!assignLoading && assignGrid.length > 0 && (
                 <div style={{ marginTop: 16, maxWidth: 900, marginLeft: "auto", marginRight: "auto" }}>
-                <div style={{ borderRadius: GRILLA.radiusPrimary, overflow: "hidden", border: GRILLA.outerBorder }}>
+                <div style={{ borderRadius: GRILLA.radiusPrimary, border: GRILLA.outerBorder, overflowY: "auto", maxHeight: 520 }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
+                    <thead style={{ position: "sticky", top: 0, zIndex: 2 }}>
                       <tr style={{ background: isDarkThemeEnabled() ? GRILLA.headerBgDark : GRILLA.headerBgLight }}>
                         {/* Módulo */}
                         <th style={{ padding: "6px 16px", textAlign: "left", fontWeight: 700, fontSize: 13, color: isDarkThemeEnabled() ? GRILLA.headerTextDark : GRILLA.headerTextLight, borderBottom: GRILLA.headerBottomBorder }}>
@@ -3711,22 +3739,18 @@ export default function AdminPage() {
                   </select>
                 </div>
 
-                {/* Materia + botones alineados */}
+                {/* Materia/Grupo + botones alineados */}
                 <div style={{ flex: "2 1 200px", display: "flex", gap: 10, alignItems: "flex-end" }}>
                   <div style={{ flex: 1 }}>
-                    <div className="label">Materia</div>
+                    <div className="label">{upsertClassOptions.some(o => o.value.startsWith("grp:")) ? "Materia/Grupo" : "Materia"}</div>
                     <select
                       className="select"
                       value={upsertClassFilter}
-                      onChange={(e) =>
-                        setUpsertClassFilter(
-                          e.target.value === "all" ? "all" : Number(e.target.value)
-                        )
-                      }
+                      onChange={(e) => setUpsertClassFilter(e.target.value)}
                     >
                       <option value="all">Todas</option>
-                      {upsertClassesFiltered.map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                      {upsertClassOptions.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
                       ))}
                     </select>
                   </div>
@@ -3761,41 +3785,6 @@ export default function AdminPage() {
 
               {upsertLevelFilter === "" ? null : (
                 <div style={{ marginTop: 16 }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "baseline",
-                      gap: 12,
-                      flexWrap: "wrap",
-                      marginBottom: 12,
-                    }}
-                  >
-                    <div style={{ fontWeight: 900 }}>
-                      {(() => {
-                        const levelLabel = typeof upsertLevelFilter === "number" && upsertLevelFilter !== 0
-                          ? (levels.find(l => l.id === upsertLevelFilter)?.name ?? `Nivel ${upsertLevelFilter}`)
-                          : upsertLevelFilter === 0 ? "Todos los años" : null;
-                        const courseLabel = upsertCourseFilter !== "all"
-                          ? (courses.find(c => c.id === Number(upsertCourseFilter))?.name ?? "—")
-                          : null;
-                        const moduleLabel = upsertModuleFilter !== "all"
-                          ? (modules.find(m => m.id === Number(upsertModuleFilter))?.name ?? "—")
-                          : null;
-                        const classLabel = upsertClassFilter !== "all"
-                          ? (gridClassInfo?.name ?? selectedUpsertClass?.name ?? "—")
-                          : null;
-                        const parts = [
-                          levelLabel,
-                          courseLabel ?? (levelLabel ? "Todos los cursos" : null),
-                          moduleLabel ?? (levelLabel ? "Todos los módulos" : null),
-                          classLabel ?? (levelLabel ? "Todas las materias" : null),
-                        ].filter(Boolean);
-                        return parts.join(" › ") || "Todas las notas";
-                      })()}
-                    </div>
-
-                  </div>
 
                   <div
                     style={{

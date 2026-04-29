@@ -967,6 +967,60 @@ adminRouter.get("/class-grade-grid", requireAuth, requireAdminOrSecretary, async
   }
 });
 
+adminRouter.get("/group-grade-grid", requireAuth, requireAdminOrSecretary, async (req, res) => {
+  try {
+    const groupId = Number(req.query.group_id);
+    if (!groupId) return res.status(400).json({ error: "group_id requerido" });
+
+    const { data: evRows, error: evErr } = await supabaseAdmin
+      .from("evaluation")
+      .select(`id,title,percent,created_at,id_course,id_class,id_group,id_type,
+        course:course(id,name,level,year),
+        class:class(id,name,level),
+        evaluation_type:evaluation_type(id,type),
+        group:group(id,name)`)
+      .eq("id_group", groupId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true });
+
+    if (evErr) return res.status(500).json({ error: evErr.message });
+    const evals = evRows || [];
+
+    const group = evals[0]?.group ?? { id: groupId, name: `Grupo ${groupId}` };
+    const courseIds = [...new Set(evals.map((e) => Number(e.id_course)).filter(Boolean))];
+    const studentsRaw = courseIds.length > 0 ? await getStudentsByCourseIds(courseIds) : [];
+
+    let courseNameMap = new Map();
+    if (courseIds.length > 0) {
+      const { data: cRows } = await supabaseAdmin.from("course").select("id,name").in("id", courseIds);
+      courseNameMap = new Map((cRows || []).map((c) => [Number(c.id), c.name]));
+    }
+
+    const students = (studentsRaw || []).map((u) => ({
+      id: u.id, name: u.name, cedula: u.cedula,
+      id_course: u.id_course,
+      course_name: courseNameMap.get(Number(u.id_course)) || null,
+    }));
+
+    const examIds = evals.map((e) => e.id);
+    const studentIds = students.map((s) => s.id);
+    let grades = [];
+    if (examIds.length > 0 && studentIds.length > 0) {
+      const { data: gRows, error: gErr } = await supabaseAdmin
+        .from("grades")
+        .select("id_student,id_exam,grade,attempts")
+        .in("id_exam", examIds)
+        .in("id_student", studentIds);
+      if (gErr) return res.status(500).json({ error: gErr.message });
+      grades = gRows || [];
+    }
+
+    return res.json({ class: null, group, evaluations: evals, students, grades });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error cargando grilla de grupo" });
+  }
+});
+
 // Flexible grade grid: all params optional
 // level=0 or omit = all levels; course_id omit = all courses; module_id omit = all modules; class_id omit = all classes
 adminRouter.get("/grade-grid", requireAuth, requireAdminOrSecretary, async (req, res) => {

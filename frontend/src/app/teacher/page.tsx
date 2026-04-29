@@ -1438,7 +1438,12 @@ export default function TeacherPage() {
         }
       }
     }
-    return out.sort((a, b) => a.id - b.id);
+    return out.sort((a, b) => {
+      const ca = a.id_class ?? 0;
+      const cb = b.id_class ?? 0;
+      if (ca !== cb) return ca - cb;
+      return a.id - b.id;
+    });
   }, [flatRowsFiltered, myClasses, upsertLevelFilter, thFilterModule, thFilterClass]);
 
   const upsertDynamicMinWidth = useMemo(() => {
@@ -2015,7 +2020,7 @@ export default function TeacherPage() {
                 >
                   <option value="" disabled>¿Qué quieres hacer?...</option>
                   <option value="DASHBOARD">Ver materias asignadas</option>
-                  <option value="UPSERT">Gestionar notas de Estudiantes</option>
+                  <option value="UPSERT">Gestionar Notas</option>
                   <option value="CREATE" disabled={isHistoricalYear}>Gestionar Evaluaciones</option>
                   <option value="ATTEND_REPORT">Reporte de asistencia</option>
                 </select>
@@ -2726,7 +2731,7 @@ export default function TeacherPage() {
             <div className="card" style={{ marginTop: 18, width: "100%" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <div>
-                  <h2 style={{ margin: 0 }}>Gestionar Notas Estudiantes</h2>
+                  <h2 style={{ margin: 0 }}>Gestionar Notas</h2>
                 </div>
               </div>
 
@@ -2884,7 +2889,7 @@ export default function TeacherPage() {
                             </colgroup>
 
                             <thead>
-                              {/* Subheader: nombres de materias cuando se muestran varias */}
+                              {/* Fila de grupo: nombre de materia, siempre visible cuando no hay filtro de materia */}
                               {!thFilterClass && visibleEvals.length > 0 && (() => {
                                 const groups: { classId: number; className: string; count: number }[] = [];
                                 for (const ev of visibleEvals) {
@@ -2893,7 +2898,6 @@ export default function TeacherPage() {
                                   if (last && last.classId === cid) { last.count++; }
                                   else groups.push({ classId: cid, className: ev.class?.name || `Clase ${cid}`, count: 1 });
                                 }
-                                if (groups.length <= 1) return null;
                                 const subHeaderBg = isDarkTheme ? GRILLA.headerBgDark : GRILLA.headerBgLight;
                                 const subHeaderText = isDarkTheme ? GRILLA.headerTextDark : GRILLA.headerTextLight;
                                 return (
@@ -2909,7 +2913,7 @@ export default function TeacherPage() {
                                 );
                               })()}
                               <tr>
-                                <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, position: "sticky", top: 0, left: 0, zIndex: 6, whiteSpace: "nowrap", boxShadow: "none" }}>
+                                <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, position: "sticky", top: !thFilterClass ? 33 : 0, left: 0, zIndex: 6, whiteSpace: "nowrap", boxShadow: "none" }}>
                                   <select
                                     className="select"
                                     value={thFilterCedula}
@@ -2926,7 +2930,7 @@ export default function TeacherPage() {
                                     ))}
                                   </select>
                                 </th>
-                                <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, position: "sticky", top: 0, left: STICKY_ALUMNO_LEFT, zIndex: 6, boxShadow: "none" }}>
+                                <th style={{ textAlign: "left", padding: "8px 12px", borderBottom: GRILLA.headerBottomBorder, position: "sticky", top: !thFilterClass ? 33 : 0, left: STICKY_ALUMNO_LEFT, zIndex: 6, boxShadow: "none" }}>
                                   <select
                                     className="select"
                                     value={thFilterName}
@@ -2944,19 +2948,17 @@ export default function TeacherPage() {
                                   </select>
                                 </th>
                                 {visibleEvals.map((ev) => {
-                                  const materia = String(ev.class?.name || "").trim();
-                                  const tipo = String(ev.evaluation_type?.type || "Evaluación").trim();
-                                  const titulo = String(ev.title || "").trim();
-                                  const tipoLabel = titulo && titulo !== tipo ? `${tipo} - ${titulo}` : tipo;
+                                  const typeLabel = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim();
+                                  const showTitle = ev.title && ev.title.trim() !== typeLabel;
                                   const pct = Number(ev.percent).toFixed(0);
                                   return (
-                                    <th key={ev.id} style={{ textAlign: "left", padding: "8px 10px", borderBottom: GRILLA.headerBottomBorder, position: "sticky", top: 0, zIndex: 5, lineHeight: 1.3 }}>
-                                      {materia && <div style={{ fontSize: 10, fontWeight: 600, opacity: 0.7, marginBottom: 1 }}>{materia}</div>}
-                                      <div style={{ fontSize: 11, fontWeight: 700 }}>{tipoLabel} ({pct}%)</div>
+                                    <th key={ev.id} style={{ textAlign: "left", padding: "8px 10px", borderBottom: GRILLA.headerBottomBorder, position: "sticky", top: !thFilterClass ? 33 : 0, zIndex: 5, lineHeight: 1.3, borderLeft: !thFilterClass ? "1px solid var(--stroke)" : undefined }}>
+                                      <div style={{ fontSize: 11, fontWeight: 700 }}>{typeLabel} ({pct}%)</div>
+                                      {showTitle && <div style={{ fontSize: 10, opacity: 0.8, marginTop: 1 }}>{ev.title}</div>}
                                     </th>
                                   );
                                 })}
-                                <th style={{ textAlign: "center", padding: "8px 10px", borderBottom: GRILLA.headerBottomBorder, fontWeight: 800, position: "sticky", top: 0, zIndex: 5 }} />
+                                <th style={{ textAlign: "center", padding: "8px 10px", borderBottom: GRILLA.headerBottomBorder, fontWeight: 800, position: "sticky", top: !thFilterClass ? 33 : 0, zIndex: 5 }} />
                               </tr>
                             </thead>
 
