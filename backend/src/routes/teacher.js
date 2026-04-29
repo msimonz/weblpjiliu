@@ -390,36 +390,61 @@ teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) 
     const level = req.query.level ? Number(req.query.level) : null;
     const year = req.query.year ? Number(req.query.year) : null;
 
+    const evalSelect = `
+      id,
+      title,
+      percent,
+      created_at,
+      id_course,
+      id_class,
+      id_type,
+      id_module,
+      id_group,
+      course:course(id,name,level,year),
+      class:class(id,name,level),
+      evaluation_type:evaluation_type(id,type),
+      module:module(id,name),
+      group:group(id,name)
+    `;
+
     let q = supabaseAdmin
       .from("evaluation")
-      .select(`
-        id,
-        title,
-        percent,
-        created_at,
-        id_course,
-        id_class,
-        id_type,
-        id_module,
-        id_group,
-        course:course(id,name,level,year),
-        class:class(id,name,level),
-        evaluation_type:evaluation_type(id,type),
-        module:module(id,name),
-        group:group(id,name)
-      `)
+      .select(evalSelect)
       .eq("id_teacher", teacherId)
       .order("created_at", { ascending: false });
 
     if (classId) q = q.eq("id_class", classId);
 
-    const { data, error } = await q;
+    const { data: ownData, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
 
-    let items = data || [];
+    // Also include group evaluations for groups the teacher is assigned to,
+    // regardless of who created them.
+    const teacherClasses = await getTeacherClasses(teacherId, year);
+    const groupIds = [...new Set(teacherClasses.map((c) => c.id_group).filter(Boolean))];
+
+    let groupData = [];
+    if (groupIds.length > 0) {
+      const { data: gd, error: gErr } = await supabaseAdmin
+        .from("evaluation")
+        .select(evalSelect)
+        .in("id_group", groupIds)
+        .order("created_at", { ascending: false });
+      if (gErr) return res.status(500).json({ error: gErr.message });
+      groupData = gd || [];
+    }
+
+    // Merge, keeping own evals first and deduplicating by id.
+    const ownIds = new Set((ownData || []).map((e) => e.id));
+    const merged = [...(ownData || [])];
+    for (const ge of groupData) {
+      if (!ownIds.has(ge.id)) merged.push(ge);
+    }
+
+    let items = merged;
 
     if (level) {
-      items = items.filter((it) => Number(it?.class?.level ?? 0) === level);
+      items = items.filter((it) => Number(it?.class?.level ?? it?.course?.level ?? 0) === level);
     }
 
     if (year) {
@@ -830,7 +855,12 @@ teacherRouter.get("/group-grade-grid", requireAuth, requireTeacher, async (req, 
     const groupId = Number(req.query.group_id);
     if (!groupId) return res.status(400).json({ error: "group_id requerido" });
 
-    // Verify teacher has at least one evaluation for this group
+    // Verify teacher is assigned to at least one class in this group.
+    const teacherClasses = await getTeacherClasses(teacherId);
+    const hasGroup = teacherClasses.some((c) => Number(c.id_group) === groupId);
+    if (!hasGroup) return res.status(403).json({ error: "No tienes materias asignadas en este grupo" });
+
+    // Fetch ALL evaluations for this group (any teacher).
     const { data: evRows, error: evErr } = await supabaseAdmin
       .from("evaluation")
       .select(`id,title,percent,created_at,id_course,id_class,id_group,id_type,
@@ -839,15 +869,24 @@ teacherRouter.get("/group-grade-grid", requireAuth, requireTeacher, async (req, 
         evaluation_type:evaluation_type(id,type),
         group:group(id,name)`)
       .eq("id_group", groupId)
-      .eq("id_teacher", teacherId)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true });
 
     if (evErr) return res.status(500).json({ error: evErr.message });
     const evals = evRows || [];
-    if (evals.length === 0) return res.status(403).json({ error: "Sin evaluaciones de grupo asignadas" });
 
-    const group = evals[0].group ?? { id: groupId, name: `Grupo ${groupId}` };
+    // Resolve group metadata even when there are no evaluations yet.
+    let groupMeta = evals[0]?.group ?? null;
+    if (!groupMeta) {
+      const { data: gRow } = await supabaseAdmin.from("group").select("id,name").eq("id", groupId).maybeSingle();
+      groupMeta = gRow ?? { id: groupId, name: `Grupo ${groupId}` };
+    }
+
+    if (evals.length === 0) {
+      return res.json({ class: null, group: { ...groupMeta, level: null }, evaluations: [], students: [], grades: [] });
+    }
+
+    const group = groupMeta;
     const level = evals[0].course?.level ?? null;
 
     const courseIds = [...new Set(evals.map((e) => Number(e.id_course)).filter(Boolean))];

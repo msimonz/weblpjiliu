@@ -210,6 +210,7 @@ export default function AdminPage() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [view, setView] = useState<AdminView>("");
+  const [viewKey, setViewKey] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuExpanded, setMenuExpanded] = useState<"data_maestra" | "evaluaciones" | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -1179,6 +1180,98 @@ export default function AdminPage() {
     setAssignModFilter("ALL");
     setMsg(null);
     setOkMsg(null);
+  }
+
+  function resetView(v: AdminView) {
+    setMsg(null);
+    setOkMsg(null);
+    switch (v) {
+      case "COURSES":
+        setNewCourseName("");
+        setNewCourseLevel(1);
+        setNewCourseYear("");
+        setMonitorEditCourseId(null);
+        setMonitorStudents([]);
+        setMonitorSelectedId("");
+        break;
+      case "CLASSES":
+        setNewClassName("");
+        setNewClassLevel(0);
+        setNewClassModuleId("");
+        setNewClassGroupId("");
+        setNewModuleName("");
+        setNewGroupName("");
+        setTblFilterLevel("");
+        setTblFilterModule("");
+        setTblFilterGroup("");
+        setTblFilterName("");
+        break;
+      case "TYPES":
+        setNewType("");
+        break;
+      case "USERS":
+        setUEmail("");
+        setUName("");
+        setUCedula("");
+        setUCodeJiliu("");
+        setUCourseId("");
+        setULevelId("");
+        setURoles({ S: false, T: false, A: false, M: false, E: false });
+        setUSearching(false);
+        setUFoundUser(false);
+        setUNotFound(false);
+        setUploadReport(null);
+        setUploadFileName("");
+        break;
+      case "ASSIGN_TEACHER":
+        resetAssignView();
+        break;
+      case "UPSERT":
+        setUpsertLevelFilter("");
+        setUpsertCourseFilter("all");
+        setUpsertModuleFilter("all");
+        setUpsertClassFilter("all");
+        setGEvaluations([]);
+        setGRoster([]);
+        setGGrades([]);
+        setGradeDraft({});
+        setGridClassInfo(null);
+        setGFilterCedula("all");
+        setGFilterName("all");
+        setGrillaSortKey("name");
+        setGrillaSortDir("asc");
+        setEditingRow({});
+        setRowSnapshot({});
+        break;
+      case "EVAL_CRUD":
+        setEcMode("class");
+        setEcLevel(0);
+        setEcModuleId("");
+        setEcGroupId("");
+        setEcClassId("");
+        setEcCourseId("");
+        setEcTeacherId("");
+        setEcTeachers([]);
+        setEcAssignMap({});
+        setEcType("");
+        setEcTypeOther("");
+        setEcTitle("");
+        setEcPercent(30);
+        setEcExisting([]);
+        setEcEditPercents({});
+        setEcEditTeachers({});
+        setEcConfirmDeleteId(null);
+        setShowCrearExamen(false);
+        setCrearExamenCtx(null);
+        setCrearExamenInitialData(null);
+        setCrearExamenExamId(null);
+        break;
+      case "ANIO_LECTIVO":
+        setAlNewYear("");
+        setAlNewNombre("");
+        setAlConfirmActivate(null);
+        break;
+    }
   }
 
   async function ecHandleSavePercent(evalId: number) {
@@ -2176,7 +2269,9 @@ export default function AdminPage() {
                 const triggerLabel = view ? (LABELS[view] ?? "Selecciona opcion...") : "Selecciona opcion...";
 
                 function pickView(v: AdminView) {
+                  resetView(v);
                   setView(v);
+                  setViewKey((k) => k + 1);
                   loadAll(adminYear);
                   setMenuOpen(false);
                   setMenuExpanded(null);
@@ -4307,7 +4402,7 @@ export default function AdminPage() {
             </div>
           )}
           {view === "HABILITAR_EXAMENES" && (
-            <HabilitarExamenes courses={courses} />
+            <HabilitarExamenes key={viewKey} courses={courses} />
           )}
 
           {view === "ANIO_LECTIVO" && (

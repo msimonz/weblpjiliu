@@ -901,7 +901,8 @@ export default function TeacherPage() {
   // Derived eval list — no extra API call needed, filter from already-loaded items
   const createEvalsFiltered = useMemo(() => {
     if (createLevelFilter === "") return [];
-    let filtered = items.filter(it => Number(it.class?.level) === Number(createLevelFilter));
+    const levelNum = Number(createLevelFilter);
+    let filtered = items.filter(it => Number(it.class?.level ?? it.course?.level) === levelNum);
     if (cCourse) filtered = filtered.filter(it => Number(it.id_course) === Number(cCourse));
     if (createModuleFilter) filtered = filtered.filter(it => (it.module?.name ?? "") === createModuleFilter);
     if (createClassFilter !== "all") {
@@ -1158,15 +1159,11 @@ export default function TeacherPage() {
     setThFilterCedula("");
     setThFilterName("");
     if (upsertLevelFilter === "") return;
-    const ids = upsertLevelFilter === "all"
-      ? myClasses.map((c) => c.id)
-      : myClasses.filter((c) => Number(c.level) === Number(upsertLevelFilter)).map((c) => c.id);
-    const levelNum = upsertLevelFilter === "all" ? null : Number(upsertLevelFilter);
-    const groupIds = [...new Set(
-      items
-        .filter((e) => e.id_group && (!levelNum || Number(e.course?.level) === levelNum))
-        .map((e) => e.id_group!)
-    )];
+    const filteredClasses = upsertLevelFilter === "all"
+      ? myClasses
+      : myClasses.filter((c) => Number(c.level) === Number(upsertLevelFilter));
+    const ids      = filteredClasses.map((c) => c.id);
+    const groupIds = [...new Set(filteredClasses.map((c) => c.id_group).filter((id): id is number => !!id))];
     if (ids.length === 0 && groupIds.length === 0) return;
     loadAllGradeGrids(ids, groupIds);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1203,10 +1200,14 @@ export default function TeacherPage() {
       if (!section.class && !isGroupSection) continue;
       const classId = section.class?.id ?? -(section.group!.id); // negative ID for groups
       const classEntry = section.class ? myClasses.find((c) => c.id === classId) : null;
+      const groupClassEntry = isGroupSection
+        ? myClasses.find((c) => c.id_group != null && Number(c.id_group) === section.group!.id)
+        : null;
+      const moduleSource = classEntry ?? groupClassEntry;
       const lvl = Number(section.class?.level ?? section.group?.level ?? 0);
       const lvlName = levelMap[lvl] ?? `Año ${lvl}`;
-      const moduleId = classEntry?.id_module ? Number(classEntry.id_module) : null;
-      const moduleName = classEntry?.module?.name ?? (moduleId ? `Módulo ${moduleId}` : "—");
+      const moduleId = moduleSource?.id_module ? Number(moduleSource.id_module) : null;
+      const moduleName = moduleSource?.module?.name ?? (moduleId ? `Módulo ${moduleId}` : "—");
       const groupId = isGroupSection ? section.group!.id : (classEntry?.id_group ? Number(classEntry.id_group) : null);
       const groupName = isGroupSection ? section.group!.name : (classEntry?.group?.name ?? (groupId ? `Grupo ${groupId}` : "—"));
       const className = isGroupSection ? section.group!.name : section.class!.name;
@@ -1425,13 +1426,24 @@ export default function TeacherPage() {
       scopeClassIds = new Set<number>();
       for (const c of myClasses) {
         if (levelNum !== null && Number(c.level) !== levelNum) continue;
-        if (classModuleName(c) === thFilterModule) scopeClassIds.add(c.id);
+        if (classModuleName(c) === thFilterModule) scopeClassIds.add(Number(c.id));
       }
     }
 
     for (const r of flatRowsFiltered) {
       for (const ev of r.sectionEvals) {
-        if (scopeClassIds !== null && !scopeClassIds.has(Number(ev.id_class))) continue;
+        if (scopeClassIds !== null) {
+          if (ev.id_class !== null) {
+            if (!scopeClassIds.has(Number(ev.id_class))) continue;
+          } else if (ev.id_group != null) {
+            const groupInModule = myClasses.some(
+              c => c.id_group != null && Number(c.id_group) === Number(ev.id_group) && classModuleName(c) === thFilterModule
+            );
+            if (!groupInModule) continue;
+          } else {
+            continue;
+          }
+        }
         if (!seenEvalIds.has(ev.id)) {
           seenEvalIds.add(ev.id);
           out.push(ev);
@@ -1502,15 +1514,11 @@ export default function TeacherPage() {
 
   function loadGradeGrid() {
     if (upsertLevelFilter === "") return;
-    const ids = upsertLevelFilter === "all"
-      ? myClasses.map((c) => c.id)
-      : myClasses.filter((c) => Number(c.level) === Number(upsertLevelFilter)).map((c) => c.id);
-    const levelNum = upsertLevelFilter === "all" ? null : Number(upsertLevelFilter);
-    const groupIds = [...new Set(
-      items
-        .filter((e) => e.id_group && (!levelNum || Number(e.course?.level) === levelNum))
-        .map((e) => e.id_group!)
-    )];
+    const filteredClasses = upsertLevelFilter === "all"
+      ? myClasses
+      : myClasses.filter((c) => Number(c.level) === Number(upsertLevelFilter));
+    const ids      = filteredClasses.map((c) => c.id);
+    const groupIds = [...new Set(filteredClasses.map((c) => c.id_group).filter((id): id is number => !!id))];
     loadAllGradeGrids(ids, groupIds);
   }
 
@@ -2871,7 +2879,7 @@ export default function TeacherPage() {
                   </div>
 
                   <div style={{ borderRadius: GRILLA.radiusSecondary, overflow: "hidden", border: "1px solid color-mix(in srgb, var(--stroke) 100%, transparent)", background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)", boxShadow: "var(--shadow)" }}>
-                    <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "68vh", minHeight: 200, background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)" }}>
+                    <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "68vh", minHeight: !gLoadingRoster && flatRowsFiltered.length === 0 ? 0 : 200, background: "color-mix(in srgb, var(--card) 94%, rgb(2,6,23) 6%)" }}>
                       {(() => {
                         const _visibleEvalCountsMap = new Map<string, number>();
                         return (
@@ -2893,10 +2901,12 @@ export default function TeacherPage() {
                               {!thFilterClass && visibleEvals.length > 0 && (() => {
                                 const groups: { classId: number; className: string; count: number }[] = [];
                                 for (const ev of visibleEvals) {
-                                  const cid = ev.id_class ?? 0;
+                                  // Group evals have id_class=null; use negative group id as bucket key.
+                                  const cid = ev.id_class ?? (ev.id_group != null ? -ev.id_group : 0);
+                                  const className = ev.class?.name ?? ev.group?.name ?? `Clase ${Math.abs(cid)}`;
                                   const last = groups[groups.length - 1];
                                   if (last && last.classId === cid) { last.count++; }
-                                  else groups.push({ classId: cid, className: ev.class?.name || `Clase ${cid}`, count: 1 });
+                                  else groups.push({ classId: cid, className, count: 1 });
                                 }
                                 const subHeaderBg = isDarkTheme ? GRILLA.headerBgDark : GRILLA.headerBgLight;
                                 const subHeaderText = isDarkTheme ? GRILLA.headerTextDark : GRILLA.headerTextLight;
@@ -2967,14 +2977,6 @@ export default function TeacherPage() {
                                 <tr>
                                   <td colSpan={Math.max(3, visibleEvals.length + 3)} style={{ padding: 32, minHeight: 120, textAlign: "center", fontSize: 14, color: "var(--muted)", background: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)" }}>
                                     Cargando alumnos y notas...
-                                  </td>
-                                </tr>
-                              ) : flatRowsFiltered.length === 0 ? (
-                                <tr>
-                                  <td colSpan={Math.max(3, visibleEvals.length + 3)} style={{ padding: 16, color: "var(--muted)", background: "color-mix(in srgb, var(--card) 96%, rgb(2,6,23) 4%)" }}>
-                                    {allSections.length === 0
-                                      ? "No se encontraron materias para los filtros seleccionados."
-                                      : "No hay alumnos que coincidan con los filtros."}
                                   </td>
                                 </tr>
                               ) : (
@@ -3064,6 +3066,13 @@ export default function TeacherPage() {
                         );
                       })()}
                     </div>
+                    {!gLoadingRoster && flatRowsFiltered.length === 0 && (
+                      <div style={{ padding: "14px 16px", color: "var(--muted)", fontSize: 13 }}>
+                        {allSections.length === 0
+                          ? "No se encontraron materias para los filtros seleccionados."
+                          : "No hay alumnos que coincidan con los filtros."}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

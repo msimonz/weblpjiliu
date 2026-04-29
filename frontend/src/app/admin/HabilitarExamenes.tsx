@@ -236,7 +236,7 @@ export default function HabilitarExamenes({ courses }: Props) {
         group_name:  ev.group?.name  ?? null,
         class_id:    ev.class?.id    ?? null,
         class_name:  ev.class?.name  ?? null,
-        class_level: ev.class?.level ?? null,
+        class_level: ev.class?.level ?? ev.course?.level ?? null,
       })));
     } catch { /* silencioso */ }
   }

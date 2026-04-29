@@ -378,6 +378,8 @@ export default function SecretariaPage() {
     setGGrades([]);
     setGradeDraft({});
     setGridClassInfo(null);
+    setGFilterCedula("all");
+    setGFilterName("all");
   }
 
   if (meLoading) return <div className="container">Cargando...</div>;
