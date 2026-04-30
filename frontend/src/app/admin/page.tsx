@@ -8,6 +8,7 @@ import { apiFetch } from "@/lib/api";
 import { primaryRole, roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
+import AppVersionLabel from "@/components/AppVersionLabel";
 import * as XLSX from "xlsx";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 import CrearExamen, { type CrearExamenCtx, type ExamInitialData } from "./CrearExamen";
@@ -2198,6 +2199,9 @@ export default function AdminPage() {
             Salir
           </button>
         </div>
+        <AppVersionLabel
+          style={{ display: "block", marginTop: 10, color: "var(--footer)", fontSize: 8, fontWeight: 700 }}
+        />
       </aside>
 
       <main
