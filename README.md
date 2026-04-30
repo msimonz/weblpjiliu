@@ -125,14 +125,14 @@ ETM_REAL_ACCESS_CODE=...
 ### Frontend (`frontend/.env.local`)
 
 ```env
-NEXT_PUBLIC_API_BASE=http://localhost:3001
+NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 ```
 
 En producción:
 
-* `NEXT_PUBLIC_API_BASE` debe ser el dominio del backend desplegado (Render).
+* `NEXT_PUBLIC_API_BASE_URL` debe ser el dominio del backend desplegado (Render).
 * Las variables `NEXT_PUBLIC_*` quedan embebidas en el build estático.
 
 ---
@@ -230,7 +230,7 @@ En Render:
 
 **Environment Variables (Build-time):**
 
-* `NEXT_PUBLIC_API_BASE=https://<tu-backend>.onrender.com`
+* `NEXT_PUBLIC_API_BASE_URL=https://<tu-backend>.onrender.com`
 * `NEXT_PUBLIC_SUPABASE_URL=...`
 * `NEXT_PUBLIC_SUPABASE_ANON_KEY=...`
 
@@ -271,7 +271,7 @@ app.use(cors({
 ### 10.1 “CORS blocked”
 
 * Agrega el dominio del frontend en `origin` del backend.
-* Verifica que el frontend apunte a `NEXT_PUBLIC_API_BASE` correcto.
+* Verifica que el frontend apunte a `NEXT_PUBLIC_API_BASE_URL` correcto.
 
 ### 10.2 Render deploy falla por `PORT`
 

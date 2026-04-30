@@ -5,7 +5,6 @@
   "main": "server.js",
   "scripts": {
     "dev": "node server.js",
-    "job:etm": "node src/jobs/etm_weekly_sync.js",
     "start": "node server.js",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -21,8 +20,6 @@
     "exceljs": "^3.4.0",
     "express": "^5.2.1",
     "multer": "^2.0.2",
-    "node-cron": "^4.2.1",
-    "playwright": "^1.58.2",
     "xlsx": "^0.18.5",
     "zod": "^4.3.6"
   }

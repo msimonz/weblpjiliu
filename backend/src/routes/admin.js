@@ -11,6 +11,10 @@ import {
   requireAnioVigenteForRecord,
   handleYearError,
 } from "../lib/anioLectivo.js";
+import {
+  ensureGradeRowsForEvaluation,
+  ensureGradeRowsForStudent,
+} from "../lib/gradesBootstrap.js";
 
 export const adminRouter = Router();
 
@@ -1211,6 +1215,7 @@ adminRouter.post("/evaluations", requireAuth, requireAdmin, async (req, res) => 
       .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
+    await ensureGradeRowsForEvaluation(data.id);
     return res.json({ item: data });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando evaluación" });
@@ -1262,6 +1267,7 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
       id_student: st.id,
       grade,
       finished_at: new Date().toISOString(),
+      attempts: 1,
     };
 
     const { data, error } = await supabaseAdmin
@@ -1477,6 +1483,7 @@ adminRouter.post("/evaluations/bulk", requireAuth, requireAdmin, async (req, res
       .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
+    await ensureGradeRowsForEvaluation(data.id);
     return res.json({ item: data });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error en creación masiva de evaluaciones" });
@@ -1798,6 +1805,14 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         }
       }
 
+      if (needsStudentFields && id_course) {
+        try {
+          await ensureGradeRowsForStudent(authUserId, id_course);
+        } catch (e) {
+          results.errors.push({ row: rowNum, error: `grades: ${e?.message || "error inicializando notas"}` });
+        }
+      }
+
       if (createRes?.error) results.updated++;
       else results.created++;
 
@@ -1938,6 +1953,10 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
       }
     }
 
+    if (needsStudentFields && id_course) {
+      await ensureGradeRowsForStudent(authUserId, id_course);
+    }
+
     return res.json({ ok: true, item: up, created: !createRes?.error });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando usuario" });
@@ -2051,6 +2070,10 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
       .upsert({ id_student: userId, id_course }, { onConflict: "id_student,id_course" });
 
     if (histErr) warn = `history: ${histErr.message}`;
+
+    if (needsStudentFields && id_course) {
+      await ensureGradeRowsForStudent(userId, id_course);
+    }
 
     return res.json({ ok: true, item: up, warn });
   } catch (e) {
@@ -2480,6 +2503,7 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
       return res.status(500).json({ error: `Error guardando preguntas: ${detErr.message}` });
     }
 
+    await ensureGradeRowsForEvaluation(evalData.id);
     return res.status(201).json({ ok: true, item: evalData });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando examen" });

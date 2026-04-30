@@ -11,8 +11,6 @@ import { healthRouter } from './src/routes/health.js';
 import { monitorRouter } from './src/routes/monitor.js';
 import { secretariaRouter } from './src/routes/secretaria.js';
 
-import { startSchedulers } from './src/schedulers.js';
-
 const app = express();
 const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 app.use(cors({
@@ -39,5 +37,4 @@ const port = Number(process.env.PORT || 3001);
 
 app.listen(port, () => {
   console.log(`Backend on :${port}`);
-  startSchedulers();
 });

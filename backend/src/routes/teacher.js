@@ -6,6 +6,7 @@ import {
   requireAnioVigenteForCourse,
   handleYearError,
 } from "../lib/anioLectivo.js";
+import { ensureGradeRowsForEvaluation } from "../lib/gradesBootstrap.js";
 
 export const teacherRouter = Router();
 
@@ -689,6 +690,7 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
       .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
+    await ensureGradeRowsForEvaluation(data.id);
     return res.json({ item: data });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -750,6 +752,7 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
     id_student: st.id,
     grade: g,
     finished_at: new Date().toISOString(),
+    attempts: 1,
   };
 
   const { data, error } = await supabaseAdmin
@@ -1182,6 +1185,7 @@ teacherRouter.post("/exams", requireAuth, requireTeacher, async (req, res) => {
       return res.status(500).json({ error: `Error guardando preguntas: ${detErr.message}` });
     }
 
+    await ensureGradeRowsForEvaluation(evalData.id);
     return res.status(201).json({ ok: true, item: evalData });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando examen" });

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../middlewares/auth.js";
 import { supabaseAdmin } from "../supabase.js";
 import { requireAnioVigenteForCourse, handleYearError } from "../lib/anioLectivo.js";
+import { ensureGradeRowsForStudent } from "../lib/gradesBootstrap.js";
 
 export const studentRouter = Router();
 
@@ -153,11 +154,16 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
 
   const level = Number(activeCourse.level);
   const activeCourseId = activeCourse.id;
+  try {
+    await ensureGradeRowsForStudent(userId, activeCourseId);
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error inicializando notas del estudiante" });
+  }
 
   // 1) Traer TODAS las materias del nivel con módulo y grupo
   const { data: classRows, error: classErr } = await supabaseAdmin
     .from("class")
-    .select("id,name,level,id_group,orden,module:module(id,name)")
+    .select("id,name,level,id_module,id_group,orden,module:module(id,name)")
     .eq("level", level)
     .eq("year", activeCourse.year)
     .order("name", { ascending: true });
@@ -183,24 +189,45 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
 
   // 2) Inicializar mapa con TODAS las materias
   const byClass = new Map();
+  const byGroup = new Map();
   for (const cls of classes) {
     const classId = Number(cls.id);
+    const groupId = cls.id_group ? Number(cls.id_group) : null;
     byClass.set(classId, {
       class_id: classId,
       name: String(cls.name ?? `Materia ${classId}`),
       module_name: cls.module?.name ?? null,
-      group_id: cls.id_group ? Number(cls.id_group) : null,
-      group_name: cls.id_group ? (groupNameMap.get(Number(cls.id_group)) ?? null) : null,
+      module_id: cls.id_module ? Number(cls.id_module) : null,
+      group_id: groupId,
+      group_name: groupId ? (groupNameMap.get(groupId) ?? null) : null,
       orden: cls.orden ?? null,
-      sumW: 0,
       sum: 0,
+      hasGrade: false,
     });
+
+    if (groupId) {
+      if (!byGroup.has(groupId)) {
+        byGroup.set(groupId, {
+          group_id: groupId,
+          group_name: groupNameMap.get(groupId) ?? `Grupo ${groupId}`,
+          module_name: cls.module?.name ?? null,
+          classes: [],
+          sum: 0,
+          hasGrade: false,
+        });
+      }
+      byGroup.get(groupId).classes.push({
+        id: classId,
+        name: String(cls.name ?? `Materia ${classId}`),
+        orden: cls.orden ?? null,
+      });
+    }
   }
 
   // 3) Traer evaluaciones del curso activo (clase y grupo)
   const { data: evals, error: evalErr } = await supabaseAdmin
     .from("evaluation")
-    .select("id,id_class,id_group,percent")
+    .select("id,id_class,id_group,id_module,percent")
     .eq("id_course", activeCourseId);
 
   if (evalErr) return res.status(500).json({ error: evalErr.message });
@@ -213,10 +240,9 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   if (evalIds.length > 0) {
     const { data: gradesData, error: gradesErr } = await supabaseAdmin
       .from("grades")
-      .select("id_exam,grade,finished_at")
+      .select("id_exam,grade,finished_at,attempts")
       .eq("id_student", userId)
-      .in("id_exam", evalIds)
-      .not("finished_at", "is", null);
+      .in("id_exam", evalIds);
     if (gradesErr) return res.status(500).json({ error: gradesErr.message });
     gradeRows = gradesData || [];
   }
@@ -224,74 +250,66 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   const gradeMap = new Map();
   for (const g of gradeRows) gradeMap.set(Number(g.id_exam), g);
 
-  // 5) Mapa: group_id → [class_ids]
-  const classesByGroup = new Map();
-  for (const cls of classes) {
-    if (cls.id_group) {
-      const gid = Number(cls.id_group);
-      const arr = classesByGroup.get(gid) ?? [];
-      arr.push(Number(cls.id));
-      classesByGroup.set(gid, arr);
-    }
-  }
-
-  // 6) Acumular notas: por materia (id_class) y por grupo (id_group → todas sus materias)
+  // 5) Acumular notas consolidadas por materia individual o por grupo.
+  //    La nota final es SUM(nota * porcentaje / 100), sin normalizar por suma de porcentajes.
   for (const ev of evaluations) {
     const percent = Number(ev.percent ?? 0);
     const g = gradeMap.get(Number(ev.id)) ?? null;
     const grade = g?.grade == null ? null : Number(g.grade);
     if (grade === null) continue;
 
-    if (ev.id_class) {
-      const classId = Number(ev.id_class);
-      if (byClass.has(classId)) {
-        byClass.get(classId).sumW += percent;
-        byClass.get(classId).sum  += grade * percent;
+    if (ev.id_group) {
+      const groupId = Number(ev.id_group);
+      if (byGroup.has(groupId)) {
+        byGroup.get(groupId).sum += grade * percent / 100;
+        byGroup.get(groupId).hasGrade = true;
       }
-    } else if (ev.id_group) {
-      for (const classId of (classesByGroup.get(Number(ev.id_group)) ?? [])) {
-        if (byClass.has(classId)) {
-          byClass.get(classId).sumW += percent;
-          byClass.get(classId).sum  += grade * percent;
-        }
+    } else if (ev.id_class) {
+      const classId = Number(ev.id_class);
+      const classAcc = byClass.get(classId);
+      if (classAcc && !classAcc.group_id) {
+        classAcc.sum += grade * percent / 100;
+        classAcc.hasGrade = true;
       }
     }
   }
 
-  // 7) Construir items: colapsar materias con grupo en un ítem por grupo
-  const groupItems = new Map(); // group_id → item
+  // 6) Construir items: materias individuales y grupos como unidades consolidadas.
+  const groupItems = [];
   const soloItems  = [];        // materias sin grupo
 
   for (const x of byClass.values()) {
-    const weighted = x.sumW > 0 ? Number((x.sum / x.sumW).toFixed(2)) : null;
-    if (x.group_id) {
-      if (!groupItems.has(x.group_id)) {
-        groupItems.set(x.group_id, {
-          class_id:   x.class_id,  // referencia al primer class_id del grupo
-          group_id:   x.group_id,
-          group_name: x.group_name,
-          module_name: x.module_name,
-          name:       x.group_name ?? `Grupo ${x.group_id}`,
-          classes:    [],
-          weighted,
-        });
-      }
-      groupItems.get(x.group_id).classes.push({ id: x.class_id, name: x.name, orden: x.orden });
-    } else {
-      soloItems.push({
-        class_id: x.class_id,
-        group_id: null,
-        group_name: null,
-        module_name: x.module_name,
-        name: x.name,
-        classes: [],
-        weighted,
-      });
-    }
+    if (x.group_id) continue;
+    soloItems.push({
+      class_id: x.class_id,
+      group_id: null,
+      group_name: null,
+      module_name: x.module_name,
+      name: x.name,
+      classes: [],
+      weighted: x.hasGrade ? Number(x.sum.toFixed(2)) : null,
+    });
+  }
+
+  for (const g of byGroup.values()) {
+    const classesSorted = [...g.classes].sort((a, b) => {
+      const ao = a.orden ?? 999999;
+      const bo = b.orden ?? 999999;
+      return ao - bo || String(a.name).localeCompare(String(b.name), "es", { sensitivity: "base" });
+    });
+    groupItems.push({
+      class_id: classesSorted[0]?.id ?? 0,
+      group_id: g.group_id,
+      group_name: g.group_name,
+      module_name: g.module_name,
+      name: g.group_name,
+      classes: classesSorted,
+      weighted: g.hasGrade ? Number(g.sum.toFixed(2)) : null,
+    });
   }
 
   const cmpStr = (a, b) => (a ?? "").localeCompare(b ?? "", "es", { sensitivity: "base" });
-  const items = [...soloItems, ...groupItems.values()]
+  const items = [...soloItems, ...groupItems]
     .map((x) => ({
       class_id:   x.class_id,
       group_id:   x.group_id   ?? null,
@@ -354,14 +372,23 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
     if (histEntry?.course?.id) activeCourse = histEntry.course;
   }
 
+  try {
+    await ensureGradeRowsForStudent(userId, activeCourse.id);
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error inicializando notas del estudiante" });
+  }
+
+  const scopeFilters = groupId
+    ? [`id_group.eq.${groupId}`]
+    : [`id_class.eq.${classId}`];
+
   // evaluaciones de esa materia o grupo en el curso activo
   let evalQuery = supabaseAdmin
     .from("evaluation")
     .select("id,title,percent,created_at,id_type")
     .eq("id_course", activeCourse.id)
+    .or(scopeFilters.join(","))
     .order("created_at", { ascending: true });
-  if (groupId) evalQuery = evalQuery.eq("id_group", groupId);
-  else         evalQuery = evalQuery.eq("id_class", classId);
   const { data: evals, error: evalErr } = await evalQuery;
 
   if (evalErr) return res.status(500).json({ error: evalErr.message });
@@ -415,8 +442,7 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
     .from("grades")
     .select("id_exam,grade,finished_at,attempts,created_at,updated_at")
     .eq("id_student", userId)
-    .in("id_exam", evalIds)
-    .not("finished_at", "is", null);  // ignorar placeholders de exámenes en progreso
+    .in("id_exam", evalIds);
 
   if (gradesErr) return res.status(500).json({ error: gradesErr.message });
 
@@ -458,16 +484,16 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
     };
   });
 
-  let sumW = 0;
   let sum = 0;
+  let hasGrade = false;
   for (const it of items) {
     if (it.grade === null) continue;
     const w = Number(it.percent ?? 0);
-    sumW += w;
-    sum += it.grade * w;
+    sum += it.grade * w / 100;
+    hasGrade = true;
   }
 
-  const weighted = sumW > 0 ? Number((sum / sumW).toFixed(2)) : null;
+  const weighted = hasGrade ? Number(sum.toFixed(2)) : null;
 
   return res.json({ blocked: false, items, weighted, course: activeCourse });
 });
@@ -515,7 +541,7 @@ async function autoCloseRta(rtaId, userId, id_evaluation, respuestas) {
   await Promise.all([
     supabaseAdmin
       .from("grades")
-      .update({ grade: calificacion, finished_at: finalizadoAt })
+      .update({ grade: calificacion, finished_at: finalizadoAt, attempts: 1 })
       .eq("id_exam", id_evaluation)
       .eq("id_student", userId),
     supabaseAdmin
@@ -903,7 +929,7 @@ studentRouter.post("/exam/:id_evaluation/submit", requireAuth, async (req, res) 
   // Actualizar grades con la calificación final
   const { error: gradesUpdErr } = await supabaseAdmin
     .from("grades")
-    .update({ grade: calificacion, finished_at: finalizadoAt })
+    .update({ grade: calificacion, finished_at: finalizadoAt, attempts: 1 })
     .eq("id_exam", id_evaluation)
     .eq("id_student", userId);
 

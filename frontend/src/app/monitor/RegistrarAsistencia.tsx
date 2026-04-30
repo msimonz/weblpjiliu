@@ -402,7 +402,7 @@ export default function RegistrarAsistencia({ me }: Props) {
                           width: "100%",
                           fontSize: 12,
                           padding: "4px 8px",
-                          color: row.motivo === "sin información" ? "rgba(148,163,184,0.25)" : "white",
+                          color: row.motivo === "sin información" ? "var(--empty-info-text)" : "var(--text)",
                         }}
                         value={row.motivo}
                         onChange={(e) => setMotivo(row.id_student, e.target.value)}
