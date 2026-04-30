@@ -13,10 +13,10 @@ export default function AppVersionLabel({
   style?: CSSProperties;
 }) {
   const buildVersion = process.env.NEXT_PUBLIC_BUILD_VERSION?.trim();
-  const commitSha = process.env.NEXT_PUBLIC_COMMIT_SHA?.trim();
+  const commitDateStamp = process.env.NEXT_PUBLIC_COMMIT_DATE_STAMP?.trim();
   const versionText = [
     buildVersion ? `v${buildVersion}` : "",
-    commitSha || "",
+    commitDateStamp || "",
   ].filter(Boolean).join(SEPARATOR);
   const displayText = versionText ? `${prefix}${SEPARATOR}${versionText}` : prefix;
 
