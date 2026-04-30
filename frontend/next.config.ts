@@ -3,9 +3,11 @@ import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-function getGitCommitSha() {
+function getGitCommitDateStamp() {
   try {
-    return execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] })
+    return execSync("git show -s --format=%cd --date=format:%Y%m%d%H%M HEAD", {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
       .toString()
       .trim();
   } catch {
@@ -48,13 +50,13 @@ const SUPABASE_HOSTNAME = SUPABASE_URL
   .split("/")[0];
 
 const BUILD_VERSION = getBuildVersion();
-const COMMIT_SHA = process.env.NEXT_PUBLIC_COMMIT_SHA || getGitCommitSha();
+const COMMIT_DATE_STAMP = process.env.NEXT_PUBLIC_COMMIT_DATE_STAMP || getGitCommitDateStamp();
 
 const nextConfig = {
   output: "export",
   env: {
     NEXT_PUBLIC_BUILD_VERSION: BUILD_VERSION,
-    NEXT_PUBLIC_COMMIT_SHA: COMMIT_SHA,
+    NEXT_PUBLIC_COMMIT_DATE_STAMP: COMMIT_DATE_STAMP,
   },
   images: {
     unoptimized: true,
