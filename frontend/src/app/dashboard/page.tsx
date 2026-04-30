@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import { roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
+import AppVersionLabel from "@/components/AppVersionLabel";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 import TomarExamen, { type ExamAvailableItem } from "./TomarExamen";
 import VerExamen from "./VerExamen";
@@ -502,6 +503,9 @@ export default function DashboardPage() {
             Salir
           </button>
         </div>
+        <AppVersionLabel
+          style={{ display: "block", marginTop: 10, color: "var(--footer)", fontSize: 8, fontWeight: 700 }}
+        />
       </aside>
 
       <main

@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { apiFetch } from "@/lib/api";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
+import AppVersionLabel from "@/components/AppVersionLabel";
 import ChangePasswordButton from "@/components/ChangePasswordButton";
 import * as XLSX from "xlsx";
 import ConsultarAsistencia from "./ConsultarAsistencia";
@@ -486,6 +487,9 @@ export default function SecretariaPage() {
         <div style={{ marginTop: 12 }}>
           <button className="btn actionBtn" onClick={handleLogout} style={{ width: "100%" }}>Salir</button>
         </div>
+        <AppVersionLabel
+          style={{ display: "block", marginTop: 10, color: "var(--footer)", fontSize: 8, fontWeight: 700 }}
+        />
       </aside>
 
       {/* ── Main ── */}
