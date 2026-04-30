@@ -5,6 +5,14 @@ export default function Footer({
   leftText?: string;
   rightText?: string;
 }) {
+  const buildVersion = process.env.NEXT_PUBLIC_BUILD_VERSION?.trim();
+  const commitSha = process.env.NEXT_PUBLIC_COMMIT_SHA?.trim();
+  const versionText = [
+    buildVersion ? `v${buildVersion}` : "",
+    commitSha || "",
+  ].filter(Boolean).join(" · ");
+  const displayLeftText = versionText ? `${leftText} · ${versionText}` : leftText;
+
   return (
     <footer
       style={{
@@ -26,7 +34,7 @@ export default function Footer({
           flexWrap: "wrap",
         }}
       >
-        <div style={{ fontSize: 8, fontWeight: 700 }}>{leftText}</div>
+        <div style={{ fontSize: 8, fontWeight: 700 }}>{displayLeftText}</div>
         <div style={{ fontSize: 8, fontWeight: 700 }}>{rightText}</div>
       </div>
     </footer>
