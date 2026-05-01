@@ -11,7 +11,10 @@ import { secretariaRouter } from "./routes/secretaria.js";
 
 export function createApp() {
   const app = express();
-  const corsOrigins = (process.env.CORS_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const corsOrigins = (process.env.CORS_ORIGINS || "http://localhost:3000,http://127.0.0.1:3000")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   app.use(cors({
     origin: corsOrigins,
     credentials: true,

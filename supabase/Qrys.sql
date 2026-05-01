@@ -1,27 +1,38 @@
 -- notas de un alumno
-SELECT
-    u.name                          AS estudiante,
+
+  select
+    g.id_student,
+    u.name as estudiante,
     u.cedula,
-    co.year                         AS año_lectivo,                                                                                                                 
-    co.name                         AS curso,
-    lv.name                         AS nivel,                                                                                                                       
-    cl.name                         AS materia,
-    et.type                         AS tipo_evaluacion,
-    ev.title                        AS titulo,
-    ev.percent                      AS peso_pct,
-    g.grade                         AS nota,
-    ROUND(g.grade * ev.percent / 100, 2) AS nota_ponderada,
+    g.id_exam as id_evaluation,
+    e.title as evaluacion,
+    et.type as tipo_evaluacion,
+    c.name as curso,
+    c.year,
+    cl.name as materia,
+    g.grade,
     g.attempts,
-    g.updated_at
-  FROM grades g
-  JOIN users      u   ON u.id        = g.id_student
-  JOIN evaluation ev  ON ev.id       = g.id_exam
-  JOIN course     co  ON co.id       = ev.id_course
-  JOIN level      lv  ON lv.id       = co.level
-  JOIN class      cl  ON cl.id       = ev.id_class
-  JOIN evaluation_type et ON et.id   = ev.id_type
-  WHERE u.name like '%Yury%'
-    -- AND co.year = 2026            
+    g.finished_at,
+    g.created_at,
+    g.updated_at,
+    case
+      when g.finished_at is null then 'Pendiente'
+      when lower(coalesce(et.type, '')) = 'examen'
+           and g.grade = 0
+           and coalesce(g.attempts, 0) = 0
+        then 'No presentó'
+      when lower(coalesce(et.type, '')) = 'examen' then 'Examen cerrado'
+      else 'Nota manual'
+    end as estado
+  from grades g
+  join users u on u.id = g.id_student
+  join evaluation e on e.id = g.id_exam
+  left join evaluation_type et on et.id = e.id_type
+  left join course c on c.id = e.id_course
+  left join class cl on cl.id = e.id_class
+  where u.cedula in ('31446121','12201962')
+  and  id_exam=118
+  order by c.year desc, c.name, cl.name, e.created_at, e.id;     
 
 
 -- modulos por nivel
@@ -38,8 +49,8 @@ SELECT
 
   SELECT DISTINCT
       m.id    AS id_modulo
-      --,m.name  AS modulo
-      --,c.year  AS año_clase
+      ,m.name  AS modulo
+      ,c.year  AS año_clase
   FROM public.class c
   JOIN public.module m ON m.id = c.id_module
   JOIN public.anio_lectivo al ON al.year = c.year AND al.activo = true
@@ -87,6 +98,9 @@ SELECT
   AND ct.id_course = e.id_course
   --AND ct.id_teacher in ( select id from users where name like '%Liliana%')
   ORDER BY co.year DESC, m.name, c.name, e.created_at;
+
+
+select * from grades where  id_student in ( select id from users where name like '%Alexander%')
 
   
 

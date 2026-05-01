@@ -57,6 +57,7 @@ type GridGradeRow = {
   id_student: string;
   id_exam: number;
   grade: number | null;
+  finished_at?: string | null;
   attempts?: number | null;
 };
 
@@ -163,6 +164,10 @@ const GRILLA = {
 };
 function gradeCellKey(studentId: string, examId: number) {
   return `${studentId}__${examId}`;
+}
+
+function isExamEvaluation(ev: { evaluation_type?: { type?: string | null } | null }) {
+  return String(ev.evaluation_type?.type || "").toLowerCase() === "examen";
 }
 
 function levelLabel(level: number | null | undefined, levelMap: Record<number, string> = {}) {
@@ -1499,7 +1504,7 @@ export default function TeacherPage() {
       for (const section of sections) {
         for (const g of section.grades || []) {
           drafts[gradeCellKey(g.id_student, g.id_exam)] =
-            g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
+            !g.finished_at || g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
         }
       }
       setGradeDraft(drafts);
@@ -1639,14 +1644,15 @@ export default function TeacherPage() {
         const applicableHere = evalsToSave.filter((ev) => sectionEvalIds.has(ev.id));
         if (applicableHere.length === 0) return section;
         const patchedGrades = [...(section.grades || [])];
+        const finishedAt = new Date().toISOString();
         for (const ev of applicableHere) {
           const key = gradeCellKey(student.id, ev.id);
           const savedGrade = Number(gradeDraft[key]);
           const idx = patchedGrades.findIndex((g) => g.id_student === student.id && g.id_exam === ev.id);
           if (idx >= 0) {
-            patchedGrades[idx] = { ...patchedGrades[idx], grade: savedGrade, attempts: Math.max(1, Number(patchedGrades[idx].attempts ?? 0)) };
+            patchedGrades[idx] = { ...patchedGrades[idx], grade: savedGrade, attempts: Math.max(1, Number(patchedGrades[idx].attempts ?? 0)), finished_at: finishedAt };
           } else {
-            patchedGrades.push({ id_student: student.id, id_exam: ev.id, grade: savedGrade, attempts: 1 });
+            patchedGrades.push({ id_student: student.id, id_exam: ev.id, grade: savedGrade, attempts: 1, finished_at: finishedAt });
           }
         }
         return { ...section, grades: patchedGrades };
@@ -1760,11 +1766,12 @@ export default function TeacherPage() {
         const gradeRecord = row.sectionGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
         const attempts = gradeRecord?.attempts ?? 0;
         const gradeVal = gradeRecord?.grade ?? null;
-        if (attempts === 0 && (gradeVal === null || gradeVal === 0)) {
+        const hasClosedGrade = !!gradeRecord?.finished_at;
+        if (hasClosedGrade && attempts === 0 && gradeVal === 0) {
           cells.push("No Presentó");
         } else {
           const val = gradeDraft[gradeCellKey(st.id, ev.id)];
-          cells.push(val === "" || val == null ? (gradeVal ?? "") : Number(val));
+          cells.push(val === "" || val == null ? (hasClosedGrade && gradeVal !== null ? gradeVal : (isExamEvaluation(ev) ? "—" : "+")) : Number(val));
         }
       }
       return cells;
@@ -3009,8 +3016,10 @@ export default function TeacherPage() {
                                         const editable = enabledForCourse && isEditing && !isBusy;
                                         const gradeRecord = row.sectionGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
                                         const attempts = Number(gradeRecord?.attempts ?? 0);
-                                        const gradeVal = Number(gradeRecord?.grade ?? 0);
-                                        const noPresentó = enabledForCourse && attempts === 0 && gradeVal === 0;
+                                        const gradeVal = gradeRecord?.grade ?? null;
+                                        const hasClosedGrade = !!gradeRecord?.finished_at;
+                                        const noPresentó = enabledForCourse && hasClosedGrade && attempts === 0 && gradeVal === 0;
+                                        const pendingPlaceholder = isExamEvaluation(ev) ? "—" : "+";
 
                                         return (
                                           <td key={ev.id} style={{ padding: 0, borderBottom: GRILLA.rowBottomBorder, background: enabledForCourse ? (isEditing ? editableCellBg : "transparent") : disabledCellBg, position: "relative" }}>
@@ -3034,10 +3043,10 @@ export default function TeacherPage() {
                                                   if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
                                                   setGradeDraft((p) => ({ ...p, [key]: v }));
                                                 }}
-                                                placeholder={enabledForCourse ? "—" : "-"}
+                                                placeholder={enabledForCourse ? pendingPlaceholder : "-"}
                                                 onFocus={(e) => { if (editable) { e.currentTarget.style.background = getGrillaFocusCellBg(isDarkTheme); e.currentTarget.style.boxShadow = "inset 0 0 0 1.5px #3b82f6"; } }}
                                                 onBlur={(e) => { e.currentTarget.style.background = editable ? editableCellBg : "transparent"; e.currentTarget.style.boxShadow = "none"; }}
-                                                style={{ width: "100%", minWidth: 0, height: 26, border: "none", borderRadius: 0, outline: "none", background: editable ? editableCellBg : "transparent", boxShadow: "none", padding: "0 10px", fontSize: 13, lineHeight: 1, fontWeight: editable ? 700 : 500, color: enabledForCourse ? cellTextColor : isDarkTheme ? "var(--muted)" : "#94a3b8", cursor: editable ? "text" : "default", opacity: enabledForCourse ? 1 : 0.6 }}
+                                                style={{ width: "100%", minWidth: 0, height: 26, border: "none", borderRadius: 0, outline: "none", background: editable ? editableCellBg : "transparent", boxShadow: "none", padding: "0 10px", fontSize: 13, lineHeight: 1, fontWeight: editable ? 700 : 500, color: enabledForCourse ? (hasClosedGrade && gradeDraft[key] !== "" && gradeDraft[key] !== undefined && Number(gradeDraft[key]) < 70 ? "#dc2626" : cellTextColor) : isDarkTheme ? "var(--muted)" : "#94a3b8", cursor: editable ? "text" : "default", opacity: enabledForCourse ? 1 : 0.6 }}
                                               />
                                             )}
                                           </td>

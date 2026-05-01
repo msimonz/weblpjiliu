@@ -2,7 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../middlewares/auth.js";
 import { supabaseAdmin } from "../supabase.js";
 import { requireAnioVigenteForCourse, handleYearError } from "../lib/anioLectivo.js";
-import { ensureGradeRowsForStudent } from "../lib/gradesBootstrap.js";
+import { closeExpiredExams } from "../lib/examClosure.js";
 
 export const studentRouter = Router();
 
@@ -155,9 +155,9 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   const level = Number(activeCourse.level);
   const activeCourseId = activeCourse.id;
   try {
-    await ensureGradeRowsForStudent(userId, activeCourseId);
+    await closeExpiredExams({ studentId: userId, courseIds: [activeCourseId] });
   } catch (e) {
-    return res.status(500).json({ error: e?.message || "Error inicializando notas del estudiante" });
+    return res.status(500).json({ error: e?.message || "Error cerrando exámenes vencidos" });
   }
 
   // 1) Traer TODAS las materias del nivel con módulo y grupo
@@ -202,7 +202,9 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
       group_name: groupId ? (groupNameMap.get(groupId) ?? null) : null,
       orden: cls.orden ?? null,
       sum: 0,
-      hasGrade: false,
+      sumPercent: 0,
+      totalEvals: 0,
+      closedEvals: 0,
     });
 
     if (groupId) {
@@ -213,7 +215,9 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
           module_name: cls.module?.name ?? null,
           classes: [],
           sum: 0,
-          hasGrade: false,
+          sumPercent: 0,
+          totalEvals: 0,
+          closedEvals: 0,
         });
       }
       byGroup.get(groupId).classes.push({
@@ -255,21 +259,29 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   for (const ev of evaluations) {
     const percent = Number(ev.percent ?? 0);
     const g = gradeMap.get(Number(ev.id)) ?? null;
-    const grade = g?.grade == null ? null : Number(g.grade);
-    if (grade === null) continue;
+    const grade = g?.finished_at && g?.grade != null ? Number(g.grade) : null;
 
     if (ev.id_group) {
       const groupId = Number(ev.id_group);
       if (byGroup.has(groupId)) {
-        byGroup.get(groupId).sum += grade * percent / 100;
-        byGroup.get(groupId).hasGrade = true;
+        const groupAcc = byGroup.get(groupId);
+        groupAcc.totalEvals += 1;
+        if (grade !== null) {
+          groupAcc.sum += grade * percent / 100;
+          groupAcc.sumPercent += percent;
+          groupAcc.closedEvals += 1;
+        }
       }
     } else if (ev.id_class) {
       const classId = Number(ev.id_class);
       const classAcc = byClass.get(classId);
       if (classAcc && !classAcc.group_id) {
-        classAcc.sum += grade * percent / 100;
-        classAcc.hasGrade = true;
+        classAcc.totalEvals += 1;
+        if (grade !== null) {
+          classAcc.sum += grade * percent / 100;
+          classAcc.sumPercent += percent;
+          classAcc.closedEvals += 1;
+        }
       }
     }
   }
@@ -280,6 +292,8 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
 
   for (const x of byClass.values()) {
     if (x.group_id) continue;
+    const complete = x.totalEvals > 0 && x.closedEvals === x.totalEvals;
+    const weighted = x.closedEvals > 0 ? Number(x.sum.toFixed(2)) : null;
     soloItems.push({
       class_id: x.class_id,
       group_id: null,
@@ -287,7 +301,11 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
       module_name: x.module_name,
       name: x.name,
       classes: [],
-      weighted: x.hasGrade ? Number(x.sum.toFixed(2)) : null,
+      weighted,
+      sumPercent: x.sumPercent,
+      complete,
+      totalEvals: x.totalEvals,
+      closedEvals: x.closedEvals,
     });
   }
 
@@ -297,6 +315,8 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
       const bo = b.orden ?? 999999;
       return ao - bo || String(a.name).localeCompare(String(b.name), "es", { sensitivity: "base" });
     });
+    const complete = g.totalEvals > 0 && g.closedEvals === g.totalEvals;
+    const weighted = g.closedEvals > 0 ? Number(g.sum.toFixed(2)) : null;
     groupItems.push({
       class_id: classesSorted[0]?.id ?? 0,
       group_id: g.group_id,
@@ -304,7 +324,11 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
       module_name: g.module_name,
       name: g.group_name,
       classes: classesSorted,
-      weighted: g.hasGrade ? Number(g.sum.toFixed(2)) : null,
+      weighted,
+      sumPercent: g.sumPercent,
+      complete,
+      totalEvals: g.totalEvals,
+      closedEvals: g.closedEvals,
     });
   }
 
@@ -318,10 +342,13 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
       name:       x.name,
       module_name: x.module_name ?? null,
       weighted:   x.weighted,
+      complete:   x.complete,
+      totalEvals: x.totalEvals,
+      closedEvals: x.closedEvals,
     }))
     .sort((a, b) => {
-      const ag = a.weighted !== null ? 0 : 1;
-      const bg = b.weighted !== null ? 0 : 1;
+      const ag = a.complete ? 0 : (a.weighted !== null ? 1 : 2);
+      const bg = b.complete ? 0 : (b.weighted !== null ? 1 : 2);
       if (ag !== bg) return ag - bg;
       return cmpStr(a.module_name, b.module_name) || cmpStr(a.name, b.name);
     });
@@ -330,8 +357,16 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   let passed = 0, failed = 0, pending = 0, avgSum = 0, avgCount = 0;
   for (const it of items) {
     if (it.weighted === null) { pending += 1; continue; }
+    const normalizedGrade = it.sumPercent > 0
+      ? (it.weighted / it.sumPercent) * 100
+      : it.weighted;
+    const isFailed = normalizedGrade < PASS_GRADE;
+    if (!it.complete) {
+      if (isFailed) failed += 1; else pending += 1;
+      continue;
+    }
     avgSum += it.weighted; avgCount += 1;
-    if (it.weighted >= PASS_GRADE) passed += 1; else failed += 1;
+    if (isFailed) failed += 1; else passed += 1;
   }
   const avg_weighted = avgCount > 0 ? Number((avgSum / avgCount).toFixed(2)) : null;
 
@@ -372,12 +407,6 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
     if (histEntry?.course?.id) activeCourse = histEntry.course;
   }
 
-  try {
-    await ensureGradeRowsForStudent(userId, activeCourse.id);
-  } catch (e) {
-    return res.status(500).json({ error: e?.message || "Error inicializando notas del estudiante" });
-  }
-
   const scopeFilters = groupId
     ? [`id_group.eq.${groupId}`]
     : [`id_class.eq.${classId}`];
@@ -399,6 +428,12 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
   }
 
   const evalIds = evaluations.map((e) => e.id);
+
+  try {
+    await closeExpiredExams({ studentId: userId, courseIds: [activeCourse.id], evaluationIds: evalIds });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error cerrando exámenes vencidos" });
+  }
 
   const typeIds = [
     ...new Set(
@@ -476,7 +511,7 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
       type: resolvedType,
       title: ev.title,
       percent: Number(ev.percent ?? 0),
-      grade: g ? Number(g.grade ?? 0) : null,
+      grade: g?.finished_at ? Number(g.grade ?? 0) : null,
       finished_at: g?.finished_at ?? null,
       attempts: g?.attempts ?? null,
       fecha_fin: fechaFinMap.get(Number(ev.id)) ?? null,
@@ -485,17 +520,19 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
   });
 
   let sum = 0;
-  let hasGrade = false;
+  let allClosed = items.length > 0;
   for (const it of items) {
-    if (it.grade === null) continue;
+    if (it.grade === null) {
+      allClosed = false;
+      continue;
+    }
     const w = Number(it.percent ?? 0);
     sum += it.grade * w / 100;
-    hasGrade = true;
   }
 
-  const weighted = hasGrade ? Number(sum.toFixed(2)) : null;
+  const weighted = items.some((it) => it.grade !== null) ? Number(sum.toFixed(2)) : null;
 
-  return res.json({ blocked: false, items, weighted, course: activeCourse });
+  return res.json({ blocked: false, items, weighted, complete: allClosed, course: activeCourse });
 });
 
 // ─── BLOQUE 3 — Exámenes Online (Estudiante) ────────────────────────────────

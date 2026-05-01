@@ -38,6 +38,9 @@ type SummaryItem = {
   name: string;
   module_name: string | null;
   weighted: number | null;
+  complete: boolean;
+  totalEvals?: number;
+  closedEvals?: number;
 };
 
 type SummaryStats = {
@@ -111,7 +114,8 @@ export default function DashboardPage() {
 
   const [loadingGrades, setLoadingGrades] = useState(false);
   const [items, setItems] = useState<GradeItem[]>([]);
-  const [, setWeighted] = useState<number | null>(null);
+  const [weighted, setWeighted] = useState<number | null>(null);
+  const [weightedComplete, setWeightedComplete] = useState(false);
 
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryItems, setSummaryItems] = useState<SummaryItem[]>([]);
@@ -196,6 +200,7 @@ export default function DashboardPage() {
     setOpenSug(false);
     setItems([]);
     setWeighted(null);
+    setWeightedComplete(false);
     setError(null);
   }, [level]);
 
@@ -206,6 +211,7 @@ export default function DashboardPage() {
     setOpenSug(false);
     setItems([]);
     setWeighted(null);
+    setWeightedComplete(false);
     setError(null);
     setSummaryItems([]);
     setSummaryStats(null);
@@ -292,6 +298,7 @@ export default function DashboardPage() {
       const res = await apiFetch(url);
       setItems(res?.items || []);
       setWeighted(typeof res?.weighted === "number" ? res.weighted : null);
+      setWeightedComplete(Boolean(res?.complete));
     } catch (e) {
       setError((e as { message?: string })?.message || "Error consultando notas");
     } finally {
@@ -340,8 +347,9 @@ export default function DashboardPage() {
         ? (examByGroupId.get(s.group_id) ?? [])
         : (examByClassId.get(s.class_id) ?? []);
       if (avList.some(e => !e.ya_rendido)) return 0;
-      if (s.weighted !== null) return 1;
-      return 2;
+      if (s.complete) return 1;
+      if (s.weighted !== null) return 2;
+      return 3;
     };
     return [...summaryItems].sort((a, b) => {
       const pa = priority(a), pb = priority(b);
@@ -353,7 +361,7 @@ export default function DashboardPage() {
   const PASS_GRADE = summaryStats?.pass_grade ?? 70;
   const gradeTextColor = (value: number | null) => {
     if (value === null) return "inherit";
-    return value >= PASS_GRADE ? "rgb(21,128,61)" : "rgb(185,28,28)";
+    return value >= PASS_GRADE ? "var(--text)" : "rgb(185,28,28)";
   };
 
   const passed = summaryStats?.passed ?? 0;
@@ -775,7 +783,12 @@ export default function DashboardPage() {
                               sortedSummaryItems.flatMap((s, sIdx) => {
                                 const isGroup = !!s.group_id && s.classes.length > 0;
                                 const isOdd   = sIdx % 2 === 0;
-                                const noteColor = s.weighted === null ? "var(--text)" : gradeTextColor(s.weighted);
+                                const noteColor = s.weighted === null
+                                  ? "var(--muted)"
+                                  : s.complete
+                                    ? gradeTextColor(s.weighted)
+                                    : "var(--muted)";
+                                const noteOpacity = s.complete || s.weighted === null ? 1 : 0.22;
                                 const noteText  = s.weighted === null ? "—" : s.weighted.toFixed(2);
                                 const groupTdBg = isOdd ? "var(--tr-odd-bg)" : "var(--tr-even-bg)";
 
@@ -805,11 +818,18 @@ export default function DashboardPage() {
                                       );
                                     }
                                   }
+                                  const isPartial = s.weighted !== null && !s.complete;
                                   return (
                                     <button
                                       type="button"
                                       onClick={() => handleConsult({ id: s.class_id, name: s.name, group_id: s.group_id })}
-                                      className="btn actionBtn fit-btn"
+                                      className="btn fit-btn"
+                                      style={isPartial ? {
+                                        background: "#9ca3af",
+                                        color: "#fff",
+                                        border: "1px solid #6b7280",
+                                        boxShadow: "none",
+                                      } : undefined}
                                     >
                                       Detalle
                                     </button>
@@ -828,7 +848,7 @@ export default function DashboardPage() {
                                         {s.name}
                                       </td>
                                       <td className="fit-td fit-num" style={{ backgroundColor: soloBg, fontWeight: 600, color: noteColor }}>
-                                        {noteText}
+                                        <span style={{ opacity: noteOpacity }}>{noteText}</span>
                                       </td>
                                       <td className="fit-td fit-num" style={{ backgroundColor: soloBg }}>{actionBtn}</td>
                                     </tr>
@@ -859,7 +879,7 @@ export default function DashboardPage() {
                                     </td>
                                     <td className="fit-td fit-num"
                                       style={{ backgroundColor: tdBg, fontWeight: 600, color: noteColor, verticalAlign: "middle" }}>
-                                      {noteText}
+                                      <span style={{ opacity: noteOpacity }}>{noteText}</span>
                                     </td>
                                     <td className="fit-td fit-num"
                                       style={{ backgroundColor: tdBg, verticalAlign: "middle" }}>
@@ -916,6 +936,41 @@ export default function DashboardPage() {
                           <div style={{ fontWeight: 600, fontSize: 16, color: "var(--text)" }}>
                             {selectedClass.name}
                           </div>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+                        <div
+                          style={{
+                            minWidth: 140,
+                            padding: "8px 12px",
+                            borderRadius: 10,
+                            border: "1px solid var(--stroke)",
+                            background: weightedComplete
+                              ? "color-mix(in srgb, var(--card) 88%, transparent)"
+                              : "color-mix(in srgb, var(--stroke) 30%, transparent)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 12,
+                          }}
+                        >
+                          <span style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
+                            {weighted === null ? "Nota" : weightedComplete ? "Nota final" : "Nota parcial"}
+                          </span>
+                          <strong
+                            style={{
+                              color: weighted === null
+                                ? "var(--muted)"
+                                : weightedComplete
+                                  ? gradeTextColor(weighted)
+                                  : "var(--muted)",
+                              opacity: weightedComplete || weighted === null ? 1 : 0.22,
+                              fontSize: 16,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {weighted === null ? "—" : weighted.toFixed(2)}
+                          </strong>
                         </div>
                       </div>
 
@@ -1005,7 +1060,9 @@ export default function DashboardPage() {
                               </tr>
                             ) : (
                               items.map((it) => {
-                                const isExamenRendido = it.type === "Examen" && (it.attempts ?? 0) > 0 && !!it.finished_at;
+                                const isExam = String(it.type || "").toLowerCase() === "examen";
+                                const isNoPresento = it.grade === 0 && it.attempts === 0 && !!it.finished_at;
+                                const isExamenRendido = isExam && (it.attempts ?? 0) > 0 && !!it.finished_at;
                                 async function handleVerExamenClick() {
                                   const MESES = ["ENE","FEB","MAR","ABR","MAY","JUN","JUL","AGO","SEP","OCT","NOV","DIC"];
                                   let fecha_fin: string | null = it.fecha_fin ?? null;
@@ -1087,10 +1144,10 @@ export default function DashboardPage() {
                                       className="fit-td fit-num"
                                       style={{
                                         fontWeight: 700,
-                                        color: it.attempts === 0 ? "inherit" : gradeTextColor(it.grade),
+                                        color: isNoPresento ? "inherit" : gradeTextColor(it.grade),
                                       }}
                                     >
-                                      {it.attempts === 0 ? (
+                                      {isNoPresento ? (
                                         <span
                                           style={{
                                             display: "inline-block",
@@ -1107,7 +1164,7 @@ export default function DashboardPage() {
                                         >
                                           No Presentó
                                         </span>
-                                      ) : it.grade === null ? "—" : Number(it.grade).toFixed(2)}
+                                      ) : it.grade === null ? (isExam ? "—" : "+") : Number(it.grade).toFixed(2)}
                                     </td>
 
                                     <td className="fit-td fit-date" style={{ color: "var(--text)" }}>
@@ -1139,6 +1196,7 @@ export default function DashboardPage() {
                             setQ("");
                             setItems([]);
                             setWeighted(null);
+                            setWeightedComplete(false);
                             setExamLinkMsg(null);
                             loadSummary();
                             apiFetch("/api/student/exam-available")
@@ -1146,7 +1204,11 @@ export default function DashboardPage() {
                               .catch(() => {});
                             if (openClassId) {
                               apiFetch(`/api/student/grades?class_id=${openClassId}${courseId ? `&course_id=${courseId}` : ""}`)
-                                .then((r) => { setItems(r?.items || []); setWeighted(typeof r?.weighted === "number" ? r.weighted : null); })
+                                .then((r) => {
+                                  setItems(r?.items || []);
+                                  setWeighted(typeof r?.weighted === "number" ? r.weighted : null);
+                                  setWeightedComplete(Boolean(r?.complete));
+                                })
                                 .catch(() => {});
                             }
                           }}
@@ -1178,7 +1240,11 @@ export default function DashboardPage() {
               loadSummary();
               if (selectedClass?.id) {
                 apiFetch(`/api/student/grades?class_id=${selectedClass.id}${courseId ? `&course_id=${courseId}` : ""}`)
-                  .then((r) => { setItems(r?.items || []); setWeighted(typeof r?.weighted === "number" ? r.weighted : null); })
+                  .then((r) => {
+                    setItems(r?.items || []);
+                    setWeighted(typeof r?.weighted === "number" ? r.weighted : null);
+                    setWeightedComplete(Boolean(r?.complete));
+                  })
                   .catch(() => {});
               }
             }
@@ -1232,7 +1298,11 @@ export default function DashboardPage() {
             loadSummary();
             if (selectedClass?.id) {
               apiFetch(`/api/student/grades?class_id=${selectedClass.id}${courseId ? `&course_id=${courseId}` : ""}`)
-                .then((r) => { setItems(r?.items || []); setWeighted(typeof r?.weighted === "number" ? r.weighted : null); })
+                .then((r) => {
+                  setItems(r?.items || []);
+                  setWeighted(typeof r?.weighted === "number" ? r.weighted : null);
+                  setWeightedComplete(Boolean(r?.complete));
+                })
                 .catch(() => {});
             }
           }}

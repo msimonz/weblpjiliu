@@ -104,6 +104,13 @@ describe("POST /api/admin/evaluations", () => {
 
     expect(ev?.id_module).not.toBeNull();
     expect(ev?.id_group).not.toBeNull();
+
+    const { data: grades } = await supabaseAdmin
+      .from("grades")
+      .select("id_student,id_exam")
+      .eq("id_exam", id);
+
+    expect(grades || []).toHaveLength(0);
   });
 
   it("rechaza si el porcentaje supera 100", async () => {
