@@ -972,18 +972,23 @@ adminRouter.get("/class-grade-grid", requireAuth, requireAdminOrSecretary, async
 adminRouter.get("/group-grade-grid", requireAuth, requireAdminOrSecretary, async (req, res) => {
   try {
     const groupId = Number(req.query.group_id);
+    const courseId = toInt(req.query.course_id);
     if (!groupId) return res.status(400).json({ error: "group_id requerido" });
 
-    const { data: evRows, error: evErr } = await supabaseAdmin
+    let evQuery = supabaseAdmin
       .from("evaluation")
-      .select(`id,title,percent,created_at,id_course,id_class,id_group,id_type,
+      .select(`id,title,percent,created_at,id_course,id_class,id_group,id_module,id_type,
         course:course(id,name,level,year),
         class:class(id,name,level),
         evaluation_type:evaluation_type(id,type),
+        module:module(id,name),
         group:group(id,name)`)
       .eq("id_group", groupId)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true });
+    if (courseId) evQuery = evQuery.eq("id_course", courseId);
+
+    const { data: evRows, error: evErr } = await evQuery;
 
     if (evErr) return res.status(500).json({ error: evErr.message });
     const evals = evRows || [];
@@ -1033,7 +1038,7 @@ adminRouter.get("/grade-grid", requireAuth, requireAdminOrSecretary, async (req,
     const moduleId = toInt(req.query.module_id);
     const level    = toInt(req.query.level); // 0 or omit = all levels
 
-    // 1. Resolve which classes to include
+    // 1. Resolve which classes/modules to include
     let classQuery = supabaseAdmin.from("class").select("id,name,level,id_module");
     if (classId) {
       classQuery = classQuery.eq("id", classId);
@@ -1049,22 +1054,50 @@ adminRouter.get("/grade-grid", requireAuth, requireAdminOrSecretary, async (req,
     if (classIds.length === 0)
       return res.json({ classes: [], evaluations: [], students: [], grades: [] });
 
-    // 2. Get evaluations for those classes
-    let evQuery = supabaseAdmin
+    const includeGroupEvaluations = !classId;
+    const moduleIds = includeGroupEvaluations
+      ? [...new Set((classRows || []).map((c) => Number(c.id_module)).filter(Boolean))]
+      : [];
+
+    // 2. Get evaluations for those classes plus grouped evaluations in the same scope
+    let classEvQuery = supabaseAdmin
       .from("evaluation")
-      .select(`id,title,percent,created_at,id_course,id_class,id_type,id_teacher,
+      .select(`id,title,percent,created_at,id_course,id_class,id_group,id_module,id_type,id_teacher,
         course:course(id,name,level,year),
         class:class(id,name,level),
+        module:module(id,name),
+        group:group(id,name),
         evaluation_type:evaluation_type(id,type)`)
       .in("id_class", classIds)
       .order("id_class", { ascending: true })
       .order("created_at", { ascending: true })
       .order("id", { ascending: true });
-    if (courseId) evQuery = evQuery.eq("id_course", courseId);
+    if (courseId) classEvQuery = classEvQuery.eq("id_course", courseId);
 
-    const { data: evaluations, error: evErr } = await evQuery;
-    if (evErr) return res.status(500).json({ error: evErr.message });
-    const evals = evaluations || [];
+    let groupEvQuery = supabaseAdmin
+      .from("evaluation")
+      .select(`id,title,percent,created_at,id_course,id_class,id_group,id_module,id_type,id_teacher,
+        course:course(id,name,level,year),
+        class:class(id,name,level),
+        module:module(id,name),
+        group:group(id,name),
+        evaluation_type:evaluation_type(id,type)`)
+      .in("id_module", moduleIds)
+      .not("id_group", "is", null)
+      .order("id_group", { ascending: true })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true });
+    if (courseId) groupEvQuery = groupEvQuery.eq("id_course", courseId);
+
+    const [
+      { data: classEvaluations, error: classEvErr },
+      { data: groupEvaluations, error: groupEvErr },
+    ] = await Promise.all([classEvQuery, moduleIds.length ? groupEvQuery : Promise.resolve({ data: [], error: null })]);
+
+    if (classEvErr) return res.status(500).json({ error: classEvErr.message });
+    if (groupEvErr) return res.status(500).json({ error: groupEvErr.message });
+
+    const evals = [...(classEvaluations || []), ...(groupEvaluations || [])];
 
     // 3. Resolve course IDs for student lookup
     let courseIds = courseId
@@ -1244,10 +1277,6 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
 
     if (evErr) return res.status(500).json({ error: evErr.message });
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
-
-    if (String(ev.evaluation_type?.type || "").toLowerCase() === "examen") {
-      return res.status(400).json({ error: "Las notas de examen se registran al presentar el examen o por cierre automático" });
-    }
 
     let stQuery = supabaseAdmin.from("users").select("id,cedula,name,email,id_course");
     if (ced) {
@@ -1833,6 +1862,37 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
 // ============================================================================
 // 7b) BUSCAR USUARIO POR CÉDULA
 // ============================================================================
+adminRouter.get("/users/search", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const q = cleanStr(req.query?.q || "");
+    if (!q) return res.status(400).json({ error: "q requerido" });
+
+    const pattern = `%${q}%`;
+
+    const { data, error } = await supabaseAdmin
+      .from("users")
+      .select("id, name, email, cedula, code_jiliu, id_course, course:course!users_id_course_fkey(id, name)")
+      .or(`cedula.ilike.${pattern},name.ilike.${pattern},email.ilike.${pattern},code_jiliu.ilike.${pattern}`)
+      .limit(30);
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const items = await Promise.all((data || []).map(async (u) => {
+      const { data: ut } = await supabaseAdmin
+        .from("user_type")
+        .select("type(code)")
+        .eq("id_user", u.id);
+      const roles = (ut || []).map((r) => r.type?.code).filter(Boolean);
+      const { course, ...rest } = u;
+      return { ...rest, roles, course_name: course?.name || null };
+    }));
+
+    return res.json({ items });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error buscando personas" });
+  }
+});
+
 adminRouter.get("/user-by-cedula", requireAuth, requireAdmin, async (req, res) => {
   try {
     const cedula = cleanStr(req.query?.cedula || "");

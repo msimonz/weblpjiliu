@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, setImpersonateToken } from "@/lib/api";
 import { roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
@@ -411,14 +411,23 @@ export default function TeacherPage() {
     (async () => {
       setLoadingMe(true);
       try {
-        const { data } = await supabase.auth.getSession();
-        if (!data.session) return router.replace("/login");
+        const params = new URLSearchParams(window.location.search);
+        const impToken = params.get("impersonate");
 
-        const info = await apiFetch("/api/auth/me");
-        setMe(info);
-        const activeRole = getActiveRole(info);
+        if (impToken) {
+          setImpersonateToken(impToken);
+          const info = await apiFetch("/api/auth/me");
+          setMe(info);
+        } else {
+          const { data } = await supabase.auth.getSession();
+          if (!data.session) return router.replace("/login");
 
-        if (activeRole !== "T") return router.replace(roleToRoute(activeRole));
+          const info = await apiFetch("/api/auth/me");
+          setMe(info);
+          const activeRole = getActiveRole(info);
+
+          if (activeRole !== "T") return router.replace(roleToRoute(activeRole));
+        }
       } catch {
         router.replace("/login");
       } finally {
