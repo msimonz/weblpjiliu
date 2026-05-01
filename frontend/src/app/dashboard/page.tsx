@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, setImpersonateToken } from "@/lib/api";
 import { roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
@@ -28,6 +28,8 @@ type GradeItem = {
   attempts: number | null;
   fecha_fin: string | null;
   fecha_limite_ver: string | null;
+  teacher_id?: string | null;
+  teacher_name?: string | null;
 };
 
 type SummaryItem = {
@@ -116,6 +118,7 @@ export default function DashboardPage() {
   const [items, setItems] = useState<GradeItem[]>([]);
   const [weighted, setWeighted] = useState<number | null>(null);
   const [weightedComplete, setWeightedComplete] = useState(false);
+  const [detailTeacherName, setDetailTeacherName] = useState<string | null>(null);
 
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryItems, setSummaryItems] = useState<SummaryItem[]>([]);
@@ -145,13 +148,22 @@ export default function DashboardPage() {
     (async () => {
       setMeLoading(true);
       try {
-        const { data } = await supabase.auth.getSession();
-        if (!data.session) return router.replace("/login");
-        const info = await apiFetch("/api/auth/me");
-        setMe(info);
+        const params = new URLSearchParams(window.location.search);
+        const impToken = params.get("impersonate");
 
-        const activeRole = getActiveRole(info);
-        if (activeRole !== "S") return router.replace(roleToRoute(activeRole));
+        if (impToken) {
+          setImpersonateToken(impToken);
+          const info = await apiFetch("/api/auth/me");
+          setMe(info);
+        } else {
+          const { data } = await supabase.auth.getSession();
+          if (!data.session) return router.replace("/login");
+          const info = await apiFetch("/api/auth/me");
+          setMe(info);
+
+          const activeRole = getActiveRole(info);
+          if (activeRole !== "S") return router.replace(roleToRoute(activeRole));
+        }
       } catch {
         router.replace("/login");
       } finally {
@@ -201,6 +213,7 @@ export default function DashboardPage() {
     setItems([]);
     setWeighted(null);
     setWeightedComplete(false);
+    setDetailTeacherName(null);
     setError(null);
   }, [level]);
 
@@ -212,6 +225,7 @@ export default function DashboardPage() {
     setItems([]);
     setWeighted(null);
     setWeightedComplete(false);
+    setDetailTeacherName(null);
     setError(null);
     setSummaryItems([]);
     setSummaryStats(null);
@@ -292,6 +306,7 @@ export default function DashboardPage() {
 
     setError(null);
     setLoadingGrades(true);
+    setDetailTeacherName(null);
     try {
       const scope = groupId ? `group_id=${groupId}` : `class_id=${classId}`;
       const url = `/api/student/grades?${scope}${courseId ? `&course_id=${courseId}` : ""}`;
@@ -299,6 +314,7 @@ export default function DashboardPage() {
       setItems(res?.items || []);
       setWeighted(typeof res?.weighted === "number" ? res.weighted : null);
       setWeightedComplete(Boolean(res?.complete));
+      setDetailTeacherName(res?.teacher_name || null);
     } catch (e) {
       setError((e as { message?: string })?.message || "Error consultando notas");
     } finally {
@@ -930,12 +946,24 @@ export default function DashboardPage() {
                         }}
                       >
                         <div>
+                        <div>
                           <div className="label" style={{ fontWeight: 500 }}>
                             {selectedGroupId ? "Grupo" : "Materia"}
                           </div>
                           <div style={{ fontWeight: 600, fontSize: 16, color: "var(--text)" }}>
                             {selectedClass.name}
                           </div>
+                        </div>
+                        {detailTeacherName ? (
+                          <div style={{ marginTop: 10 }}>
+                            <div className="label" style={{ fontWeight: 500, fontSize: 10 }}>
+                              Profesor
+                            </div>
+                            <div style={{ fontWeight: 500, fontSize: 11, color: "var(--text)" }}>
+                              {detailTeacherName}
+                            </div>
+                          </div>
+                        ) : null}
                         </div>
                       </div>
                       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
@@ -955,7 +983,7 @@ export default function DashboardPage() {
                           }}
                         >
                           <span style={{ color: "var(--muted)", fontSize: 12, whiteSpace: "nowrap" }}>
-                            {weighted === null ? "Nota" : weightedComplete ? "Nota final" : "Nota parcial"}
+                            {weighted === null ? "Nota" : weightedComplete ? "Nota Final" : "Nota parcial"}
                           </span>
                           <strong
                             style={{
@@ -1197,6 +1225,7 @@ export default function DashboardPage() {
                             setItems([]);
                             setWeighted(null);
                             setWeightedComplete(false);
+                            setDetailTeacherName(null);
                             setExamLinkMsg(null);
                             loadSummary();
                             apiFetch("/api/student/exam-available")
@@ -1208,6 +1237,7 @@ export default function DashboardPage() {
                                   setItems(r?.items || []);
                                   setWeighted(typeof r?.weighted === "number" ? r.weighted : null);
                                   setWeightedComplete(Boolean(r?.complete));
+                                  setDetailTeacherName(r?.teacher_name || null);
                                 })
                                 .catch(() => {});
                             }
@@ -1244,6 +1274,7 @@ export default function DashboardPage() {
                     setItems(r?.items || []);
                     setWeighted(typeof r?.weighted === "number" ? r.weighted : null);
                     setWeightedComplete(Boolean(r?.complete));
+                    setDetailTeacherName(r?.teacher_name || null);
                   })
                   .catch(() => {});
               }
@@ -1302,6 +1333,7 @@ export default function DashboardPage() {
                   setItems(r?.items || []);
                   setWeighted(typeof r?.weighted === "number" ? r.weighted : null);
                   setWeightedComplete(Boolean(r?.complete));
+                  setDetailTeacherName(r?.teacher_name || null);
                 })
                 .catch(() => {});
             }

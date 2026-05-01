@@ -2,6 +2,12 @@ import { supabase } from "@/lib/supabaseClient";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
 
+let _impersonateToken: string | null = null;
+
+export function setImpersonateToken(token: string | null) {
+  _impersonateToken = token;
+}
+
 type ApiFetchOptions = RequestInit & {
   skipAuthRedirect?: boolean;
   requireAuth?: boolean;
@@ -88,8 +94,11 @@ export async function apiFetch<T = any>(path: string, init: ApiFetchOptions = {}
   const url = `${API_BASE}${path}`;
 
   let token: string | null = null;
+  const isImpersonating = !!_impersonateToken;
 
-  if (requireAuth) {
+  if (isImpersonating) {
+    token = _impersonateToken;
+  } else if (requireAuth) {
     token = await getFreshAccessToken();
 
     if (!token) {
@@ -114,7 +123,7 @@ export async function apiFetch<T = any>(path: string, init: ApiFetchOptions = {}
     throw new Error((e as { message?: string })?.message || "No se pudo conectar con el servidor");
   }
 
-  if (requireAuth && res.status === 401) {
+  if (!isImpersonating && requireAuth && res.status === 401) {
     const refreshed = await refreshAccessToken();
 
     if (refreshed) {
@@ -129,7 +138,7 @@ export async function apiFetch<T = any>(path: string, init: ApiFetchOptions = {}
 
   const { text, json } = await parseResponse(res);
 
-  if (requireAuth && res.status === 401) {
+  if (!isImpersonating && requireAuth && res.status === 401) {
     await signOutAndRedirect(skipAuthRedirect);
     throw new Error("Tu sesión expiró. Inicia sesión nuevamente.");
   }

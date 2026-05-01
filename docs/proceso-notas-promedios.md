@@ -41,7 +41,7 @@ Casos esperados:
    - La nota computa para la materia o grupo.
 
 2. **Estudiante inicia el examen pero no lo envía**
-   - El sistema puede tener una fila técnica en `grades` mientras el examen está en progreso.
+   - Al iniciar el examen, el sistema puede crear o asegurar una fila técnica en `grades` con `grade = 0`, porque `rta_examen` depende de esa relación.
    - Esa fila no debe computar mientras no tenga `finished_at`.
    - Si vence el tiempo del examen o se ejecuta el cierre automático, se califica con las respuestas guardadas.
    - Se guarda la nota real obtenida.
@@ -93,9 +93,11 @@ Reglas:
 
 Esta regla también protege contra datos antiguos generados automáticamente con `grade = 0` y sin `finished_at`.
 
-## Cierre automático de exámenes vencidos closeExpiredExams, 
+## Cierre automático de exámenes vencidos: `closeExpiredExams`
 
 Cada vez que un usuario de cualquier rol ingrese a una opción de consulta de notas, debe ejecutarse un proceso de cierre de exámenes vencidos.
+
+El documento operativo de referencia para este proceso es `docs/cierre-examenes.md`.
 
 ### Alcance por rol
 
@@ -105,10 +107,13 @@ Cada vez que un usuario de cualquier rol ingrese a una opción de consulta de no
 ### Reglas de cierre
 
 1. El proceso debe buscar únicamente exámenes:
-   - habilitados,
+   - de tipo `Examen`,
+   - con programación en `examen_programacion`,
    - vencidos por `fecha_fin`,
    - del curso o alcance consultado,
    - que todavía no tengan nota cerrada para el estudiante.
+
+   Para el cierre automático no es requisito que la programación esté `habilitado = true`; basta con que exista `fecha_fin` y que ya esté vencida.
 
 2. Si el estudiante nunca inició el examen:
    - insertar `grade = 0`,
@@ -116,19 +121,26 @@ Cada vez que un usuario de cualquier rol ingrese a una opción de consulta de no
    - insertar `finished_at`,
    - estado visual: "No presentó".
 
-3. Si el estudiante inició el examen y tiene `rta_examen` sin finalizar:
+3. Si el estudiante terminó el examen y existe `rta_examen.finalizado_at`, pero `grades` todavía no está cerrado:
+   - sincronizar `grades.grade` con `rta_examen.calificacion`,
+   - definir `attempts = 1`,
+   - definir `finished_at = rta_examen.finalizado_at`,
+   - no recalcular si ya existe nota cerrada.
+
+4. Si el estudiante inició el examen y tiene `rta_examen` sin finalizar:
    - calificar con las respuestas guardadas,
    - guardar esa calificación,
    - definir `attempts = 1`,
    - definir `finished_at`,
    - no marcar como "No presentó".
 
-4. Si existe una fila técnica o heredada en `grades` sin `finished_at` pero no existe `rta_examen`:
-   - no sobrescribir automáticamente con cero,
-   - mantener como pendiente,
-   - no computar para promedio.
+5. Si existe una fila técnica o heredada en `grades` sin `finished_at` pero no existe `rta_examen`:
+   - cerrar la fila conservando la nota que ya tiene,
+   - definir `finished_at`,
+   - definir `attempts = 0` solo si `attempts` estaba nulo,
+   - no sobrescribir automáticamente la nota con cero.
 
-5. Si ya existe `grades.finished_at`:
+6. Si ya existe `grades.finished_at`:
    - no modificar,
    - no recalcular,
    - no sobrescribir con cero.
@@ -141,7 +153,7 @@ El cierre automático debe ser óptimo:
 - evitar consultas sobre toda la base,
 - evitar duplicados usando la llave natural estudiante/evaluación,
 - no reprocesar notas ya cerradas,
-- no pisar notas reales ni notas parciales sin validar,
+- no pisar notas reales ni notas parciales ya cerradas,
 - ser seguro si dos usuarios consultan notas al mismo tiempo.
 
 ## Cálculo de nota final por materia o grupo

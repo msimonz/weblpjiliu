@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, setImpersonateToken } from "@/lib/api";
 import { roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
@@ -31,12 +31,21 @@ export default function MonitorPage() {
     (async () => {
       setMeLoading(true);
       try {
-        const { data } = await supabase.auth.getSession();
-        if (!data.session) return router.replace("/login");
-        const info = await apiFetch("/api/auth/me");
-        setMe(info);
-        const activeRole = getActiveRole(info);
-        if (activeRole !== "M") return router.replace(roleToRoute(activeRole));
+        const params = new URLSearchParams(window.location.search);
+        const impToken = params.get("impersonate");
+
+        if (impToken) {
+          setImpersonateToken(impToken);
+          const info = await apiFetch("/api/auth/me");
+          setMe(info);
+        } else {
+          const { data } = await supabase.auth.getSession();
+          if (!data.session) return router.replace("/login");
+          const info = await apiFetch("/api/auth/me");
+          setMe(info);
+          const activeRole = getActiveRole(info);
+          if (activeRole !== "M") return router.replace(roleToRoute(activeRole));
+        }
       } catch {
         router.replace("/login");
       } finally {

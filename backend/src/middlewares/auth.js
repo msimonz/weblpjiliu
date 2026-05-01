@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "../supabase.js";
+import { verifyImpToken } from "../lib/impToken.js";
 
 // ===============
 // Helper: cargar profile + roles
@@ -51,6 +52,25 @@ function extractBearerToken(req) {
 }
 
 async function validateTokenAndLoadContext(token) {
+  // Intentar token de impersonación primero
+  const impSecret = process.env.IMPERSONATE_SECRET;
+  if (impSecret) {
+    const payload = verifyImpToken(token, impSecret);
+    if (payload) {
+      return {
+        ok: true,
+        auth: {
+          user: { id: payload.sub, email: payload.profile?.email },
+          profile: payload.profile || null,
+          course: payload.course || null,
+          roles: payload.roles || [],
+          role: payload.role || null,
+        },
+      };
+    }
+  }
+
+  // Token normal de Supabase
   const { data, error } = await supabaseAdmin.auth.getUser(token);
 
   if (error || !data?.user) {

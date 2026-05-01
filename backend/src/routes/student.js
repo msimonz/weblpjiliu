@@ -414,7 +414,7 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
   // evaluaciones de esa materia o grupo en el curso activo
   let evalQuery = supabaseAdmin
     .from("evaluation")
-    .select("id,title,percent,created_at,id_type")
+    .select("id,title,percent,created_at,id_type,id_teacher,teacher:users!id_teacher(id,name)")
     .eq("id_course", activeCourse.id)
     .or(scopeFilters.join(","))
     .order("created_at", { ascending: true });
@@ -516,6 +516,8 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
       attempts: g?.attempts ?? null,
       fecha_fin: fechaFinMap.get(Number(ev.id)) ?? null,
       fecha_limite_ver: fechaLimiteVerMap.get(Number(ev.id)) ?? null,
+      teacher_id: ev.id_teacher ?? null,
+      teacher_name: ev.teacher?.name ?? null,
     };
   });
 
@@ -532,7 +534,10 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
 
   const weighted = items.some((it) => it.grade !== null) ? Number(sum.toFixed(2)) : null;
 
-  return res.json({ blocked: false, items, weighted, complete: allClosed, course: activeCourse });
+  const teacherNames = [...new Set(items.map((it) => it.teacher_name).filter(Boolean))];
+  const teacherName = teacherNames.length === 1 ? teacherNames[0] : teacherNames.join(", ");
+
+  return res.json({ blocked: false, items, weighted, complete: allClosed, teacher_name: teacherName || null, course: activeCourse });
 });
 
 // ─── BLOQUE 3 — Exámenes Online (Estudiante) ────────────────────────────────

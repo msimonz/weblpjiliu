@@ -3,11 +3,10 @@
 > next dev
 
 ▲ Next.js 16.1.6 (Turbopack)
-- Local:         http://localhost:3000
-- Network:       http://10.52.15.6:3000
+- Local:         http://localhost:3002
+- Network:       http://192.168.0.4:3002
 - Environments: .env.local
 
 ✓ Starting...
-✓ Ready in 1100ms
- GET /login 200 in 408ms (compile: 273ms, render: 135ms)
- GET /login 200 in 92ms (compile: 11ms, render: 81ms)
+  Suggestion: If you intended to restart next dev, terminate the other process, and then try again.
+[?25h

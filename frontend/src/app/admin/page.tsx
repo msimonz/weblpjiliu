@@ -60,7 +60,7 @@ type EvalItem = {
   module?: { id: number; name: string } | null;
   group?: { id: number; name: string } | null;
   id_course: number;
-  id_class: number;
+  id_class: number | null;
   id_type: number;
   id_module?: number | null;
   id_group?: number | null;
@@ -104,7 +104,8 @@ type AdminView =
   | "UPSERT"
   | "EVAL_CRUD"
   | "HABILITAR_EXAMENES"
-  | "ANIO_LECTIVO";
+  | "ANIO_LECTIVO"
+  | "IMPERSONATE";
 
 type EvalCrudMode = "class" | "group";
 
@@ -290,10 +291,15 @@ export default function AdminPage() {
   const [uRoles, setURoles] = useState<Record<"S" | "T" | "A" | "M" | "E", boolean>>({
     S: false, T: false, A: false, M: false, E: false,
   });
-  const [uSearching, setUSearching] = useState(false);
+  const [, setUSearching] = useState(false);
   const [uFoundUser, setUFoundUser] = useState(false);
   const [_uNotFound, setUNotFound] = useState(false);
   const [creatingUser, setCreatingUser] = useState(false);
+
+  const [userSearchQ, setUserSearchQ] = useState("");
+  const [userSearchResults, setUserSearchResults] = useState<Array<{ id: string; cedula: string; name: string; email: string; roles: string[]; course_name: string | null }>>([]);
+  const [userSearchLoading, setUserSearchLoading] = useState(false);
+  const [userSearchOpen, setUserSearchOpen] = useState(false);
 
 
   // ===== UPSERT / CAMBIO DE NOTAS =====
@@ -389,6 +395,13 @@ export default function AdminPage() {
   const [alActivating, setAlActivating] = useState<number | null>(null);
   const [alConfirmActivate, setAlConfirmActivate] = useState<number | null>(null);
 
+  const [impCedula, setImpCedula] = useState("");
+  const [impPassword, setImpPassword] = useState("");
+  const [impLoading, setImpLoading] = useState(false);
+  const [impError, setImpError] = useState<string | null>(null);
+  const [impRole, setImpRole] = useState("S");
+  const [impShowPw, setImpShowPw] = useState(false);
+
   const CEDULA_COL_W = 150;
   const ALUMNO_COL_W = 260;
   const _EVAL_COL_W = 170;
@@ -404,6 +417,7 @@ export default function AdminPage() {
   function showErr(text: string) {
     setOkMsg(null);
     setMsg(text);
+    setTimeout(() => setMsg(null), 4000);
   }
 
   function flash(text: string, kind: "ok" | "err" = "ok") {
@@ -771,6 +785,21 @@ export default function AdminPage() {
   }, [courses, ecLevel]);
 
   const ecExistingFiltered = useMemo(() => {
+    const collator = new Intl.Collator("es", { numeric: true, sensitivity: "base" });
+    const levelName = (ev: EvalItem) => {
+      const levelId = ev.class?.level ?? ev.course?.level ?? "";
+      return levels.find((l) => Number(l.id) === Number(levelId))?.name ?? String(levelId);
+    };
+    const text = (value: unknown) => String(value ?? "").trim();
+    const sortKey = (ev: EvalItem) => [
+      levelName(ev),
+      ev.module?.name,
+      ev.group?.name,
+      ev.class?.name,
+      ev.evaluation_type?.type,
+      ev.title,
+    ].map(text);
+
     let items = ecExisting;
     if (ecModuleId) {
       items = items.filter((ev) =>
@@ -784,8 +813,16 @@ export default function AdminPage() {
     if (ecClassId) {
       items = items.filter((ev) => String(ev.id_class) === ecClassId);
     }
-    return items;
-  }, [ecExisting, ecModuleId, ecGroupId, ecClassId]);
+    return [...items].sort((a, b) => {
+      const ak = sortKey(a);
+      const bk = sortKey(b);
+      for (let i = 0; i < ak.length; i += 1) {
+        const cmp = collator.compare(ak[i], bk[i]);
+        if (cmp !== 0) return cmp;
+      }
+      return Number(a.id) - Number(b.id);
+    });
+  }, [ecExisting, ecModuleId, ecGroupId, ecClassId, levels]);
 
   const ecLevelLabel = useMemo(() => {
     return levels.find((l) => l.id === ecLevel)?.name ?? `Nivel ${ecLevel}`;
@@ -1228,6 +1265,9 @@ export default function AdminPage() {
         setUNotFound(false);
         setUploadReport(null);
         setUploadFileName("");
+        setUserSearchQ("");
+        setUserSearchResults([]);
+        setUserSearchOpen(false);
         break;
       case "ASSIGN_TEACHER":
         resetAssignView();
@@ -1522,6 +1562,9 @@ export default function AdminPage() {
     setUFoundUser(false);
     setUNotFound(false);
     setUSearching(false);
+    setUserSearchQ("");
+    setUserSearchResults([]);
+    setUserSearchOpen(false);
   }
 
   async function deleteUser() {
@@ -1536,8 +1579,8 @@ export default function AdminPage() {
     }
   }
 
-  async function searchUserByCedula() {
-    const cedula = uCedula.trim();
+  async function searchUserByCedula(overrideCedula?: string) {
+    const cedula = overrideCedula ?? uCedula.trim();
     if (!cedula) return showErr("Ingresa una cédula para buscar.");
     setUSearching(true);
     setUFoundUser(false);
@@ -1692,7 +1735,9 @@ export default function AdminPage() {
       let res: GradeGridResponse;
       if (classFilter.startsWith("grp:")) {
         const groupId = classFilter.slice(4);
-        res = await apiFetch(`/api/admin/group-grade-grid?group_id=${groupId}`);
+        const params = new URLSearchParams({ group_id: groupId });
+        if (courseFilter !== "all") params.set("course_id", String(courseFilter));
+        res = await apiFetch(`/api/admin/group-grade-grid?${params.toString()}`);
       } else {
         const params = new URLSearchParams();
         if (level !== "" && Number(level) > 0) params.set("level", String(level));
@@ -1771,7 +1816,11 @@ export default function AdminPage() {
   }
 
   function getEvaluationColumnLabel(ev: EvalItem) {
-    const materia = String(ev.class?.name || "").trim();
+    const materia = String(
+      ev.id_group
+        ? `${ev.module?.name ? `${ev.module.name} - ` : ""}${ev.group?.name || ""}`
+        : ev.class?.name || ""
+    ).trim();
     const tipo = String(ev.evaluation_type?.type || "").trim();
     const titulo = String(ev.title || "").trim();
     const pct = `${Number(ev.percent).toFixed(0)}%`;
@@ -2297,6 +2346,7 @@ export default function AdminPage() {
                   EVAL_CRUD: "Crear/Eliminar evaluaciones",
                   HABILITAR_EXAMENES: "Agendar examenes",
                   UPSERT: "Gestionar notas",
+                  IMPERSONATE: "Vista de control",
                 };
                 const triggerLabel = view ? (LABELS[view] ?? "Selecciona opcion...") : "Selecciona opcion...";
 
@@ -2398,7 +2448,18 @@ export default function AdminPage() {
                           <span>Gestionar notas</span>
                         </div>
 
-                        {/* 4. Gestionar evaluaciones */}
+                        {/* 4. Vista de control */}
+                        <div
+                          style={{ ...itemStyle, fontWeight: view === "IMPERSONATE" ? 700 : 400, color: view === "IMPERSONATE" ? "var(--accent)" : "inherit", background: "transparent" }}
+                          onMouseEnter={e => (e.currentTarget.style.background = "color-mix(in srgb, var(--stroke) 50%, transparent)")}
+                          onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                          onClick={() => pickView("IMPERSONATE")}
+                        >
+                          <span style={{ width: 20, flexShrink: 0 }} />
+                          <span>Vista de control</span>
+                        </div>
+
+                        {/* 5. Gestionar evaluaciones */}
                         <div
                           style={{ ...itemStyle, fontWeight: 600, background: menuExpanded === "evaluaciones" ? "color-mix(in srgb, var(--stroke) 60%, transparent)" : "transparent" }}
                           onMouseEnter={e => (e.currentTarget.style.background = "color-mix(in srgb, var(--stroke) 50%, transparent)")}
@@ -3530,6 +3591,119 @@ export default function AdminPage() {
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Crear / Actualizar persona</h2>
 
+              {/* ── Fila 0: Buscar persona (comodín) ── */}
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {/* Input + Buscar — 25% de ancho */}
+                  <div style={{ display: "flex", alignItems: "stretch", border: "1px solid var(--stroke)", borderRadius: 12, overflow: "hidden", height: 42, width: "25%", minWidth: 180, boxShadow: "0 14px 26px rgba(2,132,199,.20)" }}>
+                    <input
+                      className="input"
+                      style={{ flex: 1, minWidth: 0, border: "none", outline: "none", borderRadius: 0, height: "100%", padding: "0 12px", fontSize: 14 }}
+                      placeholder="palabra o numero clave ..."
+                      value={userSearchQ}
+                      onChange={e => { setUserSearchQ(e.target.value); if (!e.target.value) setUserSearchOpen(false); }}
+                      onKeyDown={async e => {
+                        if (e.key === "Enter") {
+                          const q = userSearchQ.trim();
+                          if (!q) return;
+                          setUserSearchLoading(true);
+                          try {
+                            const res = await apiFetch(`/api/admin/users/search?q=${encodeURIComponent(q)}`);
+                            setUserSearchResults(res.items || []);
+                            setUserSearchOpen(true);
+                          } catch (err) {
+                            showErr((err as { message?: string })?.message || "Error buscando");
+                          } finally {
+                            setUserSearchLoading(false);
+                          }
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{ borderRadius: 0, margin: 0, height: "100%", minWidth: 120, background: "linear-gradient(to bottom, #6b7280, #4b5563)", borderColor: "#4b5563", whiteSpace: "nowrap", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}
+                      onClick={async () => {
+                        const q = userSearchQ.trim();
+                        if (!q) return;
+                        setUserSearchLoading(true);
+                        try {
+                          const res = await apiFetch(`/api/admin/users/search?q=${encodeURIComponent(q)}`);
+                          setUserSearchResults(res.items || []);
+                          setUserSearchOpen(true);
+                        } catch (err) {
+                          showErr((err as { message?: string })?.message || "Error buscando");
+                        } finally {
+                          setUserSearchLoading(false);
+                        }
+                      }}
+                    >
+                      {userSearchLoading ? "..." : "Buscar"}
+                    </button>
+                  </div>
+                  {/* Cancelar */}
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{ height: 42, minWidth: 120, marginTop: 0, background: "#4b5563", borderColor: "#4b5563" }}
+                    onClick={() => { resetManualUserForm(); setMsg(null); setOkMsg(null); }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+
+                {/* Lista de resultados */}
+                {userSearchOpen && (
+                  <div style={{ marginTop: 8, display: "flex", justifyContent: "center" }}>
+                  <div style={{ width: "50%", minWidth: 320, borderRadius: 12, border: "1px solid var(--stroke)", overflow: "hidden" }}>
+                    {userSearchResults.length === 0 ? (
+                      <div style={{ padding: "12px 16px", fontSize: 13, color: "var(--muted, #6b7280)" }}>Sin resultados</div>
+                    ) : (
+                      <div style={{ maxHeight: 210, overflowY: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ background: "rgba(14,165,233,.06)" }}>
+                            <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
+                            <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
+                            <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, borderBottom: "1px solid var(--stroke)" }}>Rol</th>
+                            <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, borderBottom: "1px solid var(--stroke)" }}>Curso</th>
+                            <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--stroke)" }}></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {userSearchResults.map((u) => (
+                            <tr key={u.id} style={{ borderBottom: "1px solid var(--stroke)" }}>
+                              <td style={{ padding: "8px 12px" }}>{u.cedula}</td>
+                              <td style={{ padding: "8px 12px" }}>{u.name}</td>
+                              <td style={{ padding: "8px 12px", color: "var(--muted, #6b7280)" }}>{u.roles.map(r => ROLE_OPTIONS.find(o => o.value === r)?.label ?? r).join(", ") || "—"}</td>
+                              <td style={{ padding: "8px 12px", color: "var(--muted, #6b7280)" }}>{u.roles.includes("S") ? (u.course_name || "—") : "—"}</td>
+                              <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                                <button
+                                  type="button"
+                                  className="btn"
+                                  style={{ padding: "4px 22px", fontSize: 12, height: 30, borderRadius: 8, background: "linear-gradient(180deg, #1e40af 0%, #1e3a8a 100%)", borderColor: "#1e3a8a" }}
+                                  onClick={async () => {
+                                    setUserSearchOpen(false);
+                                    setUserSearchQ("");
+                                    setUserSearchResults([]);
+                                    setUCedula(u.cedula);
+                                    await searchUserByCedula(u.cedula);
+                                  }}
+                                >
+                                  Traer
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      </div>
+                    )}
+                  </div>
+                  </div>
+                )}
+              </div>
+
               {/* ── Fila 1: Crear/Actualizar persona ── */}
               <div style={{ marginTop: 10 }}>
                 <div style={{ padding: 14, borderRadius: 18, border: "1px solid var(--stroke)", background: "rgba(14,165,233,.06)" }}>
@@ -3548,28 +3722,16 @@ export default function AdminPage() {
                   </div>
                   <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
 
-                    {/* Cédula + Buscar */}
+                    {/* Cédula */}
                     <div style={{ flex: 1, minWidth: 220 }}>
                       <div className="label">Cédula</div>
-                      <div style={{ display: "flex", alignItems: "stretch", border: "1px solid var(--stroke)", borderRadius: 12, overflow: "hidden", height: 42 }}>
-                        <input
-                          className="input"
-                          style={{ flex: 1, border: "none", outline: "none", borderRadius: 0, height: "100%", padding: "0 10px" }}
-                          inputMode="numeric"
-                          value={uCedula}
-                          onChange={(e) => { setUCedula(e.target.value.replace(/\D/g, "")); setUFoundUser(false); setUNotFound(false); }}
-                          onKeyDown={(e) => { if (e.key === "Enter") searchUserByCedula(); }}
-                        />
-                        <button
-                          type="button"
-                          className="btn"
-                          style={{ borderRadius: 0, margin: 0, height: "100%", background: "linear-gradient(to bottom, #6b7280, #4b5563)", borderColor: "#4b5563", whiteSpace: "nowrap", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}
-                          onClick={searchUserByCedula}
-                          disabled={uSearching}
-                        >
-                          {uSearching ? "..." : "Buscar"}
-                        </button>
-                      </div>
+                      <input
+                        className="input"
+                        style={{ width: "100%", height: 42 }}
+                        inputMode="numeric"
+                        value={uCedula}
+                        onChange={(e) => { setUCedula(e.target.value.replace(/\D/g, "")); setUFoundUser(false); setUNotFound(false); }}
+                      />
                     </div>
 
                     <div style={{ flex: 2, minWidth: 130 }}>
@@ -3597,7 +3759,7 @@ export default function AdminPage() {
 
                     {(uRoles.S || uRoles.M) && (
                       <div style={{ flex: 1, minWidth: 110 }}>
-                        <div className="label">Año</div>
+                        <div className="label">Nivel</div>
                         <select
                           className="select"
                           style={{ width: "100%", height: 42, paddingTop: 0, paddingBottom: 0, boxSizing: "border-box" }}
@@ -3622,7 +3784,7 @@ export default function AdminPage() {
                           disabled={!uLevelId}
                           onChange={(e) => setUCourseId(e.target.value)}
                         >
-                          <option value="">{!uLevelId ? "Selecciona un año" : "Selecciona..."}</option>
+                          <option value="">Selecciona...</option>
                           {coursesForULevel.map((c) => (
                             <option key={c.id} value={String(c.id)}>{c.name}</option>
                           ))}
@@ -3651,14 +3813,6 @@ export default function AdminPage() {
                         Eliminar
                       </button>
                     )}
-                    <button
-                      type="button"
-                      className="btn"
-                      style={{ height: 42, background: "#4b5563", borderColor: "#4b5563" }}
-                      onClick={() => { resetManualUserForm(); setMsg(null); setOkMsg(null); }}
-                    >
-                      Cancelar
-                    </button>
                   </div>
                 </div>
               </div>
@@ -3956,19 +4110,22 @@ export default function AdminPage() {
                         <thead>
                           {/* Subheader row: class names when showing multiple classes */}
                           {upsertClassFilter === "all" && gEvaluations.length > 0 && (() => {
-                            const groups: { classId: number; className: string; count: number }[] = [];
+                            const groups: { key: string; name: string; count: number }[] = [];
                             for (const ev of gEvaluations) {
-                              const cid = ev.id_class;
+                              const key = ev.id_group ? `g:${ev.id_group}` : `c:${ev.id_class}`;
+                              const name = ev.id_group
+                                ? `${ev.module?.name ? `${ev.module.name} - ` : ""}${ev.group?.name || `Grupo ${ev.id_group}`}`
+                                : ev.class?.name || `Materia ${ev.id_class}`;
                               const last = groups[groups.length - 1];
-                              if (last && last.classId === cid) { last.count++; }
-                              else groups.push({ classId: cid, className: ev.class?.name || `Clase ${cid}`, count: 1 });
+                              if (last && last.key === key) { last.count++; }
+                              else groups.push({ key, name, count: 1 });
                             }
                             return (
                               <tr>
                                 <td colSpan={3} style={{ borderBottom: GRILLA.headerBottomBorder, background: GRILLA.headerBgLight, position: "sticky", top: 0, left: 0, zIndex: 7 }} />
                                 {groups.map((g) => (
                                   <td
-                                    key={g.classId}
+                                    key={g.key}
                                     colSpan={g.count}
                                     style={{
                                       padding: "4px 10px",
@@ -3983,7 +4140,7 @@ export default function AdminPage() {
                                       zIndex: 5,
                                     }}
                                   >
-                                    {g.className}
+                                    {g.name}
                                   </td>
                                 ))}
                                 <td style={{ borderBottom: GRILLA.headerBottomBorder, background: GRILLA.headerBgLight, position: "sticky", top: 0, zIndex: 5 }} />
@@ -4432,6 +4589,126 @@ export default function AdminPage() {
           )}
           {view === "HABILITAR_EXAMENES" && (
             <HabilitarExamenes key={viewKey} courses={courses} />
+          )}
+
+          {view === "IMPERSONATE" && (
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 24 }}>
+              <div style={{ width: "100%", maxWidth: 400, boxSizing: "border-box" }}>
+                <div
+                  className="card"
+                  style={{ width: "100%", maxWidth: "100%", boxSizing: "border-box", padding: "18px 16px", borderRadius: 18, overflow: "hidden" }}
+                >
+                  <h1 style={{ margin: "0 0 6px", fontSize: "clamp(24px, 6vw, 28px)", lineHeight: 1.1, letterSpacing: "-0.02em" }}>
+                    Vista de control
+                  </h1>
+
+                  {impError && (
+                    <div className="msgError" style={{ width: "100%", boxSizing: "border-box", marginBottom: 10 }}>
+                      {impError}
+                    </div>
+                  )}
+
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      setImpLoading(true);
+                      setImpError(null);
+                      try {
+                        const res = await apiFetch<{ token: string; role: string }>("/api/auth/impersonate", {
+                          method: "POST",
+                          body: JSON.stringify({ cedula: impCedula.trim(), masterPassword: impPassword, role: impRole }),
+                          requireAuth: false,
+                        });
+                        const route = roleToRoute(res.role as Parameters<typeof roleToRoute>[0]);
+                        window.open(`${route}?impersonate=${encodeURIComponent(res.token)}`, "_blank");
+                        setImpCedula("");
+                        setImpPassword("");
+                      } catch (err) {
+                        setImpError((err as { message?: string })?.message || "Error al abrir vista");
+                      } finally {
+                        setImpLoading(false);
+                      }
+                    }}
+                    style={{ marginTop: 4, display: "grid", gap: 12, width: "100%" }}
+                  >
+                    {/* Rol */}
+                    <div style={{ width: "100%" }}>
+                      <select
+                        className="select"
+                        value={impRole}
+                        onChange={e => setImpRole(e.target.value)}
+                        style={{ width: "100%", minHeight: 46, boxSizing: "border-box", fontSize: 16 }}
+                      >
+                        <option value="S">Estudiante</option>
+                        <option value="T">Profesor</option>
+                        <option value="M">Monitor</option>
+                        <option value="A">Admin</option>
+                        <option value="E">Secretaría</option>
+                      </select>
+                    </div>
+
+                    {/* Cédula */}
+                    <div style={{ width: "100%" }}>
+                      <div className="label" style={{ marginBottom: 6, fontSize: 14 }}>Cédula</div>
+                      <input
+                        className="input"
+                        type="text"
+                        value={impCedula}
+                        onChange={e => {
+                          const v = e.target.value;
+                          if (/^\d*$/.test(v)) { setImpCedula(v); setImpError(null); }
+                          else setImpCedula(v.replace(/\D/g, ""));
+                        }}
+                        placeholder="Ej: 1020304050"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={15}
+                        style={{ width: "100%", minHeight: 46, boxSizing: "border-box", fontSize: 16 }}
+                      />
+                    </div>
+
+                    {/* Clave maestra */}
+                    <div style={{ width: "100%" }}>
+                      <div className="label" style={{ marginBottom: 6, fontSize: 14 }}>Clave maestra</div>
+                      <div style={{ position: "relative", width: "100%" }}>
+                        <input
+                          className="input"
+                          type={impShowPw ? "text" : "password"}
+                          value={impPassword}
+                          onChange={e => { setImpPassword(e.target.value); setImpError(null); }}
+                          placeholder="Clave maestra"
+                          style={{ width: "100%", minHeight: 46, boxSizing: "border-box", fontSize: 16, paddingRight: 52 }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setImpShowPw(v => !v)}
+                          aria-label={impShowPw ? "Ocultar" : "Mostrar"}
+                          style={{
+                            position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                            width: 34, height: 34, borderRadius: 10,
+                            border: "1px solid var(--btn-light-border)",
+                            background: "var(--btn-light-bg)", color: "var(--btn-light-text)",
+                            boxShadow: "var(--btn-light-shadow)", cursor: "pointer",
+                            display: "grid", placeItems: "center", padding: 0,
+                          }}
+                        >
+                          <span style={{ fontSize: 15, lineHeight: 1 }}>{impShowPw ? "🙈" : "👁️"}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      className="btn"
+                      type="submit"
+                      disabled={impLoading || !impCedula.trim() || !impPassword}
+                      style={{ width: "100%", minHeight: 46, boxSizing: "border-box", marginTop: 2, fontSize: 15 }}
+                    >
+                      {impLoading ? "Abriendo..." : "Ingresar"}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </div>
           )}
 
           {view === "ANIO_LECTIVO" && (

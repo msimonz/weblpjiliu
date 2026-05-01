@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireUser, requireAuth } from "../middlewares/auth.js";
 import { supabaseAdmin } from "../supabase.js";
+import { signImpToken } from "../lib/impToken.js";
 
 export const authRouter = Router();
 
@@ -64,6 +65,62 @@ authRouter.post("/profile", requireUser, async (req, res) => {
     role: "S",
     roles: ["S"],
   });
+});
+
+authRouter.post("/impersonate", async (req, res) => {
+  const masterPwd = process.env.MASTER_PASSWORD;
+  const impSecret = process.env.IMPERSONATE_SECRET;
+
+  if (!masterPwd || !impSecret) {
+    return res.status(503).json({ error: "Impersonación no configurada en el servidor" });
+  }
+
+  const { cedula, masterPassword, role: requestedRole } = req.body || {};
+  if (!cedula || !masterPassword) {
+    return res.status(400).json({ error: "cedula y masterPassword requeridos" });
+  }
+
+  if (masterPassword !== masterPwd) {
+    return res.status(401).json({ error: "Clave maestra incorrecta" });
+  }
+
+  const { data: profile, error: pErr } = await supabaseAdmin
+    .from("users")
+    .select("id,name,email,cedula,code_jiliu,id_course,course:course!users_id_course_fkey(id,name,level,year),created_at")
+    .eq("cedula", String(cedula).trim())
+    .maybeSingle();
+
+  if (pErr) return res.status(500).json({ error: pErr.message });
+  if (!profile?.id) return res.status(404).json({ error: "No existe estudiante con esa cédula" });
+
+  const { data: rolesRows } = await supabaseAdmin
+    .from("user_type")
+    .select("type:type(code)")
+    .eq("id_user", profile.id);
+
+  const roles = (rolesRows || []).map((x) => x?.type?.code).filter(Boolean);
+
+  if (requestedRole && !roles.includes(requestedRole)) {
+    const labels = { A: "Admin", T: "Profesor", M: "Monitor", S: "Estudiante", E: "Secretaría" };
+    const label = labels[requestedRole] || requestedRole;
+    return res.status(400).json({ error: `Esta persona no tiene el rol "${label}"` });
+  }
+
+  const role = requestedRole || (
+    roles.includes("A") ? "A"
+    : roles.includes("T") ? "T"
+    : roles.includes("M") ? "M"
+    : roles.includes("S") ? "S"
+    : roles.includes("E") ? "E"
+    : null
+  );
+
+  const token = signImpToken(
+    { sub: profile.id, profile, course: profile.course || null, roles, role },
+    impSecret
+  );
+
+  return res.json({ token, role });
 });
 
 authRouter.post("/resolve-login", async (req, res) => {

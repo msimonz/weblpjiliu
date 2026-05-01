@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, setImpersonateToken } from "@/lib/api";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
 import AppVersionLabel from "@/components/AppVersionLabel";
@@ -134,12 +134,21 @@ export default function SecretariaPage() {
     (async () => {
       setMeLoading(true);
       try {
-        const { data } = await supabase.auth.getSession();
-        if (!data.session) return router.replace("/login");
-        const info = await apiFetch("/api/auth/me");
-        setMe(info);
-        const active = getActiveRole(info);
-        if (active !== "E") return router.replace(roleToRoute(active));
+        const params = new URLSearchParams(window.location.search);
+        const impToken = params.get("impersonate");
+
+        if (impToken) {
+          setImpersonateToken(impToken);
+          const info = await apiFetch("/api/auth/me");
+          setMe(info);
+        } else {
+          const { data } = await supabase.auth.getSession();
+          if (!data.session) return router.replace("/login");
+          const info = await apiFetch("/api/auth/me");
+          setMe(info);
+          const active = getActiveRole(info);
+          if (active !== "E") return router.replace(roleToRoute(active));
+        }
       } catch {
         router.replace("/login");
       } finally {

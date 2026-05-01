@@ -731,10 +731,6 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
     return res.status(403).json({ error: "No es tu evaluación" });
   }
 
-  if (String(ev.evaluation_type?.type || "").toLowerCase() === "examen") {
-    return res.status(400).json({ error: "Las notas de examen se registran al presentar el examen o por cierre automático" });
-  }
-
   let stQuery = supabaseAdmin.from("users").select("id,cedula,name,email,id_course");
   if (ced) {
     stQuery = stQuery.eq("cedula", ced);
