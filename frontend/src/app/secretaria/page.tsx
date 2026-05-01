@@ -27,7 +27,7 @@ type EvalItem     = {
   class?: { id: number; name: string } | null;
 };
 type StudentRow   = { id: string; name: string; cedula: string | null; id_course: number };
-type GradeRow     = { id_student: string; id_exam: number; grade: number | null; attempts: number | null };
+type GradeRow     = { id_student: string; id_exam: number; grade: number | null; finished_at?: string | null; attempts: number | null };
 type GridClassInfo = { id: number; name: string; level: number } | null;
 
 // ─── Constantes visuales (idénticas a admin) ──────────────────────────────────
@@ -77,6 +77,9 @@ function getGrillaTextColor(dark: boolean) {
   return dark ? "var(--text)" : "#0f172a";
 }
 function gradeCellKey(sid: string, eid: number) { return `${sid}__${eid}`; }
+function isExamEvaluation(ev: { evaluation_type?: { type?: string | null } | null }) {
+  return String(ev.evaluation_type?.type || "").toLowerCase() === "examen";
+}
 
 // ─── Componente ───────────────────────────────────────────────────────────────
 export default function SecretariaPage() {
@@ -218,7 +221,7 @@ export default function SecretariaPage() {
       const draft: Record<string, string> = {};
       for (const g of grades) {
         draft[gradeCellKey(g.id_student, g.id_exam)] =
-          g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
+          !g.finished_at || g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
       }
       setGradeDraft(draft);
       setGFilterCedula("all");
@@ -305,6 +308,31 @@ export default function SecretariaPage() {
     return Number(student.id_course) === Number(ev.id_course);
   }
 
+  function countNoAprobadas(student: StudentRow): number {
+    const applicable = gEvaluations.filter(ev => isEvaluationApplicableToStudent(student, ev));
+    const subjectKey = (ev: EvalItem) => `c_${ev.id_class}`;
+    const subjects = new Map<string, EvalItem[]>();
+    for (const ev of applicable) {
+      const k = subjectKey(ev);
+      if (!subjects.has(k)) subjects.set(k, []);
+      subjects.get(k)!.push(ev);
+    }
+    let count = 0;
+    for (const evals of subjects.values()) {
+      let earnedPoints = 0, evaluatedPercent = 0;
+      for (const ev of evals) {
+        const g = gGrades.find(r => r.id_student === student.id && r.id_exam === ev.id);
+        if (!g?.finished_at) continue;
+        earnedPoints += (Number(g.grade ?? 0) * Number(ev.percent)) / 100;
+        evaluatedPercent += Number(ev.percent);
+      }
+      if (evaluatedPercent === 0) continue;
+      const normalized = (earnedPoints / evaluatedPercent) * 100;
+      if (normalized < 70) count += 1;
+    }
+    return count;
+  }
+
   const upsertDynamicMinWidth = useMemo(() => {
     // Sin columna de acción (solo lectura)
     return CEDULA_COL_W + ALUMNO_COL_W + 90 + gEvaluations.length * 120;
@@ -346,13 +374,14 @@ export default function SecretariaPage() {
         }
         const gradeRecord = gGrades.find(g => g.id_student === st.id && g.id_exam === ev.id);
         const attempts = gradeRecord?.attempts ?? 0;
-        const gradeVal = gradeRecord?.grade ?? 0;
-        if (attempts === 0 && gradeVal === 0) {
+        const gradeVal = gradeRecord?.grade ?? null;
+        const hasClosedGrade = !!gradeRecord?.finished_at;
+        if (hasClosedGrade && attempts === 0 && gradeVal === 0) {
           row[label] = "No Presentó";
         } else {
           const key = gradeCellKey(st.id, ev.id);
           const val = gradeDraft[key];
-          row[label] = val === "" || val == null ? "" : Number(val);
+          row[label] = val === "" || val == null ? (hasClosedGrade && gradeVal !== null ? gradeVal : (isExamEvaluation(ev) ? "—" : "+")) : Number(val);
         }
       }
       return row;
@@ -863,11 +892,7 @@ export default function SecretariaPage() {
                               const cellTextColor = getGrillaTextColor(isDark);
                               const disabledCellBg = getGrillaDisabledCellBg(isDark);
 
-                              const perdidas = gEvaluations.filter(ev => {
-                                if (!isEvaluationApplicableToStudent(st, ev)) return false;
-                                const gr = gGrades.find(g => g.id_student === st.id && g.id_exam === ev.id);
-                                return (gr?.grade ?? 0) < 70;
-                              }).length;
+                              const perdidas = countNoAprobadas(st);
 
                               return (
                                 <tr key={st.id} className="table-row-hover" data-editing="false" style={{ background: baseRowBg }}>
@@ -908,8 +933,10 @@ export default function SecretariaPage() {
                                     const enabledForCourse = isEvaluationApplicableToStudent(st, ev);
                                     const gradeRecord      = gGrades.find(g => g.id_student === st.id && g.id_exam === ev.id);
                                     const attempts         = gradeRecord?.attempts ?? 0;
-                                    const gradeVal         = gradeRecord?.grade ?? 0;
-                                    const noPresentó       = enabledForCourse && attempts === 0 && gradeVal === 0;
+                                    const gradeVal         = gradeRecord?.grade ?? null;
+                                    const hasClosedGrade   = !!gradeRecord?.finished_at;
+                                    const noPresentó       = enabledForCourse && hasClosedGrade && attempts === 0 && gradeVal === 0;
+                                    const pendingPlaceholder = isExamEvaluation(ev) ? "—" : "+";
                                     const draftVal         = gradeDraft[key] ?? "";
 
                                     return (
@@ -938,7 +965,7 @@ export default function SecretariaPage() {
                                             className="input"
                                             readOnly
                                             value={draftVal}
-                                            placeholder={enabledForCourse ? "—" : "-"}
+                                            placeholder={enabledForCourse ? pendingPlaceholder : "-"}
                                             style={{
                                               width: "100%", minWidth: 0, height: 26,
                                               border: "none", borderRadius: 0, outline: "none",
@@ -946,7 +973,7 @@ export default function SecretariaPage() {
                                               padding: "0 10px", fontSize: 13, lineHeight: 1,
                                               fontWeight: 500,
                                               color: enabledForCourse
-                                                ? (draftVal !== "" && Number(draftVal) < 70 ? "#dc2626" : cellTextColor)
+                                                ? (hasClosedGrade && draftVal !== "" && Number(draftVal) < 70 ? "#dc2626" : cellTextColor)
                                                 : isDark ? "var(--muted)" : "#94a3b8",
                                               cursor: "default",
                                               opacity: enabledForCourse ? 1 : 0.6,

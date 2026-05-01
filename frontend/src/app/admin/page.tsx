@@ -78,6 +78,7 @@ type GridGradeRow = {
   id_student: string;
   id_exam: number;
   grade: number | null;
+  finished_at?: string | null;
   attempts?: number | null;
 };
 
@@ -157,6 +158,10 @@ const GRILLA = {
 
 function gradeCellKey(studentId: string, examId: number) {
   return `${studentId}__${examId}`;
+}
+
+function isExamEvaluation(ev: { evaluation_type?: { type?: string | null } | null }) {
+  return String(ev.evaluation_type?.type || "").toLowerCase() === "examen";
 }
 
 function isDarkThemeEnabled() {
@@ -1709,7 +1714,7 @@ export default function AdminPage() {
       const drafts: Record<string, string> = {};
       for (const g of grades) {
         drafts[gradeCellKey(g.id_student, g.id_exam)] =
-          g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
+          !g.finished_at || g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
       }
       setGradeDraft(drafts);
     } catch (e) {
@@ -1750,7 +1755,7 @@ export default function AdminPage() {
       const drafts: Record<string, string> = {};
       for (const g of grades) {
         drafts[gradeCellKey(g.id_student, g.id_exam)] =
-          g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
+          !g.finished_at || g.grade === null || g.grade === undefined ? "" : String(Number(g.grade));
       }
       setGradeDraft(drafts);
     } catch (e) {
@@ -1780,6 +1785,31 @@ export default function AdminPage() {
 
   function getStudentApplicableEvaluations(student: StudentRow) {
     return gEvaluations.filter((ev) => isEvaluationApplicableToStudent(student, ev));
+  }
+
+  function countNoAprobadas(student: StudentRow): number {
+    const applicable = getStudentApplicableEvaluations(student);
+    const subjectKey = (ev: EvalItem) => ev.id_group ? `g_${ev.id_group}` : `c_${ev.id_class}`;
+    const subjects = new Map<string, EvalItem[]>();
+    for (const ev of applicable) {
+      const k = subjectKey(ev);
+      if (!subjects.has(k)) subjects.set(k, []);
+      subjects.get(k)!.push(ev);
+    }
+    let count = 0;
+    for (const evals of subjects.values()) {
+      let earnedPoints = 0, evaluatedPercent = 0;
+      for (const ev of evals) {
+        const g = gGrades.find(r => r.id_student === student.id && r.id_exam === ev.id);
+        if (!g?.finished_at) continue;
+        earnedPoints += (Number(g.grade ?? 0) * Number(ev.percent)) / 100;
+        evaluatedPercent += Number(ev.percent);
+      }
+      if (evaluatedPercent === 0) continue;
+      const normalized = (earnedPoints / evaluatedPercent) * 100;
+      if (normalized < 70) count += 1;
+    }
+    return count;
   }
 
   function beginEdit(student: StudentRow) {
@@ -1882,14 +1912,15 @@ export default function AdminPage() {
       // Actualizar gGrades localmente para reflejar las notas guardadas
       setGGrades((prev) => {
         const updated = [...prev];
+        const finishedAt = new Date().toISOString();
         for (const ev of evalsToSave) {
           const key = gradeCellKey(student.id, ev.id);
           const newGrade = Number(gradeDraft[key]);
           const idx = updated.findIndex((g) => g.id_student === student.id && g.id_exam === ev.id);
           if (idx !== -1) {
-            updated[idx] = { ...updated[idx], grade: newGrade, attempts: (updated[idx].attempts ?? 0) + 1 };
+            updated[idx] = { ...updated[idx], grade: newGrade, attempts: (updated[idx].attempts ?? 0) + 1, finished_at: finishedAt };
           } else {
-            updated.push({ id_student: student.id, id_exam: ev.id, grade: newGrade, attempts: 1 });
+            updated.push({ id_student: student.id, id_exam: ev.id, grade: newGrade, attempts: 1, finished_at: finishedAt });
           }
         }
         return updated;
@@ -1925,24 +1956,21 @@ export default function AdminPage() {
 
     const headers = ["Cédula", "Alumno", "No Aprobadas", ...gEvaluations.map((ev) => evalColName.get(ev.id)!)];
     const dataRows = sortedRoster.map((st) => {
-      const perdidas = gEvaluations.filter((ev) => {
-        if (!isEvaluationApplicableToStudent(st, ev)) return false;
-        const gradeRecord = gGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
-        return (gradeRecord?.grade ?? 0) < 70;
-      }).length;
+      const perdidas = countNoAprobadas(st);
 
       const cells: (string | number)[] = [st.cedula, st.name, perdidas > 0 ? perdidas : ""];
       for (const ev of gEvaluations) {
         if (!isEvaluationApplicableToStudent(st, ev)) { cells.push("-"); continue; }
         const gradeRecord = gGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
         const attempts = gradeRecord?.attempts ?? 0;
-        const gradeVal = gradeRecord?.grade ?? 0;
-        if (attempts === 0 && gradeVal === 0) {
+        const gradeVal = gradeRecord?.grade ?? null;
+        const hasClosedGrade = !!gradeRecord?.finished_at;
+        if (hasClosedGrade && attempts === 0 && gradeVal === 0) {
           cells.push("No Presentó");
         } else {
           const key = gradeCellKey(st.id, ev.id);
           const val = gradeDraft[key];
-          cells.push(val === "" || val == null ? gradeVal : Number(val));
+          cells.push(val === "" || val == null ? (hasClosedGrade && gradeVal !== null ? gradeVal : (isExamEvaluation(ev) ? "—" : "+")) : Number(val));
         }
       }
       return cells;
@@ -4188,12 +4216,7 @@ export default function AdminPage() {
                                   </td>
 
                                   {(() => {
-                                    const perdidas = gEvaluations.filter((ev) => {
-                                      if (!isEvaluationApplicableToStudent(st, ev)) return false;
-                                      const gradeRecord = gGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
-                                      const gradeVal = gradeRecord?.grade ?? 0;
-                                      return gradeVal < 70;
-                                    }).length;
+                                    const perdidas = countNoAprobadas(st);
                                     return (
                                       <td
                                         style={{
@@ -4218,8 +4241,10 @@ export default function AdminPage() {
                                     const editable = enabledForCourse && isEditing && !isBusy;
                                     const gradeRecord = gGrades.find((g) => g.id_student === st.id && g.id_exam === ev.id);
                                     const attempts = gradeRecord?.attempts ?? 0;
-                                    const gradeVal = gradeRecord?.grade ?? 0;
-                                    const noPresentó = enabledForCourse && attempts === 0 && gradeVal === 0;
+                                    const gradeVal = gradeRecord?.grade ?? null;
+                                    const hasClosedGrade = !!gradeRecord?.finished_at;
+                                    const noPresentó = enabledForCourse && hasClosedGrade && attempts === 0 && gradeVal === 0;
+                                    const pendingPlaceholder = isExamEvaluation(ev) ? "—" : "+";
 
                                     return (
                                       <td
@@ -4285,7 +4310,7 @@ export default function AdminPage() {
                                               if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
                                               setGradeDraft((p) => ({ ...p, [key]: v }));
                                             }}
-                                            placeholder={enabledForCourse ? "—" : "-"}
+                                            placeholder={enabledForCourse ? pendingPlaceholder : "-"}
                                             onFocus={(e) => {
                                               if (editable) {
                                                 e.currentTarget.style.background = getGrillaFocusCellBg(isDarkTheme);
@@ -4313,7 +4338,7 @@ export default function AdminPage() {
                                               lineHeight: 1,
                                               fontWeight: editable ? 700 : 500,
                                               color: enabledForCourse
-                                                ? (gradeDraft[key] !== "" && gradeDraft[key] !== undefined && Number(gradeDraft[key]) < 70 ? "#dc2626" : cellTextColor)
+                                                ? (hasClosedGrade && gradeDraft[key] !== "" && gradeDraft[key] !== undefined && Number(gradeDraft[key]) < 70 ? "#dc2626" : cellTextColor)
                                                 : isDarkTheme
                                                   ? "var(--muted)"
                                                   : "#94a3b8",

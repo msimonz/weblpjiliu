@@ -6,7 +6,7 @@ import {
   requireAnioVigenteForCourse,
   handleYearError,
 } from "../lib/anioLectivo.js";
-import { ensureGradeRowsForEvaluation } from "../lib/gradesBootstrap.js";
+import { closeExpiredExams } from "../lib/examClosure.js";
 
 export const teacherRouter = Router();
 
@@ -538,9 +538,10 @@ teacherRouter.get("/class-grade-grid", requireAuth, requireTeacher, async (req, 
 
     let grades = [];
     if (examIds.length > 0 && studentIds.length > 0) {
+      await closeExpiredExams({ courseIds, evaluationIds: examIds });
       const { data: gRows, error: gErr } = await supabaseAdmin
         .from("grades")
-        .select("id_student,id_exam,grade,attempts")
+        .select("id_student,id_exam,grade,finished_at,attempts")
         .in("id_exam", examIds)
         .in("id_student", studentIds);
 
@@ -580,9 +581,11 @@ teacherRouter.get("/exam-grades", requireAuth, requireTeacher, async (req, res) 
     return res.status(403).json({ error: "No es tu evaluación" });
   }
 
+  await closeExpiredExams({ evaluationIds: [examId] });
+
   const { data, error } = await supabaseAdmin
     .from("grades")
-    .select("id_student,grade")
+    .select("id_student,grade,finished_at,attempts")
     .eq("id_exam", examId);
 
   if (error) return res.status(500).json({ error: error.message });
@@ -690,7 +693,6 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
       .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
-    await ensureGradeRowsForEvaluation(data.id);
     return res.json({ item: data });
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -719,7 +721,7 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
 
   const { data: ev, error: evErr } = await supabaseAdmin
     .from("evaluation")
-    .select("id,id_teacher,id_course")
+    .select("id,id_teacher,id_course,evaluation_type:evaluation_type(type)")
     .eq("id", examId)
     .maybeSingle();
 
@@ -727,6 +729,10 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
   if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
   if (ev.id_teacher !== teacherId) {
     return res.status(403).json({ error: "No es tu evaluación" });
+  }
+
+  if (String(ev.evaluation_type?.type || "").toLowerCase() === "examen") {
+    return res.status(400).json({ error: "Las notas de examen se registran al presentar el examen o por cierre automático" });
   }
 
   let stQuery = supabaseAdmin.from("users").select("id,cedula,name,email,id_course");
@@ -747,12 +753,21 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
   try { await requireAnioVigenteForCourse(ev.id_course); }
   catch (err) { return handleYearError(res, err); }
 
+  const { data: existingGrade, error: existingGradeErr } = await supabaseAdmin
+    .from("grades")
+    .select("attempts")
+    .eq("id_exam", examId)
+    .eq("id_student", st.id)
+    .maybeSingle();
+
+  if (existingGradeErr) return res.status(500).json({ error: existingGradeErr.message });
+
   const payload = {
     id_exam: examId,
     id_student: st.id,
     grade: g,
     finished_at: new Date().toISOString(),
-    attempts: 1,
+    attempts: Number(existingGrade?.attempts ?? 0) + 1,
   };
 
   const { data, error } = await supabaseAdmin
@@ -911,9 +926,10 @@ teacherRouter.get("/group-grade-grid", requireAuth, requireTeacher, async (req, 
     const studentIds = students.map((s) => s.id);
     let grades = [];
     if (examIds.length > 0 && studentIds.length > 0) {
+      await closeExpiredExams({ courseIds, evaluationIds: examIds });
       const { data: gRows, error: gErr } = await supabaseAdmin
         .from("grades")
-        .select("id_student,id_exam,grade,attempts")
+        .select("id_student,id_exam,grade,finished_at,attempts")
         .in("id_exam", examIds)
         .in("id_student", studentIds);
       if (gErr) return res.status(500).json({ error: gErr.message });
@@ -1010,9 +1026,10 @@ teacherRouter.get("/grade-grids-batch", requireAuth, requireTeacher, async (req,
     const allStudentIds = students.map((s) => s.id);
     let allGrades = [];
     if (allExamIds.length > 0 && allStudentIds.length > 0) {
+      await closeExpiredExams({ courseIds: allCourseIds, evaluationIds: allExamIds });
       const { data: gRows, error: gErr } = await supabaseAdmin
         .from("grades")
-        .select("id_student,id_exam,grade,attempts")
+        .select("id_student,id_exam,grade,finished_at,attempts")
         .in("id_exam", allExamIds)
         .in("id_student", allStudentIds);
 
@@ -1185,7 +1202,6 @@ teacherRouter.post("/exams", requireAuth, requireTeacher, async (req, res) => {
       return res.status(500).json({ error: `Error guardando preguntas: ${detErr.message}` });
     }
 
-    await ensureGradeRowsForEvaluation(evalData.id);
     return res.status(201).json({ ok: true, item: evalData });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando examen" });

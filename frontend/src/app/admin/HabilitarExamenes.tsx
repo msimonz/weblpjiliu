@@ -708,7 +708,7 @@ export default function HabilitarExamenes({ courses }: Props) {
       {/* ── Modal: intentos de estudiantes ── fuera del .card para evitar que backdrop-filter rompa position:fixed */}
       {attemptsCtx && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div className="card" style={{ width: "90%", maxWidth: 560, padding: 24 }}>
+          <div className="card" style={{ width: "90%", maxWidth: 560, padding: 24, maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
               <div>
                 <h3 style={{ margin: "0 0 4px" }}>Intentos — {attemptsCtx.title}</h3>
@@ -720,12 +720,13 @@ export default function HabilitarExamenes({ courses }: Props) {
 
             {attemptsLoading && <p style={{ color: "var(--muted)", fontSize: 14 }}>Cargando...</p>}
             {!attemptsLoading && attempts.length === 0 && (
-              <p style={{ color: "var(--muted)", fontSize: 14 }}>Ningún estudiante ha presentado este examen.</p>
+              <p style={{ color: "var(--muted)", fontSize: 14 }}>No hay intentos cerrados para este examen.</p>
             )}
             {!attemptsLoading && attempts.length > 0 && (
+              <div style={{ overflowY: "auto", flex: 1, minHeight: 0, paddingRight: 4 }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
-                  <tr style={{ background: "var(--stroke)", textAlign: "left" }}>
+                  <tr style={{ background: "var(--stroke)", textAlign: "left", position: "sticky", top: 0, zIndex: 1 }}>
                     {["Cédula","Nombre","Calificación","Fecha",""].map(h => (
                       <th key={h} style={{ padding: "6px 10px", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
                     ))}
@@ -756,6 +757,7 @@ export default function HabilitarExamenes({ courses }: Props) {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
               <button className="btn"

@@ -11,10 +11,7 @@ import {
   requireAnioVigenteForRecord,
   handleYearError,
 } from "../lib/anioLectivo.js";
-import {
-  ensureGradeRowsForEvaluation,
-  ensureGradeRowsForStudent,
-} from "../lib/gradesBootstrap.js";
+import { closeExpiredExams } from "../lib/examClosure.js";
 
 export const adminRouter = Router();
 
@@ -950,6 +947,7 @@ adminRouter.get("/class-grade-grid", requireAuth, requireAdminOrSecretary, async
 
     let grades = [];
     if (examIds.length > 0 && studentIds.length > 0) {
+      await closeExpiredExams({ courseIds, evaluationIds: examIds });
       const { data: gRows, error: gErr } = await supabaseAdmin
         .from("grades")
         .select("id_student,id_exam,grade,finished_at,attempts,created_at,updated_at")
@@ -1010,9 +1008,10 @@ adminRouter.get("/group-grade-grid", requireAuth, requireAdminOrSecretary, async
     const studentIds = students.map((s) => s.id);
     let grades = [];
     if (examIds.length > 0 && studentIds.length > 0) {
+      await closeExpiredExams({ courseIds, evaluationIds: examIds });
       const { data: gRows, error: gErr } = await supabaseAdmin
         .from("grades")
-        .select("id_student,id_exam,grade,attempts")
+        .select("id_student,id_exam,grade,finished_at,attempts")
         .in("id_exam", examIds)
         .in("id_student", studentIds);
       if (gErr) return res.status(500).json({ error: gErr.message });
@@ -1097,6 +1096,7 @@ adminRouter.get("/grade-grid", requireAuth, requireAdminOrSecretary, async (req,
     const studentIds = students.map((s) => s.id);
     let grades = [];
     if (examIds.length > 0 && studentIds.length > 0) {
+      await closeExpiredExams({ courseIds, evaluationIds: examIds });
       const { data: gRows, error: gErr } = await supabaseAdmin
         .from("grades")
         .select("id_student,id_exam,grade,finished_at,attempts,created_at,updated_at")
@@ -1131,6 +1131,8 @@ adminRouter.get("/exam-grades", requireAuth, requireAdmin, async (req, res) => {
 
     if (evErr) return res.status(500).json({ error: evErr.message });
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
+
+    await closeExpiredExams({ evaluationIds: [examId] });
 
     const { data, error } = await supabaseAdmin
       .from("grades")
@@ -1215,7 +1217,6 @@ adminRouter.post("/evaluations", requireAuth, requireAdmin, async (req, res) => 
       .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
-    await ensureGradeRowsForEvaluation(data.id);
     return res.json({ item: data });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando evaluación" });
@@ -1237,12 +1238,16 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
 
     const { data: ev, error: evErr } = await supabaseAdmin
       .from("evaluation")
-      .select("id,id_course")
+      .select("id,id_course,evaluation_type:evaluation_type(type)")
       .eq("id", examId)
       .maybeSingle();
 
     if (evErr) return res.status(500).json({ error: evErr.message });
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
+
+    if (String(ev.evaluation_type?.type || "").toLowerCase() === "examen") {
+      return res.status(400).json({ error: "Las notas de examen se registran al presentar el examen o por cierre automático" });
+    }
 
     let stQuery = supabaseAdmin.from("users").select("id,cedula,name,email,id_course");
     if (ced) {
@@ -1262,12 +1267,21 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
     try { await requireAnioVigenteForCourse(ev.id_course); }
     catch (err) { return handleYearError(res, err); }
 
+    const { data: existingGrade, error: existingGradeErr } = await supabaseAdmin
+      .from("grades")
+      .select("attempts")
+      .eq("id_exam", examId)
+      .eq("id_student", st.id)
+      .maybeSingle();
+
+    if (existingGradeErr) return res.status(500).json({ error: existingGradeErr.message });
+
     const payload = {
       id_exam: examId,
       id_student: st.id,
       grade,
       finished_at: new Date().toISOString(),
-      attempts: 1,
+      attempts: Number(existingGrade?.attempts ?? 0) + 1,
     };
 
     const { data, error } = await supabaseAdmin
@@ -1483,7 +1497,6 @@ adminRouter.post("/evaluations/bulk", requireAuth, requireAdmin, async (req, res
       .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
-    await ensureGradeRowsForEvaluation(data.id);
     return res.json({ item: data });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error en creación masiva de evaluaciones" });
@@ -1805,14 +1818,6 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         }
       }
 
-      if (needsStudentFields && id_course) {
-        try {
-          await ensureGradeRowsForStudent(authUserId, id_course);
-        } catch (e) {
-          results.errors.push({ row: rowNum, error: `grades: ${e?.message || "error inicializando notas"}` });
-        }
-      }
-
       if (createRes?.error) results.updated++;
       else results.created++;
 
@@ -1953,10 +1958,6 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
       }
     }
 
-    if (needsStudentFields && id_course) {
-      await ensureGradeRowsForStudent(authUserId, id_course);
-    }
-
     return res.json({ ok: true, item: up, created: !createRes?.error });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando usuario" });
@@ -2070,10 +2071,6 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
       .upsert({ id_student: userId, id_course }, { onConflict: "id_student,id_course" });
 
     if (histErr) warn = `history: ${histErr.message}`;
-
-    if (needsStudentFields && id_course) {
-      await ensureGradeRowsForStudent(userId, id_course);
-    }
 
     return res.json({ ok: true, item: up, warn });
   } catch (e) {
@@ -2503,7 +2500,6 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
       return res.status(500).json({ error: `Error guardando preguntas: ${detErr.message}` });
     }
 
-    await ensureGradeRowsForEvaluation(evalData.id);
     return res.status(201).json({ ok: true, item: evalData });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando examen" });
@@ -2929,7 +2925,9 @@ adminRouter.delete("/exam-schedules/:id", requireAuth, requireAdmin, async (req,
 });
 
 // GET /api/admin/exam-attempts?id_evaluation=X&id_course=Y
-// Lista estudiantes del curso que han finalizado el examen
+// Lista estudiantes del curso que ya quedaron cerrados para este examen:
+// - quienes rindieron y tienen rta_examen.finalizado_at
+// - quienes no presentaron y quedaron en grades con 0/0 cerrado
 adminRouter.get("/exam-attempts", requireAuth, requireAdmin, async (req, res) => {
   try {
     const id_evaluation = toInt(req.query.id_evaluation);
@@ -2937,36 +2935,62 @@ adminRouter.get("/exam-attempts", requireAuth, requireAdmin, async (req, res) =>
     if (!id_evaluation || !id_course)
       return res.status(400).json({ error: "id_evaluation e id_course requeridos" });
 
-    const { data: rtas, error: rtaErr } = await supabaseAdmin
-      .from("rta_examen")
-      .select("id_student, calificacion, finalizado_at")
-      .eq("id_evaluation", id_evaluation)
-      .not("finalizado_at", "is", null);
+    const [{ data: rtas, error: rtaErr }, { data: gradesRows, error: gradeErr }, { data: users, error: usersErr }] =
+      await Promise.all([
+        supabaseAdmin
+          .from("rta_examen")
+          .select("id_student, calificacion, finalizado_at")
+          .eq("id_evaluation", id_evaluation)
+          .not("finalizado_at", "is", null),
+        supabaseAdmin
+          .from("grades")
+          .select("id_student, grade, attempts, finished_at")
+          .eq("id_exam", id_evaluation)
+          .not("finished_at", "is", null),
+        supabaseAdmin
+          .from("users")
+          .select("id, name, cedula")
+          .eq("id_course", id_course),
+      ]);
 
     if (rtaErr) return res.status(500).json({ error: rtaErr.message });
-    if (!rtas?.length) return res.json({ items: [] });
-
-    const studentIds = rtas.map((r) => r.id_student);
-
-    const { data: users, error: usersErr } = await supabaseAdmin
-      .from("users")
-      .select("id, name, cedula")
-      .in("id", studentIds)
-      .eq("id_course", id_course);
-
+    if (gradeErr) return res.status(500).json({ error: gradeErr.message });
     if (usersErr) return res.status(500).json({ error: usersErr.message });
 
     const userMap = new Map((users || []).map((u) => [u.id, u]));
 
-    const items = rtas
-      .filter((r) => userMap.has(r.id_student))
-      .map((r) => ({
-        id_student:   r.id_student,
-        name:         userMap.get(r.id_student)?.name  ?? "—",
-        cedula:       userMap.get(r.id_student)?.cedula ?? "—",
+    const itemsMap = new Map();
+
+    for (const r of (rtas || [])) {
+      if (!userMap.has(r.id_student)) continue;
+      itemsMap.set(r.id_student, {
+        id_student: r.id_student,
+        name: userMap.get(r.id_student)?.name ?? "—",
+        cedula: userMap.get(r.id_student)?.cedula ?? "—",
         calificacion: r.calificacion,
         finalizado_at: r.finalizado_at,
-      }));
+        source: "rta_examen",
+      });
+    }
+
+    for (const g of (gradesRows || [])) {
+      if (!userMap.has(g.id_student)) continue;
+      if (itemsMap.has(g.id_student)) continue;
+      itemsMap.set(g.id_student, {
+        id_student: g.id_student,
+        name: userMap.get(g.id_student)?.name ?? "—",
+        cedula: userMap.get(g.id_student)?.cedula ?? "—",
+        calificacion: g.grade,
+        finalizado_at: g.finished_at,
+        source: "grades",
+      });
+    }
+
+    const items = [...itemsMap.values()].sort((a, b) => {
+      const an = String(a.name || "");
+      const bn = String(b.name || "");
+      return an.localeCompare(bn, "es", { sensitivity: "base" });
+    });
 
     return res.json({ items });
   } catch (e) {
