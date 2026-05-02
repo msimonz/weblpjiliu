@@ -178,6 +178,7 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
 
     let totalStudents = 0;
     const academicYear = year;
+    const studentCountByCourseId = {};
 
     if (levels.length > 0) {
       const { data: courses, error: cErr } = await supabaseAdmin
@@ -203,16 +204,27 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
       }
 
       const studentSetByLevel = {};
+      const studentSetByCourse = {};
       for (const s of studentList) {
         const lvl = courseIdToLevel[String(s.id_course)];
         if (lvl != null) {
           if (!studentSetByLevel[lvl]) studentSetByLevel[lvl] = new Set();
           studentSetByLevel[lvl].add(s.id);
         }
+
+        const courseId = String(s.id_course);
+        if (courseId) {
+          if (!studentSetByCourse[courseId]) studentSetByCourse[courseId] = new Set();
+          studentSetByCourse[courseId].add(s.id);
+        }
       }
 
       for (const group of groups) {
         group.student_count = studentSetByLevel[group.level]?.size ?? 0;
+      }
+
+      for (const [courseId, set] of Object.entries(studentSetByCourse)) {
+        studentCountByCourseId[courseId] = set.size;
       }
     }
 
@@ -227,6 +239,7 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
           level_label: levelLabel(Number(r.class?.level || 0), levelMap),
           course_id: r.id_course || null,
           course_name: r.course?.name || "",
+          course_student_count: r.id_course ? studentCountByCourseId[String(r.id_course)] ?? 0 : 0,
           module_id: r.class?.id_module || null,
           module_name: r.class?.module?.name || "",
           group_id: r.class?.id_group || null,

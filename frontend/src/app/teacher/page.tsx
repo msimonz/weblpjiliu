@@ -109,6 +109,7 @@ type DashboardAssignment = {
   level_label: string;
   course_id: number | null;
   course_name: string;
+  course_student_count?: number;
   module_id: number | null;
   module_name: string;
   group_id: number | null;
@@ -593,6 +594,27 @@ export default function TeacherPage() {
         cmp(String(a.class_name ?? ""), String(b.class_name ?? ""))
       );
   }, [dashAssignments, dashLevelFilter, dashCourseFilter]);
+
+  const dashSummary = useMemo(() => {
+    const studentCountByCourse = new Map<number, number>();
+
+    for (const assignment of dashAssignmentsFiltered) {
+      if (!assignment.course_id) continue;
+      studentCountByCourse.set(
+        assignment.course_id,
+        Math.max(
+          studentCountByCourse.get(assignment.course_id) ?? 0,
+          Number(assignment.course_student_count ?? 0)
+        )
+      );
+    }
+
+    return {
+      assigned_classes: dashAssignmentsFiltered.length,
+      total_students: [...studentCountByCourse.values()].reduce((sum, count) => sum + count, 0),
+      academic_year: dashboard?.summary?.academic_year ?? teacherYear ?? new Date().getFullYear(),
+    };
+  }, [dashboard?.summary?.academic_year, dashAssignmentsFiltered, teacherYear]);
 
   // =========================
   // AÑO LECTIVO
@@ -1676,8 +1698,9 @@ export default function TeacherPage() {
 
       flash(`✅ Notas guardadas: ${student.name}`, "ok");
     } catch (e) {
-      setMsg((e as { message?: string })?.message || `Error guardando notas de ${student.name}`);
-      flash(`❌ Error guardando: ${student.name}`, "err");
+      const errorMessage = (e as { message?: string })?.message || `Error guardando notas de ${student.name}`;
+      setMsg(errorMessage);
+      flash(`Error guardando: ${student.name}. ${errorMessage}`, "err");
     } finally {
       setSavingOne((prev) => ({ ...prev, [student.id]: false }));
     }
@@ -2114,7 +2137,7 @@ export default function TeacherPage() {
                       Materias asignadas
                     </div>
                     <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1.1, marginTop: 6 }}>
-                      {dashboard?.summary?.assigned_classes ?? 0}
+                      {dashSummary.assigned_classes}
                     </div>
                   </div>
 
@@ -2130,7 +2153,7 @@ export default function TeacherPage() {
                       Total estudiantes
                     </div>
                     <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1.1, marginTop: 6 }}>
-                      {dashboard?.summary?.total_students ?? 0}
+                      {dashSummary.total_students}
                     </div>
                   </div>
 
@@ -2146,7 +2169,7 @@ export default function TeacherPage() {
                       Año académico
                     </div>
                     <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1.1, marginTop: 6 }}>
-                      {dashboard?.summary?.academic_year ?? new Date().getFullYear()}
+                      {dashSummary.academic_year}
                     </div>
                   </div>
                 </div>
@@ -3004,6 +3027,8 @@ export default function TeacherPage() {
                                   const st = row.student;
                                   const isEditing = !!editingRow[st.id];
                                   const isBusy = !!savingOne[st.id] || savingAll;
+                                  const rowEvalIds = new Set(row.sectionEvals.map((ev) => ev.id));
+                                  const rowVisibleEvals = visibleEvals.filter((ev) => rowEvalIds.has(ev.id));
                                   const baseRowBg = getGrillaBaseRowBg(rowIndex, isDarkTheme);
                                   const activeRowBg = getGrillaActiveRowBg(isDarkTheme);
                                   const editableCellBg = getGrillaEditableCellBg(isDarkTheme);
@@ -3066,7 +3091,7 @@ export default function TeacherPage() {
                                         <div style={{ display: "flex", gap: 8, justifyContent: "center", alignItems: "center" }}>
                                           <button
                                             className="btn"
-                                            onClick={() => handleRowAction(st, row.sectionEvals)}
+                                            onClick={() => handleRowAction(st, rowVisibleEvals)}
                                             disabled={isBusy || isHistoricalYear}
                                             style={{ minWidth: 104, padding: "5px 10px", background: isEditing ? "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)" : "linear-gradient(180deg, #0ea5e9 0%, #0284c7 100%)", border: isEditing ? "1px solid rgba(34,197,94,.8)" : "1px solid rgba(2,132,199,.8)", color: "#fff", boxShadow: isEditing ? "0 5px 14px rgba(34,197,94,.18)" : "0 5px 14px rgba(2,132,199,.16)", fontSize: 13 }}
                                           >

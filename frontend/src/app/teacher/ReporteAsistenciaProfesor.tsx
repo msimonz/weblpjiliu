@@ -11,6 +11,10 @@ function fmtFecha(iso: string) {
   return `${d}-${MESES[Number(m) - 1]}-${y}`;
 }
 
+function asistioValue(value: unknown) {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
 type LevelItem      = { id: number; name: string };
 type CourseItem     = { id: number; name: string; level: number };
 type ModuleItem     = { id: number; name: string };
@@ -136,13 +140,15 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
 
   const detalleFiltered = filtroAsistencia === "todas"
     ? detalle
-    : detalle.filter((d) => filtroAsistencia === "asistio" ? d.asistio : !d.asistio);
+    : detalle.filter((d) => filtroAsistencia === "asistio" ? asistioValue(d.asistio) : !asistioValue(d.asistio));
 
   const todasDetalleFiltered = !todasData ? [] : filtroAsistencia === "todas"
     ? todasData.detalle
     : todasData.detalle.filter((d) => {
-        const inasistencias = d.asistencia.filter((a) => !a.asistio).length;
-        return filtroAsistencia === "asistio" ? inasistencias === 0 : inasistencias > 0;
+        const inasistencias = d.asistencia.filter((a) => !asistioValue(a.asistio)).length;
+        return filtroAsistencia === "asistio"
+          ? d.asistencia.length > 0 && inasistencias === 0
+          : inasistencias > 0;
       });
 
   const selectedClass  = classes.find((c) => String(c.id) === classId);
@@ -152,7 +158,8 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
     const courseName = selectedCourse?.name ?? "curso";
     if (isTodasMode) {
       if (!todasData?.detalle?.length) return;
-      const { fechas: fechasList, detalle: rows } = todasData;
+      const { fechas: fechasList } = todasData;
+      const rows = todasDetalleFiltered;
       const multiClass = fechasList.some((fi) => fi.class_name);
       const xlsRows = rows.map((d) => {
         const row: Record<string, string> = { Cédula: d.cedula ?? "—", Nombre: d.name ?? "—" };
@@ -160,7 +167,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
           const entry = d.asistencia.find((a) => a.fecha === fi.fecha && (!fi.class_id || a.class_id === fi.class_id));
           const colKey = multiClass && fi.class_name ? `${fmtFecha(fi.fecha)} / ${fi.class_name}` : fmtFecha(fi.fecha);
           row[colKey] = entry
-            ? entry.asistio ? "Asistió" : `No asistió${entry.motivo ? ` — ${entry.motivo}` : ""}`
+            ? asistioValue(entry.asistio) ? "Asistió" : `No asistió${entry.motivo ? ` — ${entry.motivo}` : ""}`
             : "—";
         }
         return row;
@@ -171,11 +178,11 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
       XLSX.writeFile(wb, `asistencia_${courseName}_todas.xlsx`);
     } else {
       if (!detalle.length) return;
-      const rows = detalle.map((d) => ({
+      const rows = detalleFiltered.map((d) => ({
         Cédula:  d.cedula ?? "—",
         Nombre:  d.name   ?? "—",
         Materia: selectedClass?.name ?? "—",
-        [fmtFecha(fecha)]: d.asistio ? "Asistió" : `No asistió${d.motivo ? ` — ${d.motivo}` : ""}`,
+        [fmtFecha(fecha)]: asistioValue(d.asistio) ? "Asistió" : `No asistió${d.motivo ? ` — ${d.motivo}` : ""}`,
       }));
       const ws = XLSX.utils.json_to_sheet(rows);
       const wb = XLSX.utils.book_new();
@@ -349,7 +356,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
             </thead>
             <tbody>
               {todasDetalleFiltered.map((d, idx) => {
-                const inasistencias = d.asistencia.filter((a) => !a.asistio).length;
+                const inasistencias = d.asistencia.filter((a) => !asistioValue(a.asistio)).length;
                 const stickyBg = idx % 2 === 0 ? "var(--bg0)" : "color-mix(in srgb, rgb(14,165,233) 3%, var(--bg0))";
                 return (
                   <tr key={d.id_student} style={{ background: idx % 2 === 0 ? "transparent" : "rgba(14,165,233,.03)" }}>
@@ -367,12 +374,12 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
                         <td key={i} style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
                           <span style={{
                             display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                            background: entry.asistio ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
-                            color:      entry.asistio ? "#15803d"              : "#dc2626",
+                            background: asistioValue(entry.asistio) ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
+                            color:      asistioValue(entry.asistio) ? "#15803d"              : "#dc2626",
                           }}>
-                            {entry.asistio ? "Asistió" : "No asistió"}
+                            {asistioValue(entry.asistio) ? "Asistió" : "No asistió"}
                           </span>
-                          {!entry.asistio && entry.motivo && (
+                          {!asistioValue(entry.asistio) && entry.motivo && (
                             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{entry.motivo}</div>
                           )}
                         </td>
@@ -403,19 +410,19 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
                 <tr key={d.id_student} style={{ background: idx % 2 === 0 ? "transparent" : "rgba(14,165,233,.03)" }}>
                   <td style={{ position: "sticky", left: 0, zIndex: 1, background: stickyBg, padding: "8px 12px", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>{d.cedula ?? "—"}</td>
                   <td style={{ position: "sticky", left: 90, zIndex: 1, background: stickyBg, padding: "8px 12px", fontWeight: 500, borderTop: "1px solid var(--stroke)" }}>{d.name ?? "—"}</td>
-                  <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: d.asistio ? "#15803d" : "#dc2626", borderTop: "1px solid var(--stroke)" }}>
-                    {d.asistio ? 0 : 1}
+                  <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: asistioValue(d.asistio) ? "#15803d" : "#dc2626", borderTop: "1px solid var(--stroke)" }}>
+                    {asistioValue(d.asistio) ? 0 : 1}
                   </td>
                   <td style={{ padding: "8px 12px", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>{selectedClass?.name ?? "—"}</td>
                   <td style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
                     <span style={{
                       display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                      background: d.asistio ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
-                      color:      d.asistio ? "#15803d"              : "#dc2626",
+                      background: asistioValue(d.asistio) ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
+                      color:      asistioValue(d.asistio) ? "#15803d"              : "#dc2626",
                     }}>
-                      {d.asistio ? "Asistió" : "No asistió"}
+                      {asistioValue(d.asistio) ? "Asistió" : "No asistió"}
                     </span>
-                    {!d.asistio && d.motivo && (
+                    {!asistioValue(d.asistio) && d.motivo && (
                       <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{d.motivo}</div>
                     )}
                   </td>
@@ -424,6 +431,10 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
               })}
             </tbody>
           </table>
+        </div>
+      ) : hasData && filtroAsistencia !== "todas" ? (
+        <div style={{ color: "var(--muted)", textAlign: "center", padding: 20 }}>
+          No hay alumnos que coincidan con el filtro seleccionado.
         </div>
       ) : fecha ? (
         <div style={{ color: "var(--muted)", textAlign: "center", padding: 20 }}>No hay datos para esta sesión.</div>
