@@ -423,7 +423,7 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
         background: "rgba(0,0,0,0.88)", zIndex: 200, overflowY: "auto",
       }}>
         <div style={{ maxWidth: 780, margin: "28px auto 60px", padding: "0 16px", boxSizing: "border-box" }}>
-          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          <div className="card" style={{ padding: 0 }}>
 
             {/* Encabezado sticky */}
             <div style={{
@@ -431,6 +431,9 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
               background: "color-mix(in srgb, var(--card) 60%, transparent)",
               backdropFilter: "blur(8px)",
               borderBottom: "1px solid var(--stroke)",
+              borderTopLeftRadius: "var(--radius2)",
+              borderTopRightRadius: "var(--radius2)",
+              overflow: "hidden",
               padding: "16px 24px",
             }}>
               {/* 2 columnas independientes: texto (izq) | controles (der) */}

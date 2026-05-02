@@ -663,7 +663,7 @@ export default function DashboardPage() {
                     >
                       <span
                         className={`summaryCardValue ${passedActive ? "summaryCardValueLight" : ""}`}
-                        style={{ color: "var(--text)" }}
+                        style={{ color: summaryStats ? "#166534" : "var(--text)" }}
                       >
                         {summaryStats ? passed : "—"}
                       </span>
@@ -679,7 +679,7 @@ export default function DashboardPage() {
                     >
                       <span
                         className={`summaryCardValue ${failedActive ? "summaryCardValueLight" : ""}`}
-                        style={{ color: "var(--text)" }}
+                        style={{ color: summaryStats ? "#b91c1c" : "var(--text)" }}
                       >
                         {summaryStats ? failed : "—"}
                       </span>
@@ -733,13 +733,12 @@ export default function DashboardPage() {
                   {!selectedClass && (
                     <div style={{ marginTop: -10 }}>
                       <div
-                        className="fit-table-shell-flat"
+                        className="fit-table-shell-flat student-summary-scroll"
                         style={{
                           background: "transparent",
                           border: "none",
                           borderRadius: 0,
                           boxShadow: "none",
-                          overflow: "visible",
                           padding: 0,
                         }}
                       >
@@ -747,7 +746,8 @@ export default function DashboardPage() {
                           className="teacher-solid-table fit-table"
                           style={{
                             background: "transparent",
-                            borderCollapse: "collapse",
+                            borderCollapse: "separate",
+                            borderSpacing: 0,
                             boxShadow: "none",
                             borderRadius: 0,
                             overflow: "visible",
@@ -760,18 +760,18 @@ export default function DashboardPage() {
                             <col style={{ width: "14%" }} />
                             <col style={{ width: "19%" }} />
                           </colgroup>
-                          <thead>
+                          <thead className="sticky-thead">
                             <tr style={{ background: "transparent" }}>
-                              <th className="fit-th fit-wrap fit-tight" style={{ background: "transparent", color: "#000" }}>
+                              <th className="fit-th fit-wrap fit-tight" style={{ color: "#000" }}>
                                 <b>Módulo</b>
                               </th>
-                              <th className="fit-th fit-wrap" colSpan={2} style={{ background: "transparent", color: "#000" }}>
+                              <th className="fit-th fit-wrap" colSpan={2} style={{ color: "#000" }}>
                                 <b>{hasGroups ? "Materia/Grupo" : "Materia"}</b>
                               </th>
-                              <th className="fit-th fit-num fit-tight" style={{ background: "transparent", color: "#000" }}>
+                              <th className="fit-th fit-num fit-tight" style={{ color: "#000" }}>
                                 <b>Nota final</b>
                               </th>
-                              <th className="fit-th fit-num fit-tight" style={{ background: "transparent", color: "#000" }}></th>
+                              <th className="fit-th fit-num fit-tight" style={{ color: "#000" }}></th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1018,7 +1018,8 @@ export default function DashboardPage() {
                           className="teacher-solid-table fit-table"
                           style={{
                             background: "transparent",
-                            borderCollapse: "collapse",
+                            borderCollapse: "separate",
+                            borderSpacing: 0,
                             boxShadow: "none",
                             borderRadius: 0,
                             overflow: "visible",
@@ -1035,31 +1036,31 @@ export default function DashboardPage() {
                             <tr style={{ background: "transparent" }}>
                               <th
                                 className="fit-th fit-wrap fit-tight"
-                                style={{ background: "transparent", color: "#000" }}
+                                style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", color: "#000" }}
                               >
                                 Tipo
                               </th>
                               <th
                                 className="fit-th fit-wrap fit-tight"
-                                style={{ background: "transparent", color: "#000" }}
+                                style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", color: "#000" }}
                               >
                                 Evaluación
                               </th>
                               <th
                                 className="fit-th fit-num fit-tight"
-                                style={{ background: "transparent", color: "#000" }}
+                                style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", color: "#000" }}
                               >
                                 %
                               </th>
                               <th
                                 className="fit-th fit-num fit-tight"
-                                style={{ background: "transparent", color: "#000" }}
+                                style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", color: "#000" }}
                               >
                                 Nota
                               </th>
                               <th
                                 className="fit-th fit-date fit-tight"
-                                style={{ background: "transparent", color: "#000" }}
+                                style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", color: "#000" }}
                               >
                                 Fecha
                               </th>

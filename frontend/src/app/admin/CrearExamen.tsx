@@ -477,7 +477,7 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
         <div style={{ maxWidth: 860, margin: "28px auto 60px", padding: "0 24px", boxSizing: "border-box" }}>
 
           {/* ── Único contenedor general ── */}
-          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          <div className="card" style={{ padding: 0 }}>
 
             {/* Encabezado sticky dentro del card */}
             <div style={{
@@ -485,6 +485,9 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
               background: "color-mix(in srgb, var(--card) 50%, transparent)",
               backdropFilter: "blur(8px)",
               borderBottom: "1px solid var(--stroke)",
+              borderTopLeftRadius: "var(--radius2)",
+              borderTopRightRadius: "var(--radius2)",
+              overflow: "hidden",
               padding: "20px 24px 16px",
             }}>
               <h2 style={{ marginTop: 0, marginBottom: 16 }}>{examId ? "Editar Examen" : "Crear Examen"}</h2>
@@ -542,7 +545,7 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
                 </span>
                 <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
                   <button className="btn"
-                    style={{ background: "var(--card)", color: "var(--text)", border: "1px solid var(--stroke)", padding: "8px 18px" }}
+                    style={{ background: "linear-gradient(to bottom, #6b7280, #4b5563)", padding: "8px 18px" }}
                     onClick={() => setConfirmCancel(true)}
                     disabled={saving}>
                     Cancelar
