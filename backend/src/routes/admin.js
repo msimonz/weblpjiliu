@@ -578,15 +578,26 @@ adminRouter.post("/classes", requireAuth, requireAdmin, async (req, res) => {
 // ============================================================================
 adminRouter.get("/evaluation-types", requireAuth, requireAdmin, async (req, res) => {
   const year = toInt(req.query.year) || (await getAnioLectivoVigente());
-  const [{ data, error }, { data: usedRows, error: usedErr }] = await Promise.all([
-    supabaseAdmin.from("evaluation_type").select("id,type,year,created_at").eq("year", year).order("id", { ascending: true }),
-    supabaseAdmin.from("evaluation").select("id_type"),
-  ]);
+
+  const { data, error } = await supabaseAdmin
+    .from("evaluation_type")
+    .select("id,type,year,created_at")
+    .eq("year", year)
+    .order("id", { ascending: true });
 
   if (error) return res.status(500).json({ error: error.message });
-  if (usedErr) return res.status(500).json({ error: usedErr.message });
 
-  const usedSet = new Set((usedRows || []).map((r) => String(r.id_type)));
+  const typeIds = (data || []).map((t) => t.id);
+  let usedSet = new Set();
+  if (typeIds.length > 0) {
+    const { data: usedRows, error: usedErr } = await supabaseAdmin
+      .from("evaluation")
+      .select("id_type")
+      .in("id_type", typeIds);
+    if (usedErr) return res.status(500).json({ error: usedErr.message });
+    usedSet = new Set((usedRows || []).map((r) => String(r.id_type)));
+  }
+
   const items = (data || []).map((t) => ({ ...t, eval_count: usedSet.has(String(t.id)) ? 1 : 0 }));
   return res.json({ items });
 });
@@ -1935,6 +1946,16 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
     if (!email || !email.includes("@")) return res.status(400).json({ error: "email inválido" });
     if (!name) return res.status(400).json({ error: "name requerido" });
 
+    // Verificar que el email no esté ya registrado
+    const { data: emailExists } = await supabaseAdmin
+      .from("users")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle();
+    if (emailExists?.id) {
+      return res.status(409).json({ error: `El email '${email}' ya está registrado en el sistema.` });
+    }
+
     if (roles.length === 0 || roles.some((r) => !["S", "T", "A", "M", "E"].includes(String(r).toUpperCase()))) {
       return res.status(400).json({ error: "roles inválidos (S/T/A/M)" });
     }
@@ -3196,5 +3217,32 @@ adminRouter.put("/anio-lectivo/activo", requireAuth, requireAdmin, async (req, r
     return res.json({ ok: true, item: data });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error activando año lectivo" });
+  }
+});
+
+// ============================================================================
+// DELETE /api/admin/delete-user?cedula=XXX
+// Elimina usuario de auth (cascada a public.users y todas las tablas relacionadas)
+// ============================================================================
+adminRouter.delete("/delete-user", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const cedula = cleanStr(req.query?.cedula);
+    if (!cedula) return res.status(400).json({ error: "cedula requerida" });
+
+    const { data: u, error: uErr } = await supabaseAdmin
+      .from("users")
+      .select("id, name, email")
+      .eq("cedula", cedula)
+      .maybeSingle();
+
+    if (uErr) return res.status(500).json({ error: uErr.message });
+    if (!u?.id) return res.status(404).json({ error: "Usuario no encontrado" });
+
+    const { error: authErr } = await supabaseAdmin.auth.admin.deleteUser(u.id);
+    if (authErr) return res.status(500).json({ error: authErr.message });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error eliminando usuario" });
   }
 });

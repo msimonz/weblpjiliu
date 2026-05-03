@@ -135,7 +135,7 @@ export default function CrearExamen({ ctx, examId, initialData, teachers = [], l
   const [title, setTitle]                   = useState<string>(() => ctx.title);
   const [percent, setPercent]             = useState<string>(() => String(ctx.percent));
   const [teacherId, setTeacherId]         = useState<string>(() => ctx.id_teacher ?? "");
-  const [tiempoMinutos, setTiempoMinutos] = useState<string>(() => initialData ? String(initialData.tiempo_minutos) : "");
+  const [tiempoMinutos, setTiempoMinutos] = useState<string>(() => initialData ? String(initialData.tiempo_minutos) : "0");
   const [preguntas, setPreguntas]         = useState<PreguntaState[]>(() =>
     initialData?.preguntas?.length
       ? initialData.preguntas.map(apiToState)
@@ -168,6 +168,7 @@ export default function CrearExamen({ ctx, examId, initialData, teachers = [], l
     setPreguntas(prev => [...prev, newPregunta()]);
   }
   function removePregunta(key: string) {
+    if (!confirm("¿Eliminar esta pregunta del examen?")) return;
     setPreguntas(prev => prev.filter(p => p._key !== key));
   }
 
@@ -177,6 +178,7 @@ export default function CrearExamen({ ctx, examId, initialData, teachers = [], l
       { ...p, opciones: [...p.opciones, { id: uid(), texto: "" }] }));
   }
   function removeOpcion(key: string, opId: string) {
+    if (!confirm("¿Eliminar esta opción?")) return;
     setPreguntas(prev => prev.map(p => p._key !== key ? p : {
       ...p,
       opciones:      p.opciones.filter(o => o.id !== opId),
@@ -194,6 +196,7 @@ export default function CrearExamen({ ctx, examId, initialData, teachers = [], l
       { ...p, izquierda: [...p.izquierda, { id: uid(), texto: "" }] }));
   }
   function removeIzq(key: string, opId: string) {
+    if (!confirm("¿Eliminar este elemento de la columna izquierda?")) return;
     setPreguntas(prev => prev.map(p => {
       if (p._key !== key) return p;
       const mapeo = { ...p.mapeo }; delete mapeo[opId];
@@ -211,6 +214,7 @@ export default function CrearExamen({ ctx, examId, initialData, teachers = [], l
       { ...p, derecha: [...p.derecha, { id: uid(), texto: "" }] }));
   }
   function removeDer(key: string, opId: string) {
+    if (!confirm("¿Eliminar este elemento de la columna derecha?")) return;
     setPreguntas(prev => prev.map(p => {
       if (p._key !== key) return p;
       const mapeo: Record<string, string> = {};
@@ -613,7 +617,7 @@ export default function CrearExamen({ ctx, examId, initialData, teachers = [], l
                       type={tiempoFocused ? "number" : "text"}
                       min={1} max={300} className="input"
                       style={{ width: "100%", height: 44, textAlign: "center" }}
-                      value={tiempoFocused ? tiempoMinutos : (tiempoMinutos ? `${tiempoMinutos} min` : "")}
+                      value={tiempoFocused ? tiempoMinutos : `${tiempoMinutos} min`}
                       placeholder="ej: 60"
                       onFocus={() => setTiempoFocused(true)}
                       onBlur={() => setTiempoFocused(false)}

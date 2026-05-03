@@ -59,10 +59,13 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
   // Curso → módulos
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setModuleId(""); setClassId(""); setFecha("");
     setModules([]); setClasses([]); setFechas([]);
     setDetalle([]); setSesion(null); setTodasData(null);
-    if (!courseId) return;
+    if (!courseId) {
+      setModuleId(""); setClassId(""); setFecha("");
+      return;
+    }
+    setModuleId("todos"); setClassId("todas"); setFecha("todas");
     setLoadingModules(true);
     apiFetch(`/api/teacher/attendance/modules?course_id=${courseId}`)
       .then((r: { items?: ModuleItem[] }) => setModules(r?.items || []))
@@ -73,8 +76,9 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
   // Módulo → clases
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setClassId(""); setFecha(""); setFechas([]); setDetalle([]); setSesion(null); setClasses([]); setTodasData(null);
+    setClasses([]); setFechas([]); setDetalle([]); setSesion(null); setTodasData(null);
     if (!courseId || !moduleId) return;
+    setClassId("todas"); setFecha("todas");
     apiFetch(`/api/teacher/attendance/classes?course_id=${courseId}&module_id=${moduleId}`)
       .then((r: { items?: ClassItem[] }) => setClasses(r?.items || []))
       .catch(() => {});
@@ -83,8 +87,9 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
   // Clase → fechas
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setFecha(""); setFechas([]); setDetalle([]); setSesion(null); setTodasData(null);
+    setFechas([]); setDetalle([]); setSesion(null); setTodasData(null);
     if (!courseId || !moduleId || !classId) return;
+    setFecha("todas");
     setLoadingFechas(true);
     apiFetch(`/api/teacher/attendance/fechas?course_id=${courseId}&module_id=${moduleId}&class_id=${classId}`)
       .then((r: { items?: SesionFecha[] }) => setFechas(r?.items || []))
@@ -98,7 +103,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
     setDetalle([]); setSesion(null); setTodasData(null);
     if (!courseId || !moduleId || !classId || !fecha) return;
     setLoadingDetalle(true);
-    const isTodasMode = fecha === "todas" || classId === "todas";
+    const isTodasMode = fecha === "todas" || classId === "todas" || moduleId === "todos";
     if (isTodasMode) {
       const params = new URLSearchParams({ course_id: courseId, module_id: moduleId, class_id: classId });
       if (fecha !== "todas") params.set("fecha", fecha);
@@ -133,7 +138,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
     ? courses.filter((c) => String(c.level) === levelId)
     : courses;
 
-  const isTodasMode    = fecha === "todas" || classId === "todas";
+  const isTodasMode    = fecha === "todas" || classId === "todas" || moduleId === "todos";
   const hasData        = isTodasMode
     ? (todasData?.detalle?.length ?? 0) > 0
     : detalle.length > 0;
@@ -314,17 +319,6 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
         </div>
       )}
 
-      {/* Info profesor (una fecha específica) */}
-      {sesion && !isTodasMode && (
-        <div style={{ marginBottom: 16 }}>
-          <div className="label">Profesor que dictó la clase</div>
-          <div className="select" style={{ cursor: "default", userSelect: "none", width: "fit-content" }}>
-            {sesion.profesor_asistio
-              ? `Prof: ${sesion.teacher_name ?? "—"}`
-              : `Prof-remp: ${sesion.profesor_reemplazo ?? sesion.teacher_name ?? "—"}`}
-          </div>
-        </div>
-      )}
 
       {/* Grilla */}
       {loadingDetalle ? (
@@ -396,11 +390,22 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead>
               <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                <th style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90 }}>Cédula</th>
-                <th style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150 }}>Nombre</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center" }}>Inasistencias</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left" }}>Materia</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center" }}>{fmtFecha(fecha)}</th>
+                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
+                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
+                <th rowSpan={2} style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
+                  {fmtFecha(fecha)}
+                  {selectedClass?.name && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>{selectedClass.name}</div>}
+                </th>
+              </tr>
+              <tr style={{ background: "rgba(14,165,233,.04)" }}>
+                <th style={{ position: "sticky", top: 40, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 4%, var(--bg0))", padding: "4px 12px 8px", textAlign: "center", fontWeight: 400, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>
+                  {sesion
+                    ? sesion.profesor_asistio
+                      ? `Prof: ${sesion.teacher_name ?? "—"}`
+                      : `Prof-remp: ${sesion.profesor_reemplazo ?? sesion.teacher_name ?? "—"}`
+                    : "—"}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -413,7 +418,6 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
                   <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: asistioValue(d.asistio) ? "#15803d" : "#dc2626", borderTop: "1px solid var(--stroke)" }}>
                     {asistioValue(d.asistio) ? 0 : 1}
                   </td>
-                  <td style={{ padding: "8px 12px", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>{selectedClass?.name ?? "—"}</td>
                   <td style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
                     <span style={{
                       display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
