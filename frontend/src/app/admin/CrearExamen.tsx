@@ -61,10 +61,17 @@ export type ExamInitialData = {
   preguntas: ApiPregunta[];
 };
 
+export type ExamTeacherOption = {
+  id: string;
+  name: string;
+};
+
 interface Props {
   ctx:           CrearExamenCtx;
   examId?:       number;
   initialData?:  ExamInitialData;
+  teachers?:     ExamTeacherOption[];
+  lockTeacher?:  boolean;
   onSaved:       () => void;
   onCancel:      () => void;
   apiBase?:      string;
@@ -124,8 +131,10 @@ function apiToState(p: ApiPregunta): PreguntaState {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function CrearExamen({ ctx, examId, initialData, onSaved, onCancel, apiBase = "/api/admin" }: Props) {
+export default function CrearExamen({ ctx, examId, initialData, teachers = [], lockTeacher = false, onSaved, onCancel, apiBase = "/api/admin" }: Props) {
+  const [title, setTitle]                   = useState<string>(() => ctx.title);
   const [percent, setPercent]             = useState<string>(() => String(ctx.percent));
+  const [teacherId, setTeacherId]         = useState<string>(() => ctx.id_teacher ?? "");
   const [tiempoMinutos, setTiempoMinutos] = useState<string>(() => initialData ? String(initialData.tiempo_minutos) : "");
   const [preguntas, setPreguntas]         = useState<PreguntaState[]>(() =>
     initialData?.preguntas?.length
@@ -135,6 +144,14 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
   const [saving, setSaving]               = useState(false);
   const [errMsg, setErrMsg]               = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const readonlyInputStyle = {
+    width: "100%",
+    height: 44,
+    color: "var(--muted)",
+    background: "rgba(148, 163, 184, 0.14)",
+    borderColor: "var(--stroke)",
+    cursor: "not-allowed",
+  };
 
   const sumaActual = preguntas.reduce((s, p) => s + (Number(p.puntos) || 0), 0);
   const sumaOk     = Math.abs(sumaActual - 100) < 0.01;
@@ -211,8 +228,10 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
   // ── Validation ─────────────────────────────────────────────────────────────
 
   function validate(): string | null {
+    if (!title.trim()) return "Escribe un título para el examen";
     const pct = Number(percent);
     if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return "Porcentaje inválido (1..100)";
+    if (!teacherId) return "Selecciona un profesor para el examen";
     const mins = Number(tiempoMinutos);
     if (!mins || mins < 1) return "Tiempo en minutos requerido (mínimo 1)";
     if (preguntas.length < 1)  return "El examen debe tener al menos 1 pregunta";
@@ -302,14 +321,16 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
       await apiFetch(examId ? `${apiBase}/exams/${examId}` : `${apiBase}/exams`, {
         method: examId ? "PUT" : "POST",
         body: JSON.stringify(examId ? {
+          id_teacher:     teacherId,
+          title:          title.trim(),
           percent:        Number(percent),
           tiempo_minutos: Number(tiempoMinutos),
           preguntas:      payload,
         } : {
           id_course:      ctx.id_course,
           ...(ctx.id_class ? { id_class: ctx.id_class } : { id_group: ctx.id_group }),
-          ...(ctx.id_teacher ? { id_teacher: ctx.id_teacher } : {}),
-          title:          ctx.title,
+          id_teacher:     teacherId,
+          title:          title.trim(),
           percent:        Number(percent),
           tiempo_minutos: Number(tiempoMinutos),
           preguntas:      payload,
@@ -494,35 +515,103 @@ export default function CrearExamen({ ctx, examId, initialData, onSaved, onCance
 
               {/* Context info + tiempo */}
               <div className="card" style={{ marginBottom: 12 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "6px 24px", fontSize: 13, marginBottom: 12 }}>
-                  <div><span style={{ color: "var(--muted)" }}>Título: </span><strong>{ctx.title}</strong></div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ color: "var(--muted)" }}>Porcentaje:</span>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: "10px 28px", alignItems: "end" }}>
+                  <div>
+                    <div className="label" style={{ marginBottom: 4 }}>Módulo</div>
+                    <input
+                      className="input"
+                      value={ctx.moduleName ?? ""}
+                      disabled
+                      readOnly
+                      style={readonlyInputStyle}
+                    />
+                  </div>
+                  <div>
+                    <div className="label" style={{ marginBottom: 4 }}>Título</div>
+                    <input
+                      className="input"
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      style={{ width: "100%", height: 44 }}
+                    />
+                  </div>
+                  <div>
+                    <div className="label" style={{ marginBottom: 4 }}>Materia</div>
+                    <input
+                      className="input"
+                      value={ctx.className}
+                      disabled
+                      readOnly
+                      style={readonlyInputStyle}
+                    />
+                  </div>
+                  <div>
+                    <div className="label" style={{ marginBottom: 4 }}>Profesor</div>
+                    {lockTeacher ? (
+                      <input
+                        className="input"
+                        value={teachers.find(t => t.id === teacherId)?.name ?? teacherId}
+                        disabled
+                        readOnly
+                        style={readonlyInputStyle}
+                      />
+                    ) : (
+                      <select
+                        className="select"
+                        value={teacherId}
+                        style={{ width: "100%", height: 44 }}
+                        onChange={(e) => setTeacherId(e.target.value)}
+                      >
+                        <option value="">Seleccionar profesor...</option>
+                        {teachers.map((t) => (
+                          <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "10px 28px", alignItems: "end", marginTop: 10 }}>
+                  <div>
+                    <div className="label" style={{ marginBottom: 4 }}>Nivel</div>
+                    <input
+                      className="input"
+                      value={ctx.levelName ?? ""}
+                      disabled
+                      readOnly
+                      style={readonlyInputStyle}
+                    />
+                  </div>
+                  <div>
+                    <div className="label" style={{ marginBottom: 4 }}>Curso</div>
+                    <input
+                      className="input"
+                      value={ctx.courseName}
+                      disabled
+                      readOnly
+                      style={readonlyInputStyle}
+                    />
+                  </div>
+                  <div>
+                    <div className="label" style={{ marginBottom: 4 }}>Porcentaje</div>
                     <input type="number" min={1} max={100} className="input"
-                      style={{ width: 64, textAlign: "center", padding: "2px 6px", fontSize: 13 }}
+                      style={{ width: "100%", height: 44, textAlign: "center" }}
                       value={percent}
                       onChange={e => setPercent(e.target.value)}
                       onWheel={e => e.currentTarget.blur()}
                       onKeyDown={e => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                     />
-                    <span style={{ fontSize: 13 }}>%</span>
                   </div>
-                  {ctx.levelName  && <div><span style={{ color: "var(--muted)" }}>Año: </span><strong>{ctx.levelName}</strong></div>}
-                  <div><span style={{ color: "var(--muted)" }}>Curso: </span><strong>{ctx.courseName}</strong></div>
-                  {ctx.moduleName && <div><span style={{ color: "var(--muted)" }}>Módulo: </span><strong>{ctx.moduleName}</strong></div>}
-                  <div><span style={{ color: "var(--muted)" }}>{ctx.id_group ? "Grupo" : "Materia"}: </span><strong>{ctx.className}</strong></div>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div className="label" style={{ margin: 0, whiteSpace: "nowrap" }}>Tiempo (minutos)</div>
-                  <input type="number" min={1} max={300} className="input"
-                    style={{ width: 100, textAlign: "center" }}
-                    value={tiempoMinutos}
-                    onChange={e => setTiempoMinutos(e.target.value)}
-                    placeholder="ej: 60"
-                    onWheel={e => e.currentTarget.blur()}
-                    onKeyDown={e => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
-                  />
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>Tiempo disponible para contestar</span>
+                  <div>
+                    <div className="label" style={{ marginBottom: 4 }}>Tiempo (min)</div>
+                    <input type="number" min={1} max={300} className="input"
+                      style={{ width: "100%", height: 44, textAlign: "center" }}
+                      value={tiempoMinutos}
+                      onChange={e => setTiempoMinutos(e.target.value)}
+                      placeholder="ej: 60"
+                      onWheel={e => e.currentTarget.blur()}
+                      onKeyDown={e => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
+                    />
+                  </div>
                 </div>
               </div>
 

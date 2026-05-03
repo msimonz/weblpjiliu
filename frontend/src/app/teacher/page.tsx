@@ -494,6 +494,16 @@ export default function TeacherPage() {
     }
   }
 
+  async function loadTeacherLevels(year?: number | null) {
+    try {
+      const url = year ? `/api/teacher/levels?year=${year}` : "/api/teacher/levels";
+      const res = await apiFetch(url);
+      setLevels(res?.items || []);
+    } catch {
+      setLevels([]);
+    }
+  }
+
   async function loadTypes() {
     setLoadingTypes(true);
     setTypes([]);
@@ -526,6 +536,7 @@ export default function TeacherPage() {
           loadTypes();
           loadEvaluations(year);
           loadTeacherCourses(year);
+          loadTeacherLevels(year);
         })
         .catch(() => {
           loadMyClasses(null);
@@ -533,10 +544,8 @@ export default function TeacherPage() {
           loadTypes();
           loadEvaluations(null);
           loadTeacherCourses(null);
+          loadTeacherLevels(null);
         });
-      apiFetch("/api/teacher/levels")
-        .then((res) => setLevels(res?.items || []))
-        .catch(() => {});
     }
   }, [loadingMe]);
 
@@ -556,6 +565,7 @@ export default function TeacherPage() {
     loadDashboard(teacherYear);
     loadEvaluations(teacherYear);
     loadTeacherCourses(teacherYear);
+    loadTeacherLevels(teacherYear);
   }, [teacherYear]);
 
   // =========================
@@ -1052,7 +1062,7 @@ export default function TeacherPage() {
         id_class:   ev.id_class  ?? 0,
         id_module:  ev.id_module ?? null,
         id_group:   ev.id_group  ?? null,
-        id_teacher: null,
+        id_teacher: me?.profile?.id ?? me?.user?.id ?? null,
         title:      ev.title,
         percent:    Number(ev.percent),
         courseName: course ? String(course.name) : String(ev.id_course),
@@ -1121,7 +1131,7 @@ export default function TeacherPage() {
         id_class,
         id_module:  cls?.id_module  ?? null,
         id_group:   selectedGroupId,
-        id_teacher: null,
+        id_teacher: me?.profile?.id ?? me?.user?.id ?? null,
         title,
         percent,
         courseName: course ? String(course.name) : String(id_course),
@@ -3187,6 +3197,8 @@ export default function TeacherPage() {
           ctx={crearExamenCtx}
           examId={crearExamenExamId ?? undefined}
           initialData={crearExamenInitialData ?? undefined}
+          teachers={[{ id: me?.profile?.id ?? me?.user?.id ?? "", name: me?.profile?.name ?? me?.profile?.full_name ?? me?.user?.email ?? "" }]}
+          lockTeacher
           apiBase="/api/teacher"
           onSaved={() => {
             const wasEditing = crearExamenExamId !== null;
