@@ -291,10 +291,12 @@ export default function TeacherPage() {
   const [cCourse, setCCourse] = useState<string>("");
   const [cType, setCType] = useState<string>("");
   const [cTypeOther, setCTypeOther] = useState<string>("");
-  const [cPercent, setCPercent] = useState<number>(0);
+  const [cPercent, setCPercent] = useState<string>("0");
   const [creating, setCreating] = useState(false);
 
   const [editPercents, setEditPercents] = useState<Record<number, string>>({});
+  const [editPercentFocused, setEditPercentFocused] = useState<Record<number, boolean>>({});
+  const [cPercentFocused, setCPercentFocused] = useState(false);
   const [savingEvalPercent, setSavingEvalPercent] = useState<Record<number, boolean>>({});
   const [deletingEval, setDeletingEval] = useState<Record<number, boolean>>({});
   const [deleteConfirm, setDeleteConfirm] = useState<{ evalId: number; title: string; gradeCount: number } | null>(null);
@@ -345,7 +347,7 @@ export default function TeacherPage() {
         setCType("");
         setCTypeOther("");
         setTitleOther("");
-        setCPercent(0);
+        setCPercent("0");
         setEditPercents({});
         break;
       case "UPSERT":
@@ -928,7 +930,7 @@ export default function TeacherPage() {
     setCreateClassFilter("all");
 
     setTitleOther("");
-    setCPercent(0);
+    setCPercent("0");
     setEditPercents({});
   }, [createLevelFilter]);
 
@@ -941,7 +943,7 @@ export default function TeacherPage() {
     setCreateClassFilter("all");
 
     setTitleOther("");
-    setCPercent(0);
+    setCPercent("0");
     setEditPercents({});
   }, [cCourse]);
 
@@ -1177,7 +1179,7 @@ export default function TeacherPage() {
       setCTypeOther("");
   
       setTitleOther("");
-      setCPercent(0);
+      setCPercent("0");
 
       // Reload items so createEvalsFiltered auto-updates
       await loadEvaluations(teacherYear);
@@ -1467,8 +1469,12 @@ export default function TeacherPage() {
     // Build the set of class IDs in scope based on the active module/class filter
     const levelNum = upsertLevelFilter && upsertLevelFilter !== "all" ? Number(upsertLevelFilter) : null;
     let scopeClassIds: Set<number> | null = null;
+    let scopeGroupId: number | null = null;
+
     if (thFilterClass && !thFilterClass.startsWith("grp:")) {
       scopeClassIds = new Set([Number(thFilterClass)]);
+    } else if (thFilterClass && thFilterClass.startsWith("grp:")) {
+      scopeGroupId = Number(thFilterClass.slice(4));
     } else if (thFilterModule) {
       scopeClassIds = new Set<number>();
       for (const c of myClasses) {
@@ -1487,6 +1493,17 @@ export default function TeacherPage() {
               c => c.id_group != null && Number(c.id_group) === Number(ev.id_group) && classModuleName(c) === thFilterModule
             );
             if (!groupInModule) continue;
+          } else {
+            continue;
+          }
+        } else if (scopeGroupId !== null) {
+          if (ev.id_group != null) {
+            if (Number(ev.id_group) !== scopeGroupId) continue;
+          } else if (ev.id_class != null) {
+            const classInGroup = myClasses.some(
+              c => c.id === Number(ev.id_class) && c.id_group != null && Number(c.id_group) === scopeGroupId
+            );
+            if (!classInGroup) continue;
           } else {
             continue;
           }
@@ -2591,7 +2608,7 @@ export default function TeacherPage() {
                       setCType("");
                       setCTypeOther("");
                       setTitleOther("");
-                      setCPercent(0);
+                      setCPercent("0");
                       setEditPercents({});
                       setMsg(null);
                     }}
@@ -2622,17 +2639,7 @@ export default function TeacherPage() {
                         {types.map((t) => (
                           <option key={t.id} value={String(t.id)}>{t.type}</option>
                         ))}
-                        <option value="__other__">Otro...</option>
                       </select>
-                      {cType === "__other__" && (
-                        <input
-                          className="input"
-                          style={{ marginTop: 8 }}
-                          value={cTypeOther}
-                          onChange={(e) => setCTypeOther(e.target.value)}
-                          placeholder="Ej: Taller, Quiz..."
-                        />
-                      )}
                     </div>
 
                     {/* Título */}
@@ -2643,21 +2650,22 @@ export default function TeacherPage() {
                         value={titleOther}
                         onChange={(e) => setTitleOther(e.target.value)}
                         placeholder="Escribe el título de la evaluación..."
-                        disabled={createClassFilter === "all"}
                       />
                     </div>
 
                     {/* Porcentaje */}
                     <div style={{ flex: "0 0 120px" }}>
-                      <div className="label">%</div>
+                      <div className="label">Porcentaje</div>
                       <input
-                        type="number"
+                        type={cPercentFocused ? "number" : "text"}
                         min={1}
                         max={100}
                         className="input"
                         style={{ textAlign: "center", width: "100%" }}
-                        value={cPercent}
-                        onChange={(e) => setCPercent(Number(e.target.value))}
+                        value={cPercentFocused ? cPercent : `${cPercent} %`}
+                        onFocus={() => setCPercentFocused(true)}
+                        onBlur={() => setCPercentFocused(false)}
+                        onChange={(e) => setCPercent(e.target.value)}
                         onWheel={(e) => e.currentTarget.blur()}
                         onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                       />
@@ -2740,13 +2748,17 @@ export default function TeacherPage() {
                             <div>{ev.title}</div>
                             <div style={{ display: "flex", justifyContent: "center" }}>
                               <input
-                                type="number"
+                                type={editPercentFocused[ev.id] ? "number" : "text"}
                                 min={1}
                                 max={100}
                                 className="input"
-                                style={{ textAlign: "center", padding: "4px 6px", fontSize: 13, width: 56, borderRadius: 9999, opacity: isExamen ? 0.5 : 1 }}
-                                value={editPercents[ev.id] ?? String(ev.percent)}
+                                style={{ textAlign: "center", padding: "4px 6px", fontSize: 13, width: 70, borderRadius: 9999, opacity: isExamen ? 0.5 : 1 }}
+                                value={editPercentFocused[ev.id]
+                                  ? (editPercents[ev.id] ?? String(ev.percent))
+                                  : `${editPercents[ev.id] ?? ev.percent} %`}
                                 disabled={isExamen}
+                                onFocus={() => setEditPercentFocused((p) => ({ ...p, [ev.id]: true }))}
+                                onBlur={() => setEditPercentFocused((p) => ({ ...p, [ev.id]: false }))}
                                 onChange={(e) =>
                                   setEditPercents((p) => ({ ...p, [ev.id]: e.target.value }))
                                 }
@@ -2862,8 +2874,25 @@ export default function TeacherPage() {
                   <select
                     className="select"
                     value={thFilterClass}
-                    disabled={upsertLevelFilter === ""}
-                    onChange={(e) => { setThFilterClass(e.target.value); }}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setThFilterClass(v);
+                      // Si no hay nivel seleccionado, derivarlo de la materia y disparar carga
+                      if (v && upsertLevelFilter === "" && !gLoadingRoster) {
+                        let level: number | null = null;
+                        if (v.startsWith("grp:")) {
+                          const groupId = Number(v.slice(4));
+                          const cls = myClasses.find((c) => c.id_group != null && Number(c.id_group) === groupId);
+                          level = cls?.level ?? (items.find((i) => i.id_group != null && Number(i.id_group) === groupId)?.course?.level ?? null);
+                        } else {
+                          level = myClasses.find((c) => String(c.id) === v)?.level ?? null;
+                        }
+                        if (level) {
+                          pendingThFilterClassRef.current = v;
+                          setUpsertLevelFilter(Number(level));
+                        }
+                      }
+                    }}
                   >
                     <option value="" style={{ fontWeight: 700 }}>{thClassOptions.some(o => o.value.startsWith("grp:")) ? "Materia/Grupo" : "Materia"}</option>
                     {thClassOptions.map((o) => (
@@ -3206,6 +3235,9 @@ export default function TeacherPage() {
             setCrearExamenCtx(null);
             setCrearExamenInitialData(null);
             setCrearExamenExamId(null);
+            setCType("");
+            setTitleOther("");
+            setCPercent("0");
             loadEvaluations(teacherYear);
             flash(wasEditing ? "✅ Examen actualizado correctamente" : "✅ Examen creado correctamente", "ok");
           }}

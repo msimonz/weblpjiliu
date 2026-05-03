@@ -485,6 +485,7 @@ export default function HabilitarExamenes({ courses }: Props) {
 
   async function handleReset(idStudent: string) {
     if (!attemptsCtx) return;
+    if (!confirm("¿Reiniciar el intento de este estudiante? Se eliminarán su examen y sus notas para esta evaluación.")) return;
     setResetting(prev => ({ ...prev, [idStudent]: true }));
     try {
       await apiFetch("/api/admin/exam-attempts", {

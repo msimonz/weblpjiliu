@@ -295,6 +295,7 @@ export default function AdminPage() {
   const [uFoundUser, setUFoundUser] = useState(false);
   const [_uNotFound, setUNotFound] = useState(false);
   const [creatingUser, setCreatingUser] = useState(false);
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState(false);
 
   const [userSearchQ, setUserSearchQ] = useState("");
   const [userSearchResults, setUserSearchResults] = useState<Array<{ id: string; cedula: string; name: string; email: string; roles: string[]; course_name: string | null }>>([]);
@@ -1034,6 +1035,9 @@ export default function AdminPage() {
 
   async function deleteCourse(id: number) {
     try {
+      const course = courses.find((c) => c.id === id);
+      const courseLabel = course ? course.name : "este curso";
+      if (!confirm(`¿Eliminar ${courseLabel}? Esta acción borrará el curso y sus asignaciones asociadas.`)) return;
       await apiFetch(`/api/admin/courses/${id}`, { method: "DELETE" });
       flash("✅ Curso eliminado", "ok");
       await loadAll(adminYear);
@@ -1136,6 +1140,9 @@ export default function AdminPage() {
 
   async function deleteEvalType(id: number) {
     try {
+      const type = types.find((t) => t.id === id);
+      const typeLabel = type ? type.type : "este tipo de evaluación";
+      if (!confirm(`¿Eliminar ${typeLabel}? Esta acción borrará el tipo de evaluación.`)) return;
       await apiFetch(`/api/admin/evaluation-types/${id}`, { method: "DELETE" });
       flash("✅ Tipo eliminado", "ok");
       await loadAll(adminYear);
@@ -1569,7 +1576,6 @@ export default function AdminPage() {
   }
 
   async function deleteUser() {
-    if (!window.confirm(`¿Estás seguro de que deseas eliminar a "${uName}" (cédula ${uCedula})? Esta acción no se puede deshacer.`)) return;
     try {
       await apiFetch(`/api/admin/delete-user?cedula=${encodeURIComponent(uCedula)}`, { method: "DELETE" });
       showOk("✅ Persona eliminada");
@@ -1577,6 +1583,8 @@ export default function AdminPage() {
       await loadAll(adminYear);
     } catch (e) {
       showErr((e as { message?: string })?.message || "Error eliminando persona");
+    } finally {
+      setConfirmDeleteUser(false);
     }
   }
 
@@ -3221,7 +3229,7 @@ export default function AdminPage() {
                             ))}
                           </select>
                         </div>
-                        <div style={{ textAlign: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 2 }}>
                           <input
                             type="number"
                             min={1}
@@ -3236,6 +3244,7 @@ export default function AdminPage() {
                             onWheel={(e) => e.currentTarget.blur()}
                             onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                           />
+                          <span style={{ fontSize: 13, color: "var(--muted)" }}>%</span>
                         </div>
                         <div style={{ display: "flex", justifyContent: "center" }}>
                           {ev.evaluation_type?.type === "Examen" ? (
@@ -3595,7 +3604,7 @@ export default function AdminPage() {
 
               {/* ── Fila 0: Buscar persona (comodín) ── */}
               <div style={{ marginBottom: 18 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
                   {/* Input + Buscar — 25% de ancho */}
                   <div style={{ display: "flex", alignItems: "stretch", border: "1px solid var(--stroke)", borderRadius: 12, overflow: "hidden", height: 42, width: "25%", minWidth: 180, boxShadow: "0 14px 26px rgba(2,132,199,.20)" }}>
                     <input
@@ -3647,7 +3656,7 @@ export default function AdminPage() {
                   <button
                     type="button"
                     className="btn"
-                    style={{ height: 42, minWidth: 120, marginTop: 0, background: "#4b5563", borderColor: "#4b5563" }}
+                    style={{ height: 42, minWidth: 120, marginTop: 0, background: "#4b5563", borderColor: "#4b5563", marginLeft: "auto", marginRight: 14 }}
                     onClick={() => { resetManualUserForm(); setMsg(null); setOkMsg(null); }}
                   >
                     Cancelar
@@ -3799,7 +3808,7 @@ export default function AdminPage() {
                       onClick={createUserManual}
                       disabled={creatingUser || isHistoricalYear}
                       title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
-                      style={{ height: 42 }}
+                      style={{ height: 42, minWidth: 120, marginLeft: "auto" }}
                     >
                       {creatingUser ? "Guardando..." : "Guardar"}
                     </button>
@@ -3807,8 +3816,8 @@ export default function AdminPage() {
                       <button
                         type="button"
                         className="btn"
-                        style={{ height: 42, background: "#dc2626", borderColor: "#b91c1c", opacity: isHistoricalYear ? 0.45 : 1, cursor: isHistoricalYear ? "not-allowed" : "pointer" }}
-                        onClick={deleteUser}
+                        style={{ height: 42, minWidth: 120, background: "#dc2626", borderColor: "#b91c1c", opacity: isHistoricalYear ? 0.45 : 1, cursor: isHistoricalYear ? "not-allowed" : "pointer" }}
+                        onClick={() => setConfirmDeleteUser(true)}
                         disabled={isHistoricalYear}
                         title={isHistoricalYear ? `Solo año vigente (${adminYearActivo})` : undefined}
                       >
@@ -3891,7 +3900,7 @@ export default function AdminPage() {
                     <button
                       type="button"
                       className="btn"
-                      style={{ background: "#4b5563", borderColor: "#4b5563" }}
+                      style={{ background: "#4b5563", borderColor: "#4b5563", minWidth: 120, height: 42 }}
                       onClick={() => {
                         setUploadReport(null);
                         setUploadFileName("");
@@ -4903,6 +4912,33 @@ export default function AdminPage() {
                 style={{ background: "#ef4444", color: "#fff", borderColor: "#ef4444", padding: "10px 24px" }}
                 onClick={() => ecHandleDelete(ecConfirmDeleteId)}>
                 Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmar eliminar persona */}
+      {confirmDeleteUser && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div className="card" style={{ maxWidth: 420, width: "90%", padding: 28 }}>
+            <h3 style={{ marginTop: 0, marginBottom: 12, color: "#dc2626" }}>⚠️ Eliminar persona</h3>
+            <p style={{ marginBottom: 8 }}>
+              Estás por eliminar a <strong>{uName}</strong> (cédula {uCedula}).
+            </p>
+            <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>
+              Esta acción eliminará permanentemente toda la información relacionada con esta persona: roles, asignaciones de materias, evaluaciones, notas e historial académico. No se puede deshacer.
+            </p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+              <button className="btn"
+                style={{ background: "var(--card)", color: "var(--text)", border: "1px solid var(--stroke)" }}
+                onClick={() => setConfirmDeleteUser(false)}>
+                Cancelar
+              </button>
+              <button className="btn"
+                style={{ background: "#dc2626", color: "#fff", borderColor: "#dc2626" }}
+                onClick={deleteUser}>
+                Sí, eliminar
               </button>
             </div>
           </div>
