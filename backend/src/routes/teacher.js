@@ -351,13 +351,37 @@ teacherRouter.get("/courses", requireAuth, requireTeacher, async (req, res) => {
 });
 
 teacherRouter.get("/levels", requireAuth, requireTeacher, async (req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from("level")
-    .select("id,name")
-    .order("id", { ascending: true });
+  try {
+    const teacherId = req.auth.user.id;
+    const vigente = await getAnioLectivoVigente();
+    const year = req.query.year ? Number(req.query.year) : vigente;
 
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ items: data || [] });
+    const teacherClasses = await getTeacherClasses(teacherId, year);
+    const assignedLevelIds = [
+      ...new Set((teacherClasses || []).map((c) => Number(c.level)).filter(Boolean)),
+    ].sort((a, b) => a - b);
+
+    if (assignedLevelIds.length === 0) return res.json({ items: [] });
+
+    const { data, error } = await supabaseAdmin
+      .from("level")
+      .select("id,name")
+      .in("id", assignedLevelIds)
+      .eq("year", year)
+      .order("id", { ascending: true });
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const levelNameById = new Map((data || []).map((l) => [Number(l.id), l.name]));
+    const items = assignedLevelIds.map((id) => ({
+      id,
+      name: levelNameById.get(id) ?? `Año ${id}`,
+    }));
+
+    return res.json({ items });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 teacherRouter.get("/evaluation-types", requireAuth, requireTeacher, async (req, res) => {

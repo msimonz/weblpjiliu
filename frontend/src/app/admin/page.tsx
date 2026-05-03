@@ -1373,19 +1373,20 @@ export default function AdminPage() {
       const course = courses.find(c => c.id === ev.id_course);
       const cls    = classes.find(c => c.id === ev.id_class);
       const mod    = cls?.id_module ? modules.find(m => m.id === cls.id_module) : null;
-      const lev    = levels.find(l => l.id === ecLevel);
+      const levelId = ev.class?.level ?? course?.level ?? ev.course?.level ?? ecLevel;
+      const lev    = levels.find(l => Number(l.id) === Number(levelId));
       setCrearExamenCtx({
         id_course:  ev.id_course,
         id_class:   ev.id_class,
         id_module:  ev.id_module ?? null,
         id_group:   ev.id_group  ?? null,
-        id_teacher: null,
+        id_teacher: ev.teacher?.id ?? null,
         title:      ev.title,
         percent:    Number(ev.percent),
         courseName: course ? String(course.name) : String(ev.id_course),
         className:  cls?.name ?? ev.class?.name ?? String(ev.id_class),
         moduleName: mod?.name ?? ev.module?.name ?? null,
-        levelName:  lev?.name ?? null,
+        levelName:  lev?.name ?? (levelId ? `Nivel ${levelId}` : null),
       });
       setCrearExamenInitialData(data.item);
       setCrearExamenExamId(ev.id);
@@ -3207,8 +3208,9 @@ export default function AdminPage() {
                         <div>
                           <select
                             className="select"
-                            style={{ fontSize: 14, padding: "8px 6px" }}
+                            style={{ fontSize: 14, padding: "8px 6px", opacity: ev.evaluation_type?.type === "Examen" ? 0.55 : 1 }}
                             value={ecEditTeachers[ev.id] ?? ev.teacher?.id ?? ""}
+                            disabled={ev.evaluation_type?.type === "Examen"}
                             onChange={(e) =>
                               setEcEditTeachers((p) => ({ ...p, [ev.id]: e.target.value }))
                             }
@@ -4846,6 +4848,7 @@ export default function AdminPage() {
           ctx={crearExamenCtx}
           examId={crearExamenExamId ?? undefined}
           initialData={crearExamenInitialData ?? undefined}
+          teachers={teachers}
           onSaved={() => {
             const wasEditing = crearExamenExamId !== null;
             setShowCrearExamen(false);

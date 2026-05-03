@@ -2415,7 +2415,7 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
     const id_course      = toInt(req.body?.id_course);
     const id_class       = toInt(req.body?.id_class);
     const id_group       = toInt(req.body?.id_group);
-    const id_teacher     = cleanStr(req.body?.id_teacher) || req.auth.user.id;
+    const id_teacher     = cleanStr(req.body?.id_teacher);
     const title          = cleanStr(req.body?.title);
     const percent        = Number(req.body?.percent);
     const tiempo_minutos = toInt(req.body?.tiempo_minutos);
@@ -2426,6 +2426,7 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
     if (!title)     return res.status(400).json({ error: "title requerido" });
     if (!Number.isFinite(percent) || percent <= 0 || percent > 100)
       return res.status(400).json({ error: "percent inválido (1..100)" });
+    if (!id_teacher) return res.status(400).json({ error: "id_teacher requerido" });
     if (!tiempo_minutos || tiempo_minutos < 1)
       return res.status(400).json({ error: "tiempo_minutos requerido (mínimo 1)" });
     if (!Array.isArray(preguntas))
@@ -2579,12 +2580,13 @@ adminRouter.get("/exams", requireAuth, requireAdmin, async (req, res) => {
     let q = supabaseAdmin
       .from("evaluation")
       .select(`
-        id, title, percent, tiempo_minutos, created_at,
+        id, title, percent, tiempo_minutos, created_at, id_teacher,
         id_course, id_class, id_module, id_group,
         course:course(id,name,year,level),
         class:class(id,name,level,id_module),
         module:module(id,name),
-        group:group(id,name)
+        group:group(id,name),
+        teacher:users!id_teacher(id,name)
       `)
       .in("id_type", examenTypeIds)
       .order("created_at", { ascending: false });
@@ -2675,12 +2677,13 @@ adminRouter.get("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
     const { data: ev, error: evErr } = await supabaseAdmin
       .from("evaluation")
       .select(`
-        id, title, percent, tiempo_minutos, created_at,
+        id, title, percent, tiempo_minutos, created_at, id_teacher,
         id_course, id_class, id_module, id_group,
         course:course(id,name,year,level),
         class:class(id,name,level),
         module:module(id,name),
-        group:group(id,name)
+        group:group(id,name),
+        teacher:users!id_teacher(id,name)
       `)
       .eq("id", id)
       .in("id_type", examenTypeIds)
@@ -2714,8 +2717,12 @@ adminRouter.put("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
 
     const tiempo_minutos = toInt(req.body?.tiempo_minutos);
     const percent        = Number(req.body?.percent);
+    const id_teacher     = cleanStr(req.body?.id_teacher);
+    const title          = cleanStr(req.body?.title);
     const preguntas      = req.body?.preguntas;
 
+    if (!id_teacher) return res.status(400).json({ error: "id_teacher requerido" });
+    if (!title) return res.status(400).json({ error: "title requerido" });
     if (!tiempo_minutos || tiempo_minutos < 1)
       return res.status(400).json({ error: "tiempo_minutos requerido (mínimo 1)" });
     if (!Number.isFinite(percent) || percent <= 0 || percent > 100)
@@ -2768,10 +2775,10 @@ adminRouter.put("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
       catch (err) { return handleYearError(res, err); }
     }
 
-    // Actualizar tiempo_minutos y percent en evaluation
+    // Actualizar datos del examen en evaluation, incluyendo el profesor asignado
     const { error: updErr } = await supabaseAdmin
       .from("evaluation")
-      .update({ tiempo_minutos, percent })
+      .update({ tiempo_minutos, percent, id_teacher, title })
       .eq("id", id);
     if (updErr) return res.status(500).json({ error: updErr.message });
 
