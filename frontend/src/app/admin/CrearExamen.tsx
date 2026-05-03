@@ -144,6 +144,8 @@ export default function CrearExamen({ ctx, examId, initialData, teachers = [], l
   const [saving, setSaving]               = useState(false);
   const [errMsg, setErrMsg]               = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [pctFocused, setPctFocused]       = useState(false);
+  const [tiempoFocused, setTiempoFocused] = useState(false);
   const readonlyInputStyle = {
     width: "100%",
     height: 44,
@@ -593,9 +595,13 @@ export default function CrearExamen({ ctx, examId, initialData, teachers = [], l
                   </div>
                   <div>
                     <div className="label" style={{ marginBottom: 4 }}>Porcentaje</div>
-                    <input type="number" min={1} max={100} className="input"
+                    <input
+                      type={pctFocused ? "number" : "text"}
+                      min={1} max={100} className="input"
                       style={{ width: "100%", height: 44, textAlign: "center" }}
-                      value={percent}
+                      value={pctFocused ? percent : (percent ? `${percent} %` : "")}
+                      onFocus={() => setPctFocused(true)}
+                      onBlur={() => setPctFocused(false)}
                       onChange={e => setPercent(e.target.value)}
                       onWheel={e => e.currentTarget.blur()}
                       onKeyDown={e => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
@@ -603,11 +609,15 @@ export default function CrearExamen({ ctx, examId, initialData, teachers = [], l
                   </div>
                   <div>
                     <div className="label" style={{ marginBottom: 4 }}>Tiempo (min)</div>
-                    <input type="number" min={1} max={300} className="input"
+                    <input
+                      type={tiempoFocused ? "number" : "text"}
+                      min={1} max={300} className="input"
                       style={{ width: "100%", height: 44, textAlign: "center" }}
-                      value={tiempoMinutos}
-                      onChange={e => setTiempoMinutos(e.target.value)}
+                      value={tiempoFocused ? tiempoMinutos : (tiempoMinutos ? `${tiempoMinutos} min` : "")}
                       placeholder="ej: 60"
+                      onFocus={() => setTiempoFocused(true)}
+                      onBlur={() => setTiempoFocused(false)}
+                      onChange={e => setTiempoMinutos(e.target.value)}
                       onWheel={e => e.currentTarget.blur()}
                       onKeyDown={e => { if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault(); }}
                     />
