@@ -379,7 +379,7 @@ export default function TomarExamen({ examInfo, me, onClose, onFinished }: Props
                     <option value="">—</option>
                     {der.map((d, di) => (
                       <option key={d.id} value={d.id}>
-                        {String.fromCharCode(65 + di)}. {d.texto}
+                        {String.fromCharCode(65 + di)}
                       </option>
                     ))}
                   </select>
