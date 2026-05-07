@@ -198,7 +198,7 @@ export default function ConsultarAsistencia() {
 
   return (
     <div className="card" style={{ marginTop: 18 }}>
-      <h2 style={{ marginTop: 0 }}>Consultar asistencia</h2>
+      <h2 style={{ marginTop: 0 }}>Reporte de asistencia</h2>
 
       {/* Filtros + botón Descargar */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20, alignItems: "flex-end" }}>
@@ -268,40 +268,46 @@ export default function ConsultarAsistencia() {
         </div>
 
         {/* Botones Cancelar + Descargar */}
-        {courseId && (
-          <button
-            type="button"
-            className="btn"
-            onClick={handleCancelar}
-            style={{ background: "#4b5563", borderColor: "#4b5563", whiteSpace: "nowrap" }}
-          >
-            Cancelar
-          </button>
-        )}
-        {hasData && (
-          <button
-            type="button"
-            className="btnLight"
-            onClick={handleDescargar}
-            style={{
-              background: "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)",
-              border: "1px solid rgba(34,197,94,.8)",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              whiteSpace: "nowrap",
-              boxShadow: "0 4px 12px rgba(34,197,94,.35)",
-            }}
-          >
-            ↓&nbsp;&nbsp;Descargar&nbsp;
-            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24">
-              <path d="M4 2h9l5 5v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="#fff" stroke="#14532d" strokeWidth="1.2"/>
-              <path d="M13 2v5h5" fill="none" stroke="#14532d" strokeWidth="1.2"/>
-              <rect x="3" y="10" width="18" height="11" rx="1" fill="#16a34a" stroke="#14532d" strokeWidth="0.8"/>
-              <text x="6.5" y="19.5" fontSize="9" fontWeight="bold" fill="#ffffff" fontFamily="Arial, sans-serif">xls</text>
-            </svg>
-          </button>
-        )}
+        <button
+          type="button"
+          className="btn"
+          onClick={handleCancelar}
+          style={{
+            alignSelf: "flex-end",
+            whiteSpace: "nowrap",
+            background: "linear-gradient(180deg, #374151 0%, #1f2937 100%)",
+            border: "1px solid #374151",
+            color: "#fff",
+          }}
+        >
+          Cancelar
+        </button>
+        <button
+          type="button"
+          className="btnLight"
+          onClick={handleDescargar}
+          disabled={!hasData}
+          style={{
+            alignSelf: "flex-end",
+            background: "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)",
+            border: "1px solid rgba(34,197,94,.8)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            whiteSpace: "nowrap",
+            boxShadow: "0 4px 12px rgba(34,197,94,.35)",
+            opacity: hasData ? 1 : 0.4,
+            cursor: hasData ? "pointer" : "default",
+          }}
+        >
+          ↓&nbsp;&nbsp;Descargar&nbsp;
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24">
+            <path d="M4 2h9l5 5v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="#fff" stroke="#14532d" strokeWidth="1.2"/>
+            <path d="M13 2v5h5" fill="none" stroke="#14532d" strokeWidth="1.2"/>
+            <rect x="3" y="10" width="18" height="11" rx="1" fill="#16a34a" stroke="#14532d" strokeWidth="0.8"/>
+            <text x="6.5" y="19.5" fontSize="9" fontWeight="bold" fill="#ffffff" fontFamily="Arial, sans-serif">xls</text>
+          </svg>
+        </button>
       </div>
 
       {/* Radio filtro */}

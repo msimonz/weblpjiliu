@@ -316,7 +316,7 @@ export default function SecretariaPage() {
     return classes.find(c => c.id === Number(upsertClassFilter)) || null;
   }, [upsertClassFilter, classes]);
 
-  const selectedUpsertGroup = useMemo(() => {
+  const _selectedUpsertGroup = useMemo(() => {
     if (upsertGroupFilter === "all") return null;
     return groups.find(g => g.id === Number(upsertGroupFilter)) || null;
   }, [upsertGroupFilter, groups]);
@@ -385,27 +385,6 @@ export default function SecretariaPage() {
 
   const isSingleItemView = upsertClassFilter !== "all" || upsertGroupFilter !== "all";
 
-  const breadcrumb = useMemo(() => {
-    const levelLabel  = typeof upsertLevelFilter === "number" && upsertLevelFilter !== 0
-      ? (levels.find(l => l.id === upsertLevelFilter)?.name ?? `Nivel ${upsertLevelFilter}`)
-      : upsertLevelFilter === 0 ? "Todos los años" : null;
-    const courseLabel = upsertCourseFilter !== "all"
-      ? (courses.find(c => c.id === Number(upsertCourseFilter))?.name ?? "—") : null;
-    const moduleLabel = upsertModuleFilter !== "all"
-      ? (modules.find(m => m.id === Number(upsertModuleFilter))?.name ?? "—") : null;
-    const classLabel  = upsertClassFilter !== "all"
-      ? (gridClassInfo?.name ?? selectedUpsertClass?.name ?? "—")
-      : upsertGroupFilter !== "all"
-      ? (selectedUpsertGroup?.name ?? "—")
-      : null;
-    return [
-      levelLabel,
-      courseLabel ?? (levelLabel ? "Todos los cursos"   : null),
-      moduleLabel ?? (levelLabel ? "Todos los módulos"  : null),
-      classLabel  ?? (levelLabel ? "Todas las materias" : null),
-    ].filter(Boolean).join(" › ") || "Todas las notas";
-  }, [upsertLevelFilter, upsertCourseFilter, upsertModuleFilter, upsertClassFilter, upsertGroupFilter,
-      levels, courses, modules, gridClassInfo, selectedUpsertClass, selectedUpsertGroup]);
 
   function downloadExcel() {
     const _materia = gridClassInfo?.name ?? selectedUpsertClass?.name ?? "Grilla";
@@ -772,31 +751,55 @@ export default function SecretariaPage() {
                   </select>
                 </div>
 
+                {/* Botón Cancelar */}
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    setUpsertLevelFilter("");
+                    setUpsertCourseFilter("all");
+                    setUpsertModuleFilter("all");
+                    setUpsertClassFilter("all");
+                    setUpsertGroupFilter("all");
+                  }}
+                  style={{
+                    alignSelf: "flex-end",
+                    whiteSpace: "nowrap",
+                    background: "linear-gradient(180deg, #374151 0%, #1f2937 100%)",
+                    border: "1px solid #374151",
+                    color: "#fff",
+                  }}
+                >
+                  Cancelar
+                </button>
+
                 {/* Botón Descargar */}
-                {gEvaluations.length > 0 && gRoster.length > 0 && (
-                  <button
-                    type="button"
-                    className="btnLight"
-                    onClick={downloadExcel}
-                    style={{
-                      background: "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)",
-                      border: "1px solid rgba(34,197,94,.8)",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      whiteSpace: "nowrap",
-                      boxShadow: "0 4px 12px rgba(34,197,94,.35)",
-                    }}
-                  >
-                    ↓&nbsp;&nbsp;Descargar&nbsp;
-                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24">
-                      <path d="M4 2h9l5 5v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="#fff" stroke="#14532d" strokeWidth="1.2"/>
-                      <path d="M13 2v5h5" fill="none" stroke="#14532d" strokeWidth="1.2"/>
-                      <rect x="3" y="10" width="18" height="11" rx="1" fill="#16a34a" stroke="#14532d" strokeWidth="0.8"/>
-                      <text x="6.5" y="19.5" fontSize="9" fontWeight="bold" fill="#ffffff" fontFamily="Arial, sans-serif">xls</text>
-                    </svg>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="btnLight"
+                  onClick={downloadExcel}
+                  disabled={!(gEvaluations.length > 0 && gRoster.length > 0)}
+                  style={{
+                    alignSelf: "flex-end",
+                    background: "linear-gradient(180deg, #22c55e 0%, #16a34a 100%)",
+                    border: "1px solid rgba(34,197,94,.8)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    whiteSpace: "nowrap",
+                    boxShadow: "0 4px 12px rgba(34,197,94,.35)",
+                    opacity: gEvaluations.length > 0 && gRoster.length > 0 ? 1 : 0.4,
+                    cursor: gEvaluations.length > 0 && gRoster.length > 0 ? "pointer" : "default",
+                  }}
+                >
+                  ↓&nbsp;&nbsp;Descargar&nbsp;
+                  <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24">
+                    <path d="M4 2h9l5 5v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="#fff" stroke="#14532d" strokeWidth="1.2"/>
+                    <path d="M13 2v5h5" fill="none" stroke="#14532d" strokeWidth="1.2"/>
+                    <rect x="3" y="10" width="18" height="11" rx="1" fill="#16a34a" stroke="#14532d" strokeWidth="0.8"/>
+                    <text x="6.5" y="19.5" fontSize="9" fontWeight="bold" fill="#ffffff" fontFamily="Arial, sans-serif">xls</text>
+                  </svg>
+                </button>
               </div>
 
               {/* Grid de notas */}
@@ -806,10 +809,6 @@ export default function SecretariaPage() {
                 </div>
               ) : (
                 <div style={{ marginTop: 16 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-                    <div style={{ fontWeight: 900 }}>{breadcrumb}</div>
-                  </div>
-
                   <div style={{
                     borderRadius: GRILLA.radiusSecondary, overflow: "hidden",
                     border: "1px solid color-mix(in srgb, var(--stroke) 100%, transparent)",
