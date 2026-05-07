@@ -17,7 +17,8 @@ type SecView = "" | "NOTAS" | "CONSULTAR";
 
 type AnioLectivo  = { year: number; nombre: string; activo: boolean };
 type Course       = { id: number; name: string; level: number; year: number };
-type ClassItem    = { id: number; name: string; level: number; id_module: number | null; module_name: string | null };
+type ClassItem    = { id: number; name: string; level: number; id_module: number | null; module_name: string | null; groups: { id: number; name: string }[] };
+type GroupItem    = { id: number; name: string; id_module: number | null; year: number };
 type ModuleItem   = { id: number; name: string };
 type LevelItem    = { id: number; name: string };
 type EvalItem     = {
@@ -105,12 +106,14 @@ export default function SecretariaPage() {
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [modules, setModules] = useState<ModuleItem[]>([]);
   const [levels,  setLevels]  = useState<LevelItem[]>([]);
+  const [groups,  setGroups]  = useState<GroupItem[]>([]);
 
   // Filtros del grid
   const [upsertLevelFilter,  setUpsertLevelFilter]  = useState<number | "">("");
   const [upsertCourseFilter, setUpsertCourseFilter] = useState<number | "all">("all");
   const [upsertModuleFilter, setUpsertModuleFilter] = useState<number | "all">("all");
   const [upsertClassFilter,  setUpsertClassFilter]  = useState<number | "all">("all");
+  const [upsertGroupFilter,  setUpsertGroupFilter]  = useState<number | "all">("all");
 
   // Filtros de búsqueda en la tabla
   const [gFilterCedula, setGFilterCedula] = useState("all");
@@ -162,16 +165,18 @@ export default function SecretariaPage() {
     setMsg(null);
     const ySuffix = year ? `?year=${year}` : "";
     try {
-      const [c1, c2, m1, l1] = await Promise.all([
+      const [c1, c2, m1, l1, g1] = await Promise.all([
         apiFetch(`/api/admin/courses${ySuffix}`),
         apiFetch(`/api/admin/classes${ySuffix}`),
         apiFetch(`/api/admin/modules${ySuffix}`),
         apiFetch(`/api/admin/levels${ySuffix}`),
+        apiFetch(`/api/admin/groups${ySuffix}`),
       ]);
       setCourses(c1?.items || []);
       setClasses(c2?.items || []);
       setModules(m1?.items || []);
       setLevels(l1?.items  || []);
+      setGroups(g1?.items  || []);
     } catch (e) {
       setMsg((e as { message?: string })?.message || "Error cargando datos");
     }
@@ -195,7 +200,8 @@ export default function SecretariaPage() {
     level:        number | "",
     courseFilter: number | "all",
     moduleFilter: number | "all",
-    classFilter:  number | "all"
+    classFilter:  number | "all",
+    groupFilter:  number | "all"
   ) {
     setMsg(null);
     setGLoadingRoster(true);
@@ -206,7 +212,9 @@ export default function SecretariaPage() {
     setGradeDraft({});
     try {
       let data;
-      if (classFilter !== "all") {
+      if (groupFilter !== "all") {
+        data = await apiFetch(`/api/admin/group-grade-grid?group_id=${Number(groupFilter)}`);
+      } else if (classFilter !== "all") {
         const courseParam = courseFilter !== "all" ? `&course_id=${Number(courseFilter)}` : "";
         data = await apiFetch(`/api/admin/class-grade-grid?class_id=${Number(classFilter)}${courseParam}`);
       } else {
@@ -244,10 +252,16 @@ export default function SecretariaPage() {
 
   useEffect(() => {
     if (view !== "NOTAS") return;
-    if (upsertLevelFilter === "") return;
-    loadGradeGridWith(upsertLevelFilter, upsertCourseFilter, upsertModuleFilter, upsertClassFilter);
+    const hasFilter =
+      upsertLevelFilter !== "" ||
+      upsertCourseFilter !== "all" ||
+      upsertModuleFilter !== "all" ||
+      upsertClassFilter  !== "all" ||
+      upsertGroupFilter  !== "all";
+    if (!hasFilter) return;
+    loadGradeGridWith(upsertLevelFilter, upsertCourseFilter, upsertModuleFilter, upsertClassFilter, upsertGroupFilter);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [upsertLevelFilter, upsertCourseFilter, upsertModuleFilter, upsertClassFilter]);
+  }, [upsertLevelFilter, upsertCourseFilter, upsertModuleFilter, upsertClassFilter, upsertGroupFilter]);
 
   // ── Datos derivados ─────────────────────────────────────────────────────────
   const availableLevels = useMemo(() => {
@@ -273,17 +287,39 @@ export default function SecretariaPage() {
   }, [classes, modules, upsertLevelFilter]);
 
   const upsertClassesFiltered = useMemo(() => {
-    if (upsertLevelFilter === "" || upsertLevelFilter === 0) return classes;
-    let filtered = classes.filter(c => Number(c.level) === Number(upsertLevelFilter));
+    let filtered = classes.filter(c => !c.groups || c.groups.length === 0);
+    if (upsertLevelFilter !== "" && upsertLevelFilter !== 0)
+      filtered = filtered.filter(c => Number(c.level) === Number(upsertLevelFilter));
     if (upsertModuleFilter !== "all")
       filtered = filtered.filter(c => Number(c.id_module) === Number(upsertModuleFilter));
     return filtered;
   }, [classes, upsertLevelFilter, upsertModuleFilter]);
 
+  const upsertGroupsFiltered = useMemo(() => {
+    let filtered = groups;
+    if (upsertModuleFilter !== "all") {
+      filtered = filtered.filter(g => Number(g.id_module) === Number(upsertModuleFilter));
+    } else if (upsertLevelFilter !== "" && upsertLevelFilter !== 0) {
+      const levelModuleIds = new Set(
+        classes
+          .filter(c => Number(c.level) === Number(upsertLevelFilter))
+          .map(c => c.id_module)
+          .filter((x): x is number => x !== null && x !== undefined && x > 0)
+      );
+      filtered = filtered.filter(g => g.id_module !== null && levelModuleIds.has(g.id_module));
+    }
+    return filtered;
+  }, [groups, upsertModuleFilter, upsertLevelFilter, classes]);
+
   const selectedUpsertClass = useMemo(() => {
     if (upsertClassFilter === "all") return null;
     return classes.find(c => c.id === Number(upsertClassFilter)) || null;
   }, [upsertClassFilter, classes]);
+
+  const selectedUpsertGroup = useMemo(() => {
+    if (upsertGroupFilter === "all") return null;
+    return groups.find(g => g.id === Number(upsertGroupFilter)) || null;
+  }, [upsertGroupFilter, groups]);
 
   const sortedRoster = useMemo(
     () => [...gRoster].sort((a, b) => a.name.localeCompare(b.name, "es")),
@@ -347,6 +383,8 @@ export default function SecretariaPage() {
     return CEDULA_COL_W + ALUMNO_COL_W + 90 + gEvaluations.length * 120;
   }, [gEvaluations.length]);
 
+  const isSingleItemView = upsertClassFilter !== "all" || upsertGroupFilter !== "all";
+
   const breadcrumb = useMemo(() => {
     const levelLabel  = typeof upsertLevelFilter === "number" && upsertLevelFilter !== 0
       ? (levels.find(l => l.id === upsertLevelFilter)?.name ?? `Nivel ${upsertLevelFilter}`)
@@ -355,16 +393,19 @@ export default function SecretariaPage() {
       ? (courses.find(c => c.id === Number(upsertCourseFilter))?.name ?? "—") : null;
     const moduleLabel = upsertModuleFilter !== "all"
       ? (modules.find(m => m.id === Number(upsertModuleFilter))?.name ?? "—") : null;
-    const classLabel  = upsertClassFilter  !== "all"
-      ? (gridClassInfo?.name ?? selectedUpsertClass?.name ?? "—") : null;
+    const classLabel  = upsertClassFilter !== "all"
+      ? (gridClassInfo?.name ?? selectedUpsertClass?.name ?? "—")
+      : upsertGroupFilter !== "all"
+      ? (selectedUpsertGroup?.name ?? "—")
+      : null;
     return [
       levelLabel,
       courseLabel ?? (levelLabel ? "Todos los cursos"   : null),
       moduleLabel ?? (levelLabel ? "Todos los módulos"  : null),
       classLabel  ?? (levelLabel ? "Todas las materias" : null),
     ].filter(Boolean).join(" › ") || "Todas las notas";
-  }, [upsertLevelFilter, upsertCourseFilter, upsertModuleFilter, upsertClassFilter,
-      levels, courses, modules, gridClassInfo, selectedUpsertClass]);
+  }, [upsertLevelFilter, upsertCourseFilter, upsertModuleFilter, upsertClassFilter, upsertGroupFilter,
+      levels, courses, modules, gridClassInfo, selectedUpsertClass, selectedUpsertGroup]);
 
   function downloadExcel() {
     const _materia = gridClassInfo?.name ?? selectedUpsertClass?.name ?? "Grilla";
@@ -412,6 +453,7 @@ export default function SecretariaPage() {
     setUpsertCourseFilter("all");
     setUpsertModuleFilter("all");
     setUpsertClassFilter("all");
+    setUpsertGroupFilter("all");
     setGEvaluations([]);
     setGRoster([]);
     setGGrades([]);
@@ -631,6 +673,7 @@ export default function SecretariaPage() {
                       setUpsertCourseFilter("all");
                       setUpsertModuleFilter("all");
                       setUpsertClassFilter("all");
+                      setUpsertGroupFilter("all");
                     }}
                   >
                     <option value="" disabled>Seleccionar año...</option>
@@ -660,6 +703,7 @@ export default function SecretariaPage() {
                       }
                       setUpsertModuleFilter("all");
                       setUpsertClassFilter("all");
+                      setUpsertGroupFilter("all");
                     }}
                   >
                     <option value="all" style={{ fontWeight: 700 }}>Todos</option>
@@ -677,6 +721,7 @@ export default function SecretariaPage() {
                     onChange={e => {
                       setUpsertModuleFilter(e.target.value === "all" ? "all" : Number(e.target.value));
                       setUpsertClassFilter("all");
+                      setUpsertGroupFilter("all");
                     }}
                   >
                     <option value="all" style={{ fontWeight: 700 }}>Todos</option>
@@ -687,16 +732,43 @@ export default function SecretariaPage() {
                 </div>
 
                 <div style={{ flex: "2 1 200px" }}>
-                  <div className="label">Materia</div>
+                  <div className="label">{upsertGroupsFiltered.length > 0 ? "Materia/Grupo" : "Materia"}</div>
                   <select
                     className="select"
-                    value={upsertClassFilter}
-                    onChange={e => setUpsertClassFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
+                    value={
+                      upsertGroupFilter !== "all" ? `g:${upsertGroupFilter}`
+                        : upsertClassFilter !== "all" ? `c:${upsertClassFilter}`
+                        : "all"
+                    }
+                    onChange={e => {
+                      const val = e.target.value;
+                      if (val === "all") {
+                        setUpsertClassFilter("all");
+                        setUpsertGroupFilter("all");
+                      } else if (val.startsWith("g:")) {
+                        setUpsertClassFilter("all");
+                        setUpsertGroupFilter(Number(val.slice(2)));
+                      } else {
+                        setUpsertClassFilter(Number(val.slice(2)));
+                        setUpsertGroupFilter("all");
+                      }
+                    }}
                   >
                     <option value="all">Todas</option>
-                    {upsertClassesFiltered.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
+                    {upsertClassesFiltered.length > 0 && (
+                      <optgroup label="Materias">
+                        {upsertClassesFiltered.map(c => (
+                          <option key={`c:${c.id}`} value={`c:${c.id}`}>{c.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {upsertGroupsFiltered.length > 0 && (
+                      <optgroup label="Grupos">
+                        {upsertGroupsFiltered.map(g => (
+                          <option key={`g:${g.id}`} value={`g:${g.id}`}>{g.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
 
@@ -728,9 +800,9 @@ export default function SecretariaPage() {
               </div>
 
               {/* Grid de notas */}
-              {upsertLevelFilter === "" ? (
+              {!upsertLevelFilter && upsertCourseFilter === "all" && upsertModuleFilter === "all" && upsertClassFilter === "all" && upsertGroupFilter === "all" ? (
                 <div style={{ marginTop: 24, color: "var(--muted)", fontSize: 14 }}>
-                  Seleccioná un año para ver las notas.
+                  Seleccioná al menos un filtro para ver las notas.
                 </div>
               ) : (
                 <div style={{ marginTop: 16 }}>
@@ -772,7 +844,7 @@ export default function SecretariaPage() {
 
                         <thead>
                           {/* Subheader de materias cuando hay múltiples */}
-                          {upsertClassFilter === "all" && gEvaluations.length > 0 && (() => {
+                          {!isSingleItemView && gEvaluations.length > 0 && (() => {
                             const groups: { classId: number; className: string; count: number }[] = [];
                             for (const ev of gEvaluations) {
                               const last = groups[groups.length - 1];
@@ -800,7 +872,7 @@ export default function SecretariaPage() {
                             <th style={{
                               textAlign: "left", padding: "8px 12px",
                               borderBottom: GRILLA.headerBottomBorder,
-                              position: "sticky", top: upsertClassFilter === "all" ? 33 : 0,
+                              position: "sticky", top: isSingleItemView ? 0 : 33,
                               left: 0, zIndex: 6, whiteSpace: "nowrap", boxShadow: "none",
                             }}>
                               <select
@@ -819,7 +891,7 @@ export default function SecretariaPage() {
                             <th style={{
                               textAlign: "left", padding: "8px 12px",
                               borderBottom: GRILLA.headerBottomBorder,
-                              position: "sticky", top: upsertClassFilter === "all" ? 33 : 0,
+                              position: "sticky", top: isSingleItemView ? 0 : 33,
                               left: STICKY_ALUMNO_LEFT, zIndex: 6, boxShadow: "none",
                             }}>
                               <select
@@ -838,7 +910,7 @@ export default function SecretariaPage() {
                             <th style={{
                               textAlign: "center", padding: "8px 10px",
                               borderBottom: GRILLA.headerBottomBorder,
-                              position: "sticky", top: upsertClassFilter === "all" ? 33 : 0,
+                              position: "sticky", top: isSingleItemView ? 0 : 33,
                               zIndex: 5, whiteSpace: "nowrap", color: "#64748b", fontWeight: 700,
                             }}>
                               <span style={{ color: "#64748b", fontSize: 12 }}>No Aprobadas</span>
@@ -852,9 +924,9 @@ export default function SecretariaPage() {
                                 <th key={`${ev.id}-grade`} style={{
                                   textAlign: "left", padding: "8px 10px",
                                   borderBottom: GRILLA.headerBottomBorder,
-                                  position: "sticky", top: upsertClassFilter === "all" ? 33 : 0,
+                                  position: "sticky", top: isSingleItemView ? 0 : 33,
                                   zIndex: 5, lineHeight: 1.3,
-                                  borderLeft: upsertClassFilter === "all" ? "1px solid var(--stroke)" : undefined,
+                                  borderLeft: isSingleItemView ? undefined : "1px solid var(--stroke)",
                                 }}>
                                   <div>{typeLabel} ({Number(ev.percent).toFixed(0)}%)</div>
                                   {showTitle && (
@@ -954,7 +1026,7 @@ export default function SecretariaPage() {
                                         borderBottom: GRILLA.rowBottomBorder,
                                         background: enabledForCourse ? "transparent" : disabledCellBg,
                                         position: "relative",
-                                        borderLeft: upsertClassFilter === "all" ? "1px solid var(--stroke)" : undefined,
+                                        borderLeft: isSingleItemView ? undefined : "1px solid var(--stroke)",
                                       }}>
                                         {noPresentó ? (
                                           <div style={{ display: "flex", alignItems: "center", justifyContent: "left", height: 26, padding: "0 6px" }}>

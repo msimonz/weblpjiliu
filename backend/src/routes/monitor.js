@@ -202,12 +202,15 @@ monitorRouter.get("/classes", requireAuth, requireMonitor, async (req, res) => {
 
     let query = supabaseAdmin
       .from("class")
-      .select("id,name")
+      .select("id,name,id_module")
       .eq("level", course.level)
-      .eq("year", course.year)
-      .order("name", { ascending: true });
+      .eq("year", course.year);
 
-    if (moduleId !== "todos") query = query.eq("id_module", moduleId);
+    if (moduleId !== "todos") {
+      query = query.eq("id_module", moduleId).order("orden", { ascending: true });
+    } else {
+      query = query.order("name", { ascending: true });
+    }
 
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
