@@ -149,8 +149,10 @@ export default function DashboardPage() {
   const [hoveredGroupId, setHoveredGroupId]   = useState<number | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
 
-  // Modal inasistencias
-  const [absModalOpen,    setAbsModalOpen]    = useState(false);
+  // Pestañas
+  const [activeTab, setActiveTab] = useState<"notas" | "inasistencias">("notas");
+
+  // Inasistencias
   const [absItems,        setAbsItems]        = useState<AbsenceItem[]>([]);
   const [absLoading,      setAbsLoading]      = useState(false);
   const [absFilterFecha,  setAbsFilterFecha]  = useState("all");
@@ -235,6 +237,7 @@ export default function DashboardPage() {
   }, [level]);
 
   useEffect(() => {
+    setActiveTab("notas");
     setSelectedClass(null);
     setQ("");
     setSuggestions([]);
@@ -345,16 +348,16 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    if (!absModalOpen) return;
+    if (!courseId) return;
     setAbsLoading(true);
     setAbsItems([]);
     setAbsFilterFecha("all");
     setAbsFilterMateria("all");
-    apiFetch(`/api/student/absences${courseId ? `?course_id=${courseId}` : ""}`)
+    apiFetch(`/api/student/absences?course_id=${courseId}`)
       .then((r: { items?: AbsenceItem[] }) => setAbsItems(r?.items || []))
       .catch(() => {})
       .finally(() => setAbsLoading(false));
-  }, [absModalOpen, courseId]);
+  }, [courseId]);
 
   // T26 — mapa class_id → examen disponible (solo los no rendidos muestran botón naranja)
   const examByClassId = useMemo(() => {
@@ -608,11 +611,11 @@ export default function DashboardPage() {
               marginTop: 16,
               display: "flex",
               flexDirection: "column",
-              gap: 20,
+              gap: 0,
               alignItems: "stretch",
             }}
           >
-            <section className="flatSection">
+            <section className="flatSection" style={{ marginBottom: 12 }}>
 
               <div
                 style={{
@@ -682,7 +685,7 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              <div className="summaryCardsGrid" style={{ marginTop: 28 }}>
+              <div className="summaryCardsGrid" style={{ marginTop: 28, gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
                   <div className="summaryCardItem">
                     <div className="summaryCardLabel" style={{ color: "var(--text)" }}>
                       Aprobadas
@@ -719,42 +722,18 @@ export default function DashboardPage() {
                     <div className="summaryCardLabel" style={{ color: "var(--text)" }}>
                       Promedio
                     </div>
-                    <div className="summaryCardBox">
-                      <span
-                        className="summaryCardValue"
-                        style={{
-                          color: gradeTextColor(summaryStats?.avg_weighted ?? null),
-                        }}
-                      >
-                        {summaryStats?.avg_weighted === null || !summaryStats
-                          ? "—"
-                          : summaryStats.avg_weighted.toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="summaryCardItem" style={{ marginLeft: -58 }}>
-                    <div className="summaryCardLabel" style={{ color: "var(--text)" }}>
-                      Inasistencias
-                    </div>
                     {(() => {
-                      const abs = summaryStats?.absences ?? 0;
-                      const hasAbs = summaryStats && abs > 0;
+                      const avg = summaryStats?.avg_weighted ?? null;
+                      const avgPassed = summaryStats && avg !== null && avg >= PASS_GRADE;
+                      const avgFailed = summaryStats && avg !== null && avg < PASS_GRADE;
                       return (
-                        <div style={{ height: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          <button
-                            type="button"
-                            onClick={() => { if (hasAbs) setAbsModalOpen(true); }}
-                            style={{
-                              background: "none", border: "none", padding: 0,
-                              cursor: hasAbs ? "pointer" : "default",
-                              fontWeight: 800, fontSize: 15.5, lineHeight: 1,
-                              color: hasAbs ? "#6b7280" : "var(--text)",
-                              textDecoration: hasAbs ? "underline" : "none",
-                            }}
+                        <div className={`summaryCardBox ${avgPassed ? "summaryCardBoxPassedActive" : avgFailed ? "summaryCardBoxFailedActive" : ""}`}>
+                          <span
+                            className={`summaryCardValue ${(avgPassed || avgFailed) ? "summaryCardValueLight" : ""}`}
+                            style={{ color: avgPassed ? "#166534" : avgFailed ? "#b91c1c" : "var(--text)" }}
                           >
-                            {summaryStats ? abs : "—"}
-                          </button>
+                            {avg === null || !summaryStats ? "—" : avg.toFixed(2)}
+                          </span>
                         </div>
                       );
                     })()}
@@ -762,7 +741,36 @@ export default function DashboardPage() {
                 </div>
             </section>
 
-            <section className="flatSection">
+            <div style={{ display: "flex", gap: 3, alignItems: "flex-end", paddingLeft: 2 }}>
+              {(["notas", "inasistencias"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  style={{
+                    padding: "6px 18px",
+                    fontSize: 13,
+                    fontWeight: activeTab === tab ? 700 : 500,
+                    background: activeTab === tab
+                      ? "var(--card)"
+                      : "color-mix(in srgb, var(--stroke) 50%, var(--bg0))",
+                    border: "1px solid var(--stroke)",
+                    borderBottom: activeTab === tab ? "1px solid var(--card)" : undefined,
+                    borderRadius: "8px 8px 0 0",
+                    cursor: "pointer",
+                    color: activeTab === tab ? "var(--text)" : "var(--muted)",
+                    marginBottom: activeTab === tab ? "-1px" : 0,
+                    position: "relative",
+                    zIndex: activeTab === tab ? 2 : 1,
+                  }}
+                >
+                  {tab === "notas" ? "Notas" : "Inasistencias"}
+                </button>
+              ))}
+            </div>
+
+            <section className="flatSection" style={{ position: "relative", zIndex: 1, borderTopLeftRadius: 0 }}>
+              {activeTab === "notas" && (<>
               <div style={{ position: "relative" }}>
                 {openSug && (suggestions.length > 0 || loadingSug) && (
                   <div
@@ -1308,6 +1316,60 @@ export default function DashboardPage() {
                     );
                   })()}
                 </>
+              </>)}
+              {activeTab === "inasistencias" && (
+                <>
+                  {(() => {
+                    const uniqueFechas   = [...new Set(absItems.map(a => a.fecha_clase))].sort((a, b) => b.localeCompare(a));
+                    const uniqueMaterias = [...new Set(absItems.map(a => a.class_name))].sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+                    const absFiltered = absItems.filter(a =>
+                      (absFilterFecha   === "all" || a.fecha_clase === absFilterFecha) &&
+                      (absFilterMateria === "all" || a.class_name  === absFilterMateria)
+                    );
+                    return (
+                      <div style={{ marginTop: 12 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: absFiltered.length > 0 ? "#dc2626" : "var(--muted)" }}>
+                          {absLoading ? "Cargando..." : `Inasistencias: ${absFiltered.length}`}
+                        </div>
+                        <div style={{ borderRadius: 12, border: "1px solid var(--stroke)", overflow: "hidden" }}>
+                          <table className="abs-modal-table" style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
+                            <thead>
+                              <tr>
+                                <th style={{ padding: "8px 12px", textAlign: "left", background: "color-mix(in srgb, rgb(14,165,233) 22%, var(--bg0))", borderBottom: "1px solid var(--stroke)" }}>
+                                  <select className="select" value={absFilterFecha} onChange={e => setAbsFilterFecha(e.target.value)} style={{ fontSize: 13, padding: "4px 6px", fontWeight: absFilterFecha !== "all" ? 600 : 700, color: "var(--text)" }}>
+                                    <option value="all" style={{ fontWeight: 700 }}>Fecha</option>
+                                    {uniqueFechas.map(f => <option key={f} value={f}>{fmtAbsFecha(f)}</option>)}
+                                  </select>
+                                </th>
+                                <th style={{ padding: "8px 12px", textAlign: "left", background: "color-mix(in srgb, rgb(14,165,233) 22%, var(--bg0))", borderBottom: "1px solid var(--stroke)" }}>
+                                  <select className="select" value={absFilterMateria} onChange={e => setAbsFilterMateria(e.target.value)} style={{ fontSize: 13, padding: "4px 6px", fontWeight: absFilterMateria !== "all" ? 600 : 700, color: "var(--text)" }}>
+                                    <option value="all" style={{ fontWeight: 700 }}>Materia</option>
+                                    {uniqueMaterias.map(m => <option key={m} value={m}>{m}</option>)}
+                                  </select>
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {absLoading ? (
+                                <tr><td colSpan={2} style={{ padding: "20px 12px", textAlign: "center", color: "var(--muted)", background: "var(--tr-even-bg)" }}>Cargando...</td></tr>
+                              ) : absFiltered.length === 0 ? (
+                                <tr><td colSpan={2} style={{ padding: "20px 12px", textAlign: "center", color: "var(--muted)", background: "var(--tr-even-bg)" }}>
+                                  {absItems.length === 0 ? "Sin inasistencias registradas." : "No hay resultados para el filtro seleccionado."}
+                                </td></tr>
+                              ) : absFiltered.map((a, idx) => (
+                                <tr key={`${a.fecha_clase}-${a.class_name}-${idx}`}>
+                                  <td style={{ padding: "8px 12px", borderTop: "1px solid var(--stroke)", color: "var(--muted)", background: idx % 2 === 0 ? "var(--tr-even-bg)" : "var(--tr-odd-bg)" }}>{fmtAbsFecha(a.fecha_clase)}</td>
+                                  <td style={{ padding: "8px 12px", borderTop: "1px solid var(--stroke)", fontWeight: 500, background: idx % 2 === 0 ? "var(--tr-even-bg)" : "var(--tr-odd-bg)" }}>{a.class_name}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </>
+              )}
             </section>
           </div>
         </div>
@@ -1397,86 +1459,6 @@ export default function DashboardPage() {
           }}
         />
       )}
-
-      {/* Modal inasistencias */}
-      {absModalOpen && (() => {
-        const uniqueFechas   = [...new Set(absItems.map(a => a.fecha_clase))].sort((a, b) => b.localeCompare(a));
-        const uniqueMaterias = [...new Set(absItems.map(a => a.class_name))].sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
-        const absFiltered = absItems.filter(a =>
-          (absFilterFecha   === "all" || a.fecha_clase === absFilterFecha) &&
-          (absFilterMateria === "all" || a.class_name  === absFilterMateria)
-        );
-        return (
-          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div className="card" style={{ maxWidth: 520, width: "95%", padding: 28, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 16, background: "radial-gradient(circle at 18% 0%, rgba(56,189,248,.18), transparent 35%), radial-gradient(circle at 85% 18%, rgba(56,189,248,.12), transparent 40%), linear-gradient(to bottom, var(--bg0), var(--bg1))" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                <div style={{ fontWeight: 700, fontSize: 16, color: "#dc2626" }}>
-                  Inasistencias: {absFiltered.length}
-                </div>
-              </div>
-
-              <div style={{ flex: 1, overflowY: "auto", borderRadius: 12, border: "1px solid var(--stroke)" }}>
-                {absLoading ? (
-                  <div style={{ color: "var(--muted)", textAlign: "center", padding: 24 }}>Cargando...</div>
-                ) : (
-                  <table className="abs-modal-table" style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
-                    <thead>
-                      <tr>
-                        <th style={{ padding: "8px 12px", textAlign: "left", position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 22%, var(--bg0))", borderBottom: "1px solid var(--stroke)" }}>
-                          <select
-                            className="select"
-                            value={absFilterFecha}
-                            onChange={e => setAbsFilterFecha(e.target.value)}
-                            style={{ fontSize: 13, padding: "4px 6px", fontWeight: absFilterFecha !== "all" ? 600 : 700, color: "var(--text)" }}
-                          >
-                            <option value="all" style={{ fontWeight: 700 }}>Fecha</option>
-                            {uniqueFechas.map(f => <option key={f} value={f}>{fmtAbsFecha(f)}</option>)}
-                          </select>
-                        </th>
-                        <th style={{ padding: "8px 12px", textAlign: "left", position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 22%, var(--bg0))", borderBottom: "1px solid var(--stroke)" }}>
-                          <select
-                            className="select"
-                            value={absFilterMateria}
-                            onChange={e => setAbsFilterMateria(e.target.value)}
-                            style={{ fontSize: 13, padding: "4px 6px", fontWeight: absFilterMateria !== "all" ? 600 : 700, color: "var(--text)" }}
-                          >
-                            <option value="all" style={{ fontWeight: 700 }}>Materia</option>
-                            {uniqueMaterias.map(m => <option key={m} value={m}>{m}</option>)}
-                          </select>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {absFiltered.length === 0 ? (
-                        <tr>
-                          <td colSpan={2} style={{ padding: "20px 12px", textAlign: "center", color: "var(--muted)", background: "var(--tr-even-bg)" }}>
-                            {absItems.length === 0 ? "Sin inasistencias registradas." : "No hay resultados para el filtro seleccionado."}
-                          </td>
-                        </tr>
-                      ) : absFiltered.map((a, idx) => (
-                        <tr key={`${a.fecha_clase}-${a.class_name}-${idx}`}>
-                          <td style={{ padding: "8px 12px", borderTop: "1px solid var(--stroke)", color: "var(--muted)", background: idx % 2 === 0 ? "var(--tr-even-bg)" : "var(--tr-odd-bg)" }}>{fmtAbsFecha(a.fecha_clase)}</td>
-                          <td style={{ padding: "8px 12px", borderTop: "1px solid var(--stroke)", fontWeight: 500, background: idx % 2 === 0 ? "var(--tr-even-bg)" : "var(--tr-odd-bg)" }}>{a.class_name}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <button
-                  type="button"
-                  className="btnRegresar"
-                  onClick={() => setAbsModalOpen(false)}
-                >
-                  ← Volver
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
 
       <Footer />
     </div>
