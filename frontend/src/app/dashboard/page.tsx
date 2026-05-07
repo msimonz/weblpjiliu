@@ -701,7 +701,7 @@ export default function DashboardPage() {
 
                   <div className="summaryCardItem">
                     <div className="summaryCardLabel" style={{ color: "var(--text)" }}>
-                      No Aprobadas
+                      No aprobadas
                     </div>
                     <div
                       className={`summaryCardBox ${failedActive ? "summaryCardBoxFailedActive" : ""}`}
@@ -713,36 +713,6 @@ export default function DashboardPage() {
                         {summaryStats ? failed : "—"}
                       </span>
                     </div>
-                  </div>
-
-                  <div className="summaryCardItem">
-                    <div className="summaryCardLabel" style={{ color: "var(--text)" }}>
-                      Inasistencia
-                    </div>
-                    {(() => {
-                      const abs = summaryStats?.absences ?? 0;
-                      const hasAbs = summaryStats && abs > 0;
-                      return (
-                        <div
-                          className="summaryCardBox"
-                          style={hasAbs ? { background: "rgba(107,114,128,.15)", borderColor: "rgba(107,114,128,.3)" } : undefined}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => { if (hasAbs) setAbsModalOpen(true); }}
-                            style={{
-                              background: "none", border: "none", padding: 0,
-                              cursor: hasAbs ? "pointer" : "default",
-                              fontWeight: 800, fontSize: 15.5, lineHeight: 1,
-                              color: hasAbs ? "#6b7280" : "var(--text)",
-                              textDecoration: hasAbs ? "underline" : "none",
-                            }}
-                          >
-                            {summaryStats ? abs : "—"}
-                          </button>
-                        </div>
-                      );
-                    })()}
                   </div>
 
                   <div className="summaryCardItem">
@@ -761,6 +731,33 @@ export default function DashboardPage() {
                           : summaryStats.avg_weighted.toFixed(2)}
                       </span>
                     </div>
+                  </div>
+
+                  <div className="summaryCardItem" style={{ marginLeft: -58 }}>
+                    <div className="summaryCardLabel" style={{ color: "var(--text)" }}>
+                      Inasistencias
+                    </div>
+                    {(() => {
+                      const abs = summaryStats?.absences ?? 0;
+                      const hasAbs = summaryStats && abs > 0;
+                      return (
+                        <div style={{ height: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <button
+                            type="button"
+                            onClick={() => { if (hasAbs) setAbsModalOpen(true); }}
+                            style={{
+                              background: "none", border: "none", padding: 0,
+                              cursor: hasAbs ? "pointer" : "default",
+                              fontWeight: 800, fontSize: 15.5, lineHeight: 1,
+                              color: hasAbs ? "#6b7280" : "var(--text)",
+                              textDecoration: hasAbs ? "underline" : "none",
+                            }}
+                          >
+                            {summaryStats ? abs : "—"}
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
             </section>
