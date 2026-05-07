@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { apiFetch } from "@/lib/api";
 import * as XLSX from "xlsx";
 
@@ -36,13 +36,15 @@ export default function ConsultarAsistencia() {
 
   const [levelId,  setLevelId]  = useState("");
   const [courseId, setCourseId] = useState("");
-  const [moduleId, setModuleId] = useState("");
+  const [moduleId, setModuleId] = useState("todos");
   const [classId,  setClassId]  = useState("");
   const [fecha,    setFecha]    = useState("");
 
   const [loadingFechas,    setLoadingFechas]    = useState(false);
   const [loadingDetalle,   setLoadingDetalle]   = useState(false);
   const [filtroAsistencia, setFiltroAsistencia] = useState<"todas" | "asistio" | "no_asistio">("todas");
+
+  const allClassesRef = useRef<ClassItem[]>([]);
 
   // Cargar niveles y cursos al montar
   useEffect(() => {
@@ -54,33 +56,45 @@ export default function ConsultarAsistencia() {
       .catch(() => {});
   }, []);
 
-  // Curso → módulos
+  // Curso → módulos + todas las clases del curso
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setModuleId(""); setClassId(""); setFecha(""); setFechas([]); setDetalle([]); setSesion(null); setModules([]); setClasses([]); setTodasData(null);
+    setModuleId(""); setClassId(""); setFecha(""); setFechas([]); setDetalle([]); setSesion(null); setModules([]); setClasses([]); allClassesRef.current = []; setTodasData(null);
     if (!courseId) return;
     apiFetch(`/api/secretaria/attendance/modules?course_id=${courseId}`)
       .then((r: { items?: ModuleItem[] }) => setModules(r?.items || []))
+      .catch(() => {});
+    apiFetch(`/api/secretaria/attendance/classes?course_id=${courseId}&module_id=todos`)
+      .then((r: { items?: ClassItem[] }) => {
+        const all = r?.items || [];
+        allClassesRef.current = all;
+        setClasses(all);
+      })
       .catch(() => {});
   }, [courseId]);
 
   // Módulo → clases
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setClassId(""); setFecha(""); setFechas([]); setDetalle([]); setSesion(null); setClasses([]); setTodasData(null);
-    if (!courseId || !moduleId) return;
+    setClassId(""); setFecha(""); setFechas([]); setDetalle([]); setSesion(null); setTodasData(null);
+    if (!courseId) return;
+    if (!moduleId || moduleId === "todos") {
+      setClasses(allClassesRef.current);
+      return;
+    }
     apiFetch(`/api/secretaria/attendance/classes?course_id=${courseId}&module_id=${moduleId}`)
       .then((r: { items?: ClassItem[] }) => setClasses(r?.items || []))
       .catch(() => {});
   }, [courseId, moduleId]);
 
-  // Clase → fechas
+  // Módulo / Materia → fechas (ambos opcionales, curso requerido)
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setFecha(""); setFechas([]); setDetalle([]); setSesion(null); setTodasData(null);
-    if (!courseId || !moduleId || !classId) return;
+    if (!courseId) return;
     setLoadingFechas(true);
-    apiFetch(`/api/secretaria/attendance/fechas?course_id=${courseId}&module_id=${moduleId}&class_id=${classId}`)
+    const params = new URLSearchParams({ course_id: courseId, module_id: moduleId || "todos", class_id: classId || "todas" });
+    apiFetch(`/api/secretaria/attendance/fechas?${params.toString()}`)
       .then((r: { items?: SesionFecha[] }) => setFechas(r?.items || []))
       .catch(() => {})
       .finally(() => setLoadingFechas(false));
@@ -90,12 +104,14 @@ export default function ConsultarAsistencia() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setDetalle([]); setSesion(null); setTodasData(null);
-    if (!courseId || !moduleId || !classId || !fecha) return;
+    if (!courseId || (!classId && (!fecha || fecha === "todas"))) return;
     setLoadingDetalle(true);
-    const isTodasMode = fecha === "todas" || classId === "todas";
+    const effectiveModule = moduleId || "todos";
+    const effectiveClass  = classId || "todas";
+    const isTodasMode = !fecha || fecha === "todas" || !moduleId || moduleId === "todos" || classId === "todas";
     if (isTodasMode) {
-      const params = new URLSearchParams({ course_id: courseId, module_id: moduleId, class_id: classId });
-      if (fecha !== "todas") params.set("fecha", fecha);
+      const params = new URLSearchParams({ course_id: courseId, module_id: effectiveModule, class_id: effectiveClass });
+      if (fecha && fecha !== "todas") params.set("fecha", fecha);
       apiFetch(`/api/secretaria/attendance/consulta-todas?${params.toString()}`)
         .then((r: ConsultaTodasResp) => setTodasData(r))
         .catch(() => {})
@@ -112,7 +128,7 @@ export default function ConsultarAsistencia() {
   }, [courseId, moduleId, classId, fecha]);
 
   function handleCancelar() {
-    setLevelId(""); setCourseId(""); setModuleId(""); setClassId(""); setFecha("");
+    setLevelId(""); setCourseId(""); setModuleId("todos"); setClassId(""); setFecha("");
     setModules([]); setClasses([]); setFechas([]);
     setDetalle([]); setSesion(null); setTodasData(null);
     setFiltroAsistencia("todas");
@@ -129,7 +145,7 @@ export default function ConsultarAsistencia() {
 
   const selectedCourse = courses.find((c) => String(c.id) === courseId);
   const selectedClass  = classes.find((c) => String(c.id) === classId);
-  const isTodasMode    = fecha === "todas" || classId === "todas";
+  const isTodasMode    = !fecha || fecha === "todas" || !moduleId || moduleId === "todos" || classId === "todas";
   const hasData        = isTodasMode
     ? (todasData?.detalle?.length ?? 0) > 0
     : detalle.length > 0;
@@ -146,7 +162,7 @@ export default function ConsultarAsistencia() {
       });
 
   function handleDescargar() {
-    if (fecha === "todas") {
+    if (isTodasMode) {
       if (!todasData?.detalle?.length) return;
       const { fechas: fechasList, detalle: rows } = todasData;
       const multiClass = fechasList.some((fi) => fi.class_name);
@@ -156,7 +172,7 @@ export default function ConsultarAsistencia() {
           const entry = d.asistencia.find((a) => a.fecha === fi.fecha && (!fi.class_id || a.class_id === fi.class_id));
           const colKey = multiClass && fi.class_name ? `${fmtFecha(fi.fecha)} / ${fi.class_name}` : fmtFecha(fi.fecha);
           row[colKey] = entry
-            ? entry.asistio ? "Asistió" : `No asistió${entry.motivo ? ` — ${entry.motivo}` : ""}`
+            ? entry.asistio ? "✓" : `✗${(entry.motivo && entry.motivo !== "sin información") ? ` — ${entry.motivo}` : ""}`
             : "—";
         }
         return row;
@@ -171,7 +187,7 @@ export default function ConsultarAsistencia() {
         Cédula:   d.cedula ?? "—",
         Nombre:   d.name   ?? "—",
         Materia:  selectedClass?.name ?? "—",
-        [fmtFecha(fecha)]: d.asistio ? "Asistió" : `No asistió${d.motivo ? ` — ${d.motivo}` : ""}`,
+        [fmtFecha(fecha)]: d.asistio ? "✓" : `✗${(d.motivo && d.motivo !== "sin información") ? ` — ${d.motivo}` : ""}`,
       }));
       const ws = XLSX.utils.json_to_sheet(rows);
       const wb = XLSX.utils.book_new();
@@ -221,9 +237,8 @@ export default function ConsultarAsistencia() {
         {/* Módulo */}
         <div style={{ flex: "1 1 140px" }}>
           <div className="label">Módulo</div>
-          <select className="select" style={{ width: "100%" }} value={moduleId} onChange={(e) => setModuleId(e.target.value)} disabled={!courseId}>
-            <option value="">Selecciona...</option>
-            {modules.length > 0 && <option value="todos">— Todos —</option>}
+          <select className="select" style={{ width: "100%" }} value={moduleId} onChange={(e) => setModuleId(e.target.value)}>
+            <option value="todos">— Todos —</option>
             {modules.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </div>
@@ -231,7 +246,7 @@ export default function ConsultarAsistencia() {
         {/* Materia */}
         <div style={{ flex: "1 1 140px" }}>
           <div className="label">Materia</div>
-          <select className="select" style={{ width: "100%" }} value={classId} onChange={(e) => setClassId(e.target.value)} disabled={!moduleId}>
+          <select className="select" style={{ width: "100%" }} value={classId} onChange={(e) => setClassId(e.target.value)}>
             <option value="">Selecciona...</option>
             {classes.length > 0 && <option value="todas">— Todas —</option>}
             {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -241,9 +256,9 @@ export default function ConsultarAsistencia() {
         {/* Fecha clase */}
         <div style={{ flex: "1 1 140px" }}>
           <div className="label">Fecha clase</div>
-          <select className="select" style={{ width: "100%" }} value={fecha} onChange={(e) => setFecha(e.target.value)} disabled={!classId || loadingFechas}>
+          <select className="select" style={{ width: "100%" }} value={fecha} onChange={(e) => setFecha(e.target.value)} disabled={!courseId || loadingFechas}>
             <option value="">
-              {loadingFechas ? "Cargando…" : fechas.length === 0 && classId ? "Sin asistencia registrada" : "Selecciona…"}
+              {loadingFechas ? "Cargando…" : fechas.length === 0 ? "Sin asistencia registrada" : "Selecciona…"}
             </option>
             {fechas.length > 0 && <option value="todas">— Todas —</option>}
             {fechas.map((f) => (
@@ -308,17 +323,6 @@ export default function ConsultarAsistencia() {
         </div>
       )}
 
-      {/* Info profesor (solo para una fecha específica) */}
-      {sesion && fecha !== "todas" && (
-        <div style={{ marginBottom: 16 }}>
-          <div className="label">Profesor que dictó la clase</div>
-          <div className="select" style={{ cursor: "default", userSelect: "none", width: "fit-content" }}>
-            {sesion.profesor_asistio
-              ? `Prof: ${sesion.teacher_name ?? "—"}`
-              : `Prof-remp: ${sesion.profesor_reemplazo ?? sesion.teacher_name ?? "—"}`}
-          </div>
-        </div>
-      )}
 
       {/* Grilla */}
       {loadingDetalle ? (
@@ -329,22 +333,16 @@ export default function ConsultarAsistencia() {
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead>
               <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
-                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
-                <th rowSpan={2} style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
+                <th style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
+                <th style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
                 {todasData.fechas.map((fi, i) => (
                   <th key={i} style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
                     {fmtFecha(fi.fecha)}
                     {fi.class_name && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>{fi.class_name}</div>}
-                  </th>
-                ))}
-              </tr>
-              <tr style={{ background: "rgba(14,165,233,.04)" }}>
-                {todasData.fechas.map((fi, i) => (
-                  <th key={i} style={{ position: "sticky", top: 40, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 4%, var(--bg0))", padding: "4px 12px 8px", textAlign: "center", fontWeight: 400, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
-                    {fi.profesor_asistio
-                      ? `Prof: ${fi.teacher_name ?? "—"}`
-                      : `Prof-remp: ${fi.profesor_reemplazo ?? fi.teacher_name ?? "—"}`}
+                    <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>
+                      {fi.profesor_asistio ? `Prof: ${fi.teacher_name ?? "—"}` : `Prof-remp: ${fi.profesor_reemplazo ?? fi.teacher_name ?? "—"}`}
+                    </div>
                   </th>
                 ))}
               </tr>
@@ -370,14 +368,10 @@ export default function ConsultarAsistencia() {
                       );
                       return (
                         <td key={i} style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
-                          <span style={{
-                            display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                            background: entry.asistio ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
-                            color:      entry.asistio ? "#15803d"              : "#dc2626",
-                          }}>
-                            {entry.asistio ? "Asistió" : "No asistió"}
+                          <span style={{ fontSize: 15, fontWeight: 700, color: entry.asistio ? "#15803d" : "#dc2626" }}>
+                            {entry.asistio ? "✓" : "✗"}
                           </span>
-                          {!entry.asistio && entry.motivo && (
+                          {!entry.asistio && entry.motivo && entry.motivo !== "sin información" && (
                             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{entry.motivo}</div>
                           )}
                         </td>
@@ -395,11 +389,18 @@ export default function ConsultarAsistencia() {
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead>
               <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                <th style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90 }}>Cédula</th>
-                <th style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150 }}>Nombre</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center" }}>Inasistencias</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left" }}>Materia</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center" }}>{fmtFecha(fecha)}</th>
+                <th style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
+                <th style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid var(--stroke)" }}>Materia</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
+                  {fmtFecha(fecha)}
+                  {sesion && (
+                    <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>
+                      {sesion.profesor_asistio ? `Prof: ${sesion.teacher_name ?? "—"}` : `Prof-remp: ${sesion.profesor_reemplazo ?? sesion.teacher_name ?? "—"}`}
+                    </div>
+                  )}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -414,14 +415,10 @@ export default function ConsultarAsistencia() {
                   </td>
                   <td style={{ padding: "8px 12px", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>{selectedClass?.name ?? "—"}</td>
                   <td style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
-                    <span style={{
-                      display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                      background: d.asistio ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
-                      color:      d.asistio ? "#15803d"              : "#dc2626",
-                    }}>
-                      {d.asistio ? "Asistió" : "No asistió"}
+                    <span style={{ fontSize: 15, fontWeight: 700, color: d.asistio ? "#15803d" : "#dc2626" }}>
+                      {d.asistio ? "✓" : "✗"}
                     </span>
-                    {!d.asistio && d.motivo && (
+                    {!d.asistio && d.motivo && d.motivo !== "sin información" && (
                       <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{d.motivo}</div>
                     )}
                   </td>
@@ -431,7 +428,7 @@ export default function ConsultarAsistencia() {
             </tbody>
           </table>
         </div>
-      ) : fecha ? (
+      ) : (courseId && classId) ? (
         <div style={{ color: "var(--muted)", textAlign: "center", padding: 20 }}>No hay datos para esta sesión.</div>
       ) : null}
     </div>

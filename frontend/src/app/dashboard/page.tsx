@@ -51,8 +51,18 @@ type SummaryStats = {
   pending: number;
   avg_weighted: number | null;
   pass_grade: number;
+  absences: number;
 };
 
+type AbsenceItem = { fecha_clase: string; class_name: string };
+
+
+const MESES_ABS = ["ENE","FEB","MAR","ABR","MAY","JUN","JUL","AGO","SEP","OCT","NOV","DIC"];
+function fmtAbsFecha(iso: string) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-");
+  return `${d}-${MESES_ABS[Number(m) - 1]}-${y}`;
+}
 
 const LEVELS = [
   { value: 1, label: "Primer año" },
@@ -138,6 +148,13 @@ export default function DashboardPage() {
   const [examLinkMsg, setExamLinkMsg]         = useState<string | null>(null);
   const [hoveredGroupId, setHoveredGroupId]   = useState<number | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
+
+  // Modal inasistencias
+  const [absModalOpen,    setAbsModalOpen]    = useState(false);
+  const [absItems,        setAbsItems]        = useState<AbsenceItem[]>([]);
+  const [absLoading,      setAbsLoading]      = useState(false);
+  const [absFilterFecha,  setAbsFilterFecha]  = useState("all");
+  const [absFilterMateria,setAbsFilterMateria]= useState("all");
 
   useEffect(() => {
     const { data: logoData } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
@@ -326,6 +343,18 @@ export default function DashboardPage() {
     await supabase.auth.signOut();
     router.replace("/login");
   }
+
+  useEffect(() => {
+    if (!absModalOpen) return;
+    setAbsLoading(true);
+    setAbsItems([]);
+    setAbsFilterFecha("all");
+    setAbsFilterMateria("all");
+    apiFetch(`/api/student/absences${courseId ? `?course_id=${courseId}` : ""}`)
+      .then((r: { items?: AbsenceItem[] }) => setAbsItems(r?.items || []))
+      .catch(() => {})
+      .finally(() => setAbsLoading(false));
+  }, [absModalOpen, courseId]);
 
   // T26 — mapa class_id → examen disponible (solo los no rendidos muestran botón naranja)
   const examByClassId = useMemo(() => {
@@ -684,6 +713,36 @@ export default function DashboardPage() {
                         {summaryStats ? failed : "—"}
                       </span>
                     </div>
+                  </div>
+
+                  <div className="summaryCardItem">
+                    <div className="summaryCardLabel" style={{ color: "var(--text)" }}>
+                      Inasistencia
+                    </div>
+                    {(() => {
+                      const abs = summaryStats?.absences ?? 0;
+                      const hasAbs = summaryStats && abs > 0;
+                      return (
+                        <div
+                          className="summaryCardBox"
+                          style={hasAbs ? { background: "rgba(107,114,128,.15)", borderColor: "rgba(107,114,128,.3)" } : undefined}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => { if (hasAbs) setAbsModalOpen(true); }}
+                            style={{
+                              background: "none", border: "none", padding: 0,
+                              cursor: hasAbs ? "pointer" : "default",
+                              fontWeight: 800, fontSize: 15.5, lineHeight: 1,
+                              color: hasAbs ? "#6b7280" : "var(--text)",
+                              textDecoration: hasAbs ? "underline" : "none",
+                            }}
+                          >
+                            {summaryStats ? abs : "—"}
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div className="summaryCardItem">
@@ -1341,6 +1400,86 @@ export default function DashboardPage() {
           }}
         />
       )}
+
+      {/* Modal inasistencias */}
+      {absModalOpen && (() => {
+        const uniqueFechas   = [...new Set(absItems.map(a => a.fecha_clase))].sort((a, b) => b.localeCompare(a));
+        const uniqueMaterias = [...new Set(absItems.map(a => a.class_name))].sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+        const absFiltered = absItems.filter(a =>
+          (absFilterFecha   === "all" || a.fecha_clase === absFilterFecha) &&
+          (absFilterMateria === "all" || a.class_name  === absFilterMateria)
+        );
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div className="card" style={{ maxWidth: 520, width: "95%", padding: 28, maxHeight: "85vh", display: "flex", flexDirection: "column", gap: 16, background: "radial-gradient(circle at 18% 0%, rgba(56,189,248,.18), transparent 35%), radial-gradient(circle at 85% 18%, rgba(56,189,248,.12), transparent 40%), linear-gradient(to bottom, var(--bg0), var(--bg1))" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 16, color: "#dc2626" }}>
+                  Inasistencias: {absFiltered.length}
+                </div>
+              </div>
+
+              <div style={{ flex: 1, overflowY: "auto", borderRadius: 12, border: "1px solid var(--stroke)" }}>
+                {absLoading ? (
+                  <div style={{ color: "var(--muted)", textAlign: "center", padding: 24 }}>Cargando...</div>
+                ) : (
+                  <table className="abs-modal-table" style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ padding: "8px 12px", textAlign: "left", position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 22%, var(--bg0))", borderBottom: "1px solid var(--stroke)" }}>
+                          <select
+                            className="select"
+                            value={absFilterFecha}
+                            onChange={e => setAbsFilterFecha(e.target.value)}
+                            style={{ fontSize: 13, padding: "4px 6px", fontWeight: absFilterFecha !== "all" ? 600 : 700, color: "var(--text)" }}
+                          >
+                            <option value="all" style={{ fontWeight: 700 }}>Fecha</option>
+                            {uniqueFechas.map(f => <option key={f} value={f}>{fmtAbsFecha(f)}</option>)}
+                          </select>
+                        </th>
+                        <th style={{ padding: "8px 12px", textAlign: "left", position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 22%, var(--bg0))", borderBottom: "1px solid var(--stroke)" }}>
+                          <select
+                            className="select"
+                            value={absFilterMateria}
+                            onChange={e => setAbsFilterMateria(e.target.value)}
+                            style={{ fontSize: 13, padding: "4px 6px", fontWeight: absFilterMateria !== "all" ? 600 : 700, color: "var(--text)" }}
+                          >
+                            <option value="all" style={{ fontWeight: 700 }}>Materia</option>
+                            {uniqueMaterias.map(m => <option key={m} value={m}>{m}</option>)}
+                          </select>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {absFiltered.length === 0 ? (
+                        <tr>
+                          <td colSpan={2} style={{ padding: "20px 12px", textAlign: "center", color: "var(--muted)", background: "var(--tr-even-bg)" }}>
+                            {absItems.length === 0 ? "Sin inasistencias registradas." : "No hay resultados para el filtro seleccionado."}
+                          </td>
+                        </tr>
+                      ) : absFiltered.map((a, idx) => (
+                        <tr key={`${a.fecha_clase}-${a.class_name}-${idx}`}>
+                          <td style={{ padding: "8px 12px", borderTop: "1px solid var(--stroke)", color: "var(--muted)", background: idx % 2 === 0 ? "var(--tr-even-bg)" : "var(--tr-odd-bg)" }}>{fmtAbsFecha(a.fecha_clase)}</td>
+                          <td style={{ padding: "8px 12px", borderTop: "1px solid var(--stroke)", fontWeight: 500, background: idx % 2 === 0 ? "var(--tr-even-bg)" : "var(--tr-odd-bg)" }}>{a.class_name}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  className="btnRegresar"
+                  onClick={() => setAbsModalOpen(false)}
+                >
+                  ← Volver
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <Footer />
     </div>

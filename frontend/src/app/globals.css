@@ -607,6 +607,13 @@ html[data-theme="dark"] .teacher-solid-table tbody tr.table-row-hover:nth-child(
 .teacher-solid-table tbody tr.table-row-hover:hover > td {
   background-color: var(--table-row-hover-bg) !important;
 }
+.abs-modal-table { --tr-odd-bg: #edf5fb; --tr-even-bg: #ffffff; }
+html.dark .abs-modal-table,
+html[data-theme="dark"] .abs-modal-table { --tr-odd-bg: #071e30; --tr-even-bg: #051422; }
+@media (prefers-color-scheme: dark) {
+  .abs-modal-table { --tr-odd-bg: #071e30; --tr-even-bg: #051422; }
+}
+
 .fit-table-shell {
   margin-top: 12px;
   overflow-x: hidden;
@@ -800,7 +807,7 @@ html[data-theme="dark"] .teacher-solid-table tbody tr.table-row-hover:nth-child(
  .summaryCardsGrid {
           margin-top: 12px;
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(4, minmax(0, 1fr));
           gap: 12px;
           align-items: start;
         }

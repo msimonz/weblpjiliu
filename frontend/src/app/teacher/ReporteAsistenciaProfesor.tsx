@@ -172,7 +172,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
           const entry = d.asistencia.find((a) => a.fecha === fi.fecha && (!fi.class_id || a.class_id === fi.class_id));
           const colKey = multiClass && fi.class_name ? `${fmtFecha(fi.fecha)} / ${fi.class_name}` : fmtFecha(fi.fecha);
           row[colKey] = entry
-            ? asistioValue(entry.asistio) ? "Asistió" : `No asistió${entry.motivo ? ` — ${entry.motivo}` : ""}`
+            ? asistioValue(entry.asistio) ? "✓" : `✗${(entry.motivo && entry.motivo !== "sin información") ? ` — ${entry.motivo}` : ""}`
             : "—";
         }
         return row;
@@ -187,7 +187,7 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
         Cédula:  d.cedula ?? "—",
         Nombre:  d.name   ?? "—",
         Materia: selectedClass?.name ?? "—",
-        [fmtFecha(fecha)]: asistioValue(d.asistio) ? "Asistió" : `No asistió${d.motivo ? ` — ${d.motivo}` : ""}`,
+        [fmtFecha(fecha)]: asistioValue(d.asistio) ? "✓" : `✗${(d.motivo && d.motivo !== "sin información") ? ` — ${d.motivo}` : ""}`,
       }));
       const ws = XLSX.utils.json_to_sheet(rows);
       const wb = XLSX.utils.book_new();
@@ -328,22 +328,16 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead>
               <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
-                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
-                <th rowSpan={2} style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
+                <th style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
+                <th style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
                 {todasData.fechas.map((fi, i) => (
                   <th key={i} style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
                     {fmtFecha(fi.fecha)}
                     {fi.class_name && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>{fi.class_name}</div>}
-                  </th>
-                ))}
-              </tr>
-              <tr style={{ background: "rgba(14,165,233,.04)" }}>
-                {todasData.fechas.map((fi, i) => (
-                  <th key={i} style={{ position: "sticky", top: 40, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 4%, var(--bg0))", padding: "4px 12px 8px", textAlign: "center", fontWeight: 400, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>
-                    {fi.profesor_asistio
-                      ? `Prof: ${fi.teacher_name ?? "—"}`
-                      : `Prof-remp: ${fi.profesor_reemplazo ?? fi.teacher_name ?? "—"}`}
+                    <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>
+                      {fi.profesor_asistio ? `Prof: ${fi.teacher_name ?? "—"}` : `Prof-remp: ${fi.profesor_reemplazo ?? fi.teacher_name ?? "—"}`}
+                    </div>
                   </th>
                 ))}
               </tr>
@@ -366,14 +360,10 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
                       );
                       return (
                         <td key={i} style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
-                          <span style={{
-                            display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                            background: asistioValue(entry.asistio) ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
-                            color:      asistioValue(entry.asistio) ? "#15803d"              : "#dc2626",
-                          }}>
-                            {asistioValue(entry.asistio) ? "Asistió" : "No asistió"}
+                          <span style={{ fontSize: 15, fontWeight: 700, color: asistioValue(entry.asistio) ? "#15803d" : "#dc2626" }}>
+                            {asistioValue(entry.asistio) ? "✓" : "✗"}
                           </span>
-                          {!asistioValue(entry.asistio) && entry.motivo && (
+                          {!asistioValue(entry.asistio) && entry.motivo && entry.motivo !== "sin información" && (
                             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{entry.motivo}</div>
                           )}
                         </td>
@@ -390,21 +380,17 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead>
               <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
-                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
-                <th rowSpan={2} style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
+                <th style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
+                <th style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
                 <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
                   {fmtFecha(fecha)}
                   {selectedClass?.name && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>{selectedClass.name}</div>}
-                </th>
-              </tr>
-              <tr style={{ background: "rgba(14,165,233,.04)" }}>
-                <th style={{ position: "sticky", top: 40, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 4%, var(--bg0))", padding: "4px 12px 8px", textAlign: "center", fontWeight: 400, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap" }}>
-                  {sesion
-                    ? sesion.profesor_asistio
-                      ? `Prof: ${sesion.teacher_name ?? "—"}`
-                      : `Prof-remp: ${sesion.profesor_reemplazo ?? sesion.teacher_name ?? "—"}`
-                    : "—"}
+                  {sesion && (
+                    <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>
+                      {sesion.profesor_asistio ? `Prof: ${sesion.teacher_name ?? "—"}` : `Prof-remp: ${sesion.profesor_reemplazo ?? sesion.teacher_name ?? "—"}`}
+                    </div>
+                  )}
                 </th>
               </tr>
             </thead>
@@ -419,14 +405,10 @@ export default function ReporteAsistenciaProfesor({ courses }: Props) {
                     {asistioValue(d.asistio) ? 0 : 1}
                   </td>
                   <td style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
-                    <span style={{
-                      display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                      background: asistioValue(d.asistio) ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
-                      color:      asistioValue(d.asistio) ? "#15803d"              : "#dc2626",
-                    }}>
-                      {asistioValue(d.asistio) ? "Asistió" : "No asistió"}
+                    <span style={{ fontSize: 15, fontWeight: 700, color: asistioValue(d.asistio) ? "#15803d" : "#dc2626" }}>
+                      {asistioValue(d.asistio) ? "✓" : "✗"}
                     </span>
-                    {!asistioValue(d.asistio) && d.motivo && (
+                    {!asistioValue(d.asistio) && d.motivo && d.motivo !== "sin información" && (
                       <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{d.motivo}</div>
                     )}
                   </td>

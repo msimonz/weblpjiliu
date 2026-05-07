@@ -56,9 +56,9 @@ export default function ConsultarAsistencia({ me }: Props) {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setFecha(""); setFechas([]); setDetalle([]); setSesion(null);
-    if (!moduleId || !classId) return;
+    if (!classId) return;
     setLoadingFechas(true);
-    apiFetch(`/api/monitor/attendance/fechas?module_id=${moduleId}&class_id=${classId}`)
+    apiFetch(`/api/monitor/attendance/fechas?module_id=${moduleId || "todos"}&class_id=${classId}`)
       .then((r: { items?: SesionFecha[] }) => setFechas(r?.items || []))
       .catch(() => {})
       .finally(() => setLoadingFechas(false));
@@ -88,8 +88,8 @@ export default function ConsultarAsistencia({ me }: Props) {
       Nombre:      d.name   ?? "—",
       Materia:     selectedClass?.name ?? "—",
       Fecha:       fmtFecha(fecha),
-      Asistencia:  d.asistio ? "Asistió" : "No asistió",
-      Motivo:      d.asistio ? "" : d.motivo,
+      Asistencia:  d.asistio ? "✓" : "✗",
+      Motivo:      d.asistio ? "" : (d.motivo === "sin información" ? "" : d.motivo),
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
@@ -171,16 +171,12 @@ export default function ConsultarAsistencia({ me }: Props) {
                     <td style={{ padding: "8px 12px", fontWeight: 500 }}>{d.name ?? "—"}</td>
                     <td style={{ padding: "8px 12px", color: "var(--muted)" }}>{selectedClass?.name ?? "—"}</td>
                     <td style={{ padding: "8px 12px", textAlign: "center" }}>
-                      <span style={{
-                        display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                        background: d.asistio ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
-                        color:      d.asistio ? "#15803d"              : "#dc2626",
-                      }}>
-                        {d.asistio ? "Asistió" : "No asistió"}
+                      <span style={{ fontSize: 15, fontWeight: 700, color: d.asistio ? "#15803d" : "#dc2626" }}>
+                        {d.asistio ? "✓" : "✗"}
                       </span>
                     </td>
                     <td style={{ padding: "8px 12px", color: "var(--muted)", fontSize: 12 }}>
-                      {d.asistio ? "—" : d.motivo}
+                      {d.asistio ? "—" : (d.motivo === "sin información" ? "—" : d.motivo)}
                     </td>
                   </tr>
                 ))}

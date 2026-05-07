@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { apiFetch } from "@/lib/api";
 import * as XLSX from "xlsx";
 
@@ -37,15 +37,17 @@ export default function ReporteAsistencia({ me }: Props) {
   const [sesion,    setSesion]    = useState<SesionInfo | null>(null);
   const [todasData, setTodasData] = useState<ConsultaTodasResp | null>(null);
 
-  const [moduleId, setModuleId] = useState("");
+  const [moduleId, setModuleId] = useState("todos");
   const [classId,  setClassId]  = useState("");
   const [fecha,    setFecha]    = useState("");
+
+  const allClassesRef = useRef<ClassItem[]>([]);
 
   const [loadingFechas,    setLoadingFechas]    = useState(false);
   const [loadingDetalle,   setLoadingDetalle]   = useState(false);
   const [filtroAsistencia, setFiltroAsistencia] = useState<"todas" | "asistio" | "no_asistio">("todas");
 
-  // Carga niveles y módulos al montar
+  // Carga niveles, módulos y todas las materias al montar
   useEffect(() => {
     apiFetch("/api/monitor/levels")
       .then((r: { items?: LevelItem[] }) => setLevels(r?.items || []))
@@ -53,40 +55,55 @@ export default function ReporteAsistencia({ me }: Props) {
     apiFetch("/api/monitor/modules")
       .then((r: { items?: ModuleItem[] }) => setModules(r?.items || []))
       .catch(() => {});
+    apiFetch("/api/monitor/classes?module_id=todos")
+      .then((r: { items?: ClassItem[] }) => {
+        const all = r?.items || [];
+        allClassesRef.current = all;
+        setClasses(all);
+      })
+      .catch(() => {});
   }, []);
 
   // Módulo → clases
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setClassId(""); setFecha(""); setFechas([]); setDetalle([]); setSesion(null); setClasses([]); setTodasData(null);
-    if (!moduleId) return;
+    setClassId(""); setFecha(""); setFechas([]); setDetalle([]); setSesion(null); setTodasData(null);
+    if (!moduleId) {
+      setClasses(allClassesRef.current);
+      return;
+    }
+    if (moduleId === "todos") {
+      setClasses(allClassesRef.current);
+      return;
+    }
     apiFetch(`/api/monitor/classes?module_id=${moduleId}`)
       .then((r: { items?: ClassItem[] }) => setClasses(r?.items || []))
       .catch(() => {});
   }, [moduleId]);
 
-  // Clase → fechas
+  // Módulo / Materia → fechas (ambos opcionales)
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setFecha(""); setFechas([]); setDetalle([]); setSesion(null); setTodasData(null);
-    if (!moduleId || !classId) return;
     setLoadingFechas(true);
-    apiFetch(`/api/monitor/attendance/fechas?module_id=${moduleId}&class_id=${classId}`)
+    const params = new URLSearchParams({ module_id: moduleId || "todos", class_id: classId || "todas" });
+    apiFetch(`/api/monitor/attendance/fechas?${params.toString()}`)
       .then((r: { items?: SesionFecha[] }) => setFechas(r?.items || []))
       .catch(() => {})
       .finally(() => setLoadingFechas(false));
   }, [moduleId, classId]);
 
-  // Fecha → detalle
+  // Módulo / Materia / Fecha → detalle
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setDetalle([]); setSesion(null); setTodasData(null);
-    if (!moduleId || !classId || !fecha) return;
+    if (!classId && (!fecha || fecha === "todas")) return;
     setLoadingDetalle(true);
-    const isTodasMode = fecha === "todas" || classId === "todas";
+    const effectiveClass = classId || "todas";
+    const isTodasMode = !fecha || fecha === "todas" || !classId || classId === "todas" || !moduleId || moduleId === "todos";
     if (isTodasMode) {
-      const params = new URLSearchParams({ module_id: moduleId, class_id: classId });
-      if (fecha !== "todas") params.set("fecha", fecha);
+      const params = new URLSearchParams({ module_id: moduleId || "todos", class_id: effectiveClass });
+      if (fecha && fecha !== "todas") params.set("fecha", fecha);
       apiFetch(`/api/monitor/attendance/consulta-todas?${params.toString()}`)
         .then((r: ConsultaTodasResp) => setTodasData(r))
         .catch(() => {})
@@ -103,13 +120,13 @@ export default function ReporteAsistencia({ me }: Props) {
   }, [moduleId, classId, fecha]);
 
   function handleCancelar() {
-    setModuleId(""); setClassId(""); setFecha("");
-    setClasses([]); setFechas([]);
+    setModuleId("todos"); setClassId(""); setFecha("");
+    setClasses(allClassesRef.current); setFechas([]);
     setDetalle([]); setSesion(null); setTodasData(null);
     setFiltroAsistencia("todas");
   }
 
-  const isTodasMode = fecha === "todas" || classId === "todas";
+  const isTodasMode = !fecha || fecha === "todas" || !classId || classId === "todas" || !moduleId || moduleId === "todos";
   const hasData = isTodasMode
     ? (todasData?.detalle?.length ?? 0) > 0
     : detalle.length > 0;
@@ -139,7 +156,7 @@ export default function ReporteAsistencia({ me }: Props) {
           const entry = d.asistencia.find((a) => a.fecha === fi.fecha && (!fi.class_id || a.class_id === fi.class_id));
           const colKey = multiClass && fi.class_name ? `${fmtFecha(fi.fecha)} / ${fi.class_name}` : fmtFecha(fi.fecha);
           row[colKey] = entry
-            ? entry.asistio ? "Asistió" : `No asistió${entry.motivo ? ` — ${entry.motivo}` : ""}`
+            ? entry.asistio ? "✓" : `✗${(entry.motivo && entry.motivo !== "sin información") ? ` — ${entry.motivo}` : ""}`
             : "—";
         }
         return row;
@@ -154,7 +171,7 @@ export default function ReporteAsistencia({ me }: Props) {
         Cédula:  d.cedula ?? "—",
         Nombre:  d.name   ?? "—",
         Materia: selectedClass?.name ?? "—",
-        [fmtFecha(fecha)]: d.asistio ? "Asistió" : `No asistió${d.motivo ? ` — ${d.motivo}` : ""}`,
+        [fmtFecha(fecha)]: d.asistio ? "✓" : `✗${(d.motivo && d.motivo !== "sin información") ? ` — ${d.motivo}` : ""}`,
       }));
       const ws = XLSX.utils.json_to_sheet(rows);
       const wb = XLSX.utils.book_new();
@@ -187,15 +204,14 @@ export default function ReporteAsistencia({ me }: Props) {
         <div style={{ flex: "1 1 140px" }}>
           <div className="label">Módulo</div>
           <select className="select" style={{ width: "100%" }} value={moduleId} onChange={(e) => setModuleId(e.target.value)}>
-            <option value="">Selecciona...</option>
-            {modules.length > 0 && <option value="todos">— Todos —</option>}
+            <option value="todos">— Todos —</option>
             {modules.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </div>
 
         <div style={{ flex: "1 1 140px" }}>
           <div className="label">Materia</div>
-          <select className="select" style={{ width: "100%" }} value={classId} onChange={(e) => setClassId(e.target.value)} disabled={!moduleId}>
+          <select className="select" style={{ width: "100%" }} value={classId} onChange={(e) => setClassId(e.target.value)}>
             <option value="">Selecciona...</option>
             {classes.length > 0 && <option value="todas">— Todas —</option>}
             {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -204,9 +220,9 @@ export default function ReporteAsistencia({ me }: Props) {
 
         <div style={{ flex: "1 1 140px" }}>
           <div className="label">Fecha clase</div>
-          <select className="select" style={{ width: "100%" }} value={fecha} onChange={(e) => setFecha(e.target.value)} disabled={!classId || loadingFechas}>
+          <select className="select" style={{ width: "100%" }} value={fecha} onChange={(e) => setFecha(e.target.value)} disabled={loadingFechas}>
             <option value="">
-              {loadingFechas ? "Cargando…" : fechas.length === 0 && classId ? "Sin asistencia registrada" : "Selecciona…"}
+              {loadingFechas ? "Cargando…" : fechas.length === 0 ? "Sin asistencia registrada" : "Selecciona…"}
             </option>
             {fechas.length > 0 && <option value="todas">— Todas —</option>}
             {fechas.map((f) => (
@@ -255,35 +271,22 @@ export default function ReporteAsistencia({ me }: Props) {
       </div>
 
       {/* Radio filtro */}
-      {classId && (
-        <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 16, fontSize: 15 }}>
-          {(["todas", "asistio", "no_asistio"] as const).map((val) => (
-            <label key={val} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
-              <input
-                type="radio"
-                name="filtroAsistenciaMonitor"
-                value={val}
-                checked={filtroAsistencia === val}
-                onChange={() => setFiltroAsistencia(val)}
-                style={{ width: 17, height: 17, cursor: "pointer" }}
-              />
-              {val === "todas" ? "Todas" : val === "asistio" ? "Asistió" : "No Asistió"}
-            </label>
-          ))}
-        </div>
-      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 16, fontSize: 15 }}>
+        {(["todas", "asistio", "no_asistio"] as const).map((val) => (
+          <label key={val} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
+            <input
+              type="radio"
+              name="filtroAsistenciaMonitor"
+              value={val}
+              checked={filtroAsistencia === val}
+              onChange={() => setFiltroAsistencia(val)}
+              style={{ width: 17, height: 17, cursor: "pointer" }}
+            />
+            {val === "todas" ? "Todas" : val === "asistio" ? "Asistió" : "No Asistió"}
+          </label>
+        ))}
+      </div>
 
-      {/* Info profesor (una fecha específica) */}
-      {sesion && !isTodasMode && (
-        <div style={{ marginBottom: 16 }}>
-          <div className="label">Profesor que dictó la clase</div>
-          <div className="select" style={{ cursor: "default", userSelect: "none", width: "fit-content" }}>
-            {sesion.profesor_asistio
-              ? `Prof: ${sesion.teacher_name ?? "—"}`
-              : `Prof-remp: ${sesion.profesor_reemplazo ?? sesion.teacher_name ?? "—"}`}
-          </div>
-        </div>
-      )}
 
       {/* Grilla */}
       {loadingDetalle ? (
@@ -294,22 +297,16 @@ export default function ReporteAsistencia({ me }: Props) {
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead>
               <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
-                <th rowSpan={2} style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
-                <th rowSpan={2} style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
+                <th style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
+                <th style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
                 {todasData.fechas.map((fi, i) => (
                   <th key={i} style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
                     {fmtFecha(fi.fecha)}
                     {fi.class_name && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>{fi.class_name}</div>}
-                  </th>
-                ))}
-              </tr>
-              <tr style={{ background: "rgba(14,165,233,.04)" }}>
-                {todasData.fechas.map((fi, i) => (
-                  <th key={i} style={{ position: "sticky", top: 40, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 4%, var(--bg0))", padding: "4px 12px 8px", textAlign: "center", fontWeight: 400, fontSize: 11, color: "var(--muted)", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
-                    {fi.profesor_asistio
-                      ? `Prof: ${fi.teacher_name ?? "—"}`
-                      : `Prof-remp: ${fi.profesor_reemplazo ?? fi.teacher_name ?? "—"}`}
+                    <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>
+                      {fi.profesor_asistio ? `Prof: ${fi.teacher_name ?? "—"}` : `Prof-remp: ${fi.profesor_reemplazo ?? fi.teacher_name ?? "—"}`}
+                    </div>
                   </th>
                 ))}
               </tr>
@@ -335,14 +332,10 @@ export default function ReporteAsistencia({ me }: Props) {
                       );
                       return (
                         <td key={i} style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
-                          <span style={{
-                            display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                            background: entry.asistio ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
-                            color:      entry.asistio ? "#15803d"              : "#dc2626",
-                          }}>
-                            {entry.asistio ? "Asistió" : "No asistió"}
+                          <span style={{ fontSize: 15, fontWeight: 700, color: entry.asistio ? "#15803d" : "#dc2626" }}>
+                            {entry.asistio ? "✓" : "✗"}
                           </span>
-                          {!entry.asistio && entry.motivo && (
+                          {!entry.asistio && entry.motivo && entry.motivo !== "sin información" && (
                             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{entry.motivo}</div>
                           )}
                         </td>
@@ -360,11 +353,18 @@ export default function ReporteAsistencia({ me }: Props) {
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13 }}>
             <thead>
               <tr style={{ background: "rgba(14,165,233,.08)" }}>
-                <th style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90 }}>Cédula</th>
-                <th style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150 }}>Nombre</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center" }}>Inasistencias</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left" }}>Materia</th>
-                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center" }}>{fmtFecha(fecha)}</th>
+                <th style={{ position: "sticky", top: 0, left: 0, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 90, borderBottom: "1px solid var(--stroke)" }}>Cédula</th>
+                <th style={{ position: "sticky", top: 0, left: 90, zIndex: 4, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", minWidth: 150, borderBottom: "1px solid var(--stroke)" }}>Nombre</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", borderBottom: "1px solid var(--stroke)" }}>Inasistencias</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "left", borderBottom: "1px solid var(--stroke)" }}>Materia</th>
+                <th style={{ position: "sticky", top: 0, zIndex: 2, background: "color-mix(in srgb, rgb(14,165,233) 8%, var(--bg0))", padding: "10px 12px", textAlign: "center", whiteSpace: "nowrap", borderBottom: "1px solid var(--stroke)" }}>
+                  {fmtFecha(fecha)}
+                  {sesion && (
+                    <div style={{ fontSize: 10, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>
+                      {sesion.profesor_asistio ? `Prof: ${sesion.teacher_name ?? "—"}` : `Prof-remp: ${sesion.profesor_reemplazo ?? sesion.teacher_name ?? "—"}`}
+                    </div>
+                  )}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -379,14 +379,10 @@ export default function ReporteAsistencia({ me }: Props) {
                   </td>
                   <td style={{ padding: "8px 12px", color: "var(--muted)", borderTop: "1px solid var(--stroke)" }}>{selectedClass?.name ?? "—"}</td>
                   <td style={{ padding: "8px 12px", textAlign: "center", borderTop: "1px solid var(--stroke)" }}>
-                    <span style={{
-                      display: "inline-block", padding: "2px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600,
-                      background: d.asistio ? "rgba(22,163,74,.12)" : "rgba(239,68,68,.10)",
-                      color:      d.asistio ? "#15803d"              : "#dc2626",
-                    }}>
-                      {d.asistio ? "Asistió" : "No asistió"}
+                    <span style={{ fontSize: 15, fontWeight: 700, color: d.asistio ? "#15803d" : "#dc2626" }}>
+                      {d.asistio ? "✓" : "✗"}
                     </span>
-                    {!d.asistio && d.motivo && (
+                    {!d.asistio && d.motivo && d.motivo !== "sin información" && (
                       <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{d.motivo}</div>
                     )}
                   </td>
@@ -396,7 +392,7 @@ export default function ReporteAsistencia({ me }: Props) {
             </tbody>
           </table>
         </div>
-      ) : fecha ? (
+      ) : (classId || fecha) ? (
         <div style={{ color: "var(--muted)", textAlign: "center", padding: 20 }}>No hay datos para esta sesión.</div>
       ) : null}
     </div>

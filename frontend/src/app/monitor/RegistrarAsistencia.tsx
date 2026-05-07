@@ -14,7 +14,7 @@ function todayISO() {
 }
 
 type ModuleItem  = { id: number; name: string };
-type ClassItem   = { id: number; name: string };
+type ClassItem   = { id: number; name: string; id_module: number };
 type TeacherItem = { id: string; name: string };
 type StudentItem = { id: string; name: string; cedula: string | null };
 type DetalleRow  = { id_student: string; name: string; cedula: string | null; asistio: boolean; motivo: string };
@@ -33,7 +33,7 @@ export default function RegistrarAsistencia({ me }: Props) {
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
   const [students, setStudents] = useState<StudentItem[]>([]);
 
-  const [moduleId,            setModuleId]            = useState("");
+  const [moduleId,            setModuleId]            = useState("todos");
   const [classId,             setClassId]             = useState("");
   const [fecha,               setFecha]               = useState(todayISO());
   const [assignedTeacherId,   setAssignedTeacherId]   = useState<string>("");
@@ -50,7 +50,13 @@ export default function RegistrarAsistencia({ me }: Props) {
   const [msg,             setMsg]             = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   const detalleVisible = filterStudentId ? detalle.filter((r) => r.id_student === filterStudentId) : detalle;
-  const dateInputRef = useRef<HTMLInputElement>(null);
+  const dateInputRef   = useRef<HTMLInputElement>(null);
+  const allClassesRef  = useRef<ClassItem[]>([]);
+
+  // Si el módulo es "todos" (o vacío) y hay materia seleccionada, derivamos el módulo de la materia
+  const effectiveModuleId = (moduleId && moduleId !== "todos")
+    ? moduleId
+    : (classId ? String(allClassesRef.current.find((c) => String(c.id) === classId)?.id_module ?? "") : "");
 
   // ── Carga inicial ────────────────────────────────────────────
   useEffect(() => {
@@ -67,12 +73,22 @@ export default function RegistrarAsistencia({ me }: Props) {
         setDetalle(makeDefaultDetalle(s));
       })
       .catch(() => {});
+    apiFetch("/api/monitor/classes?module_id=todos")
+      .then((r: { items?: ClassItem[] }) => {
+        const all = r?.items || [];
+        allClassesRef.current = all;
+        setClasses(all);
+      })
+      .catch(() => {});
   }, []);
 
   // ── Cambio de módulo → cargar materias ──────────────────────
   useEffect(() => {
-    setClassId(""); setAssignedTeacherId(""); setAssignedTeacherName(""); setSuplentId(""); setClasses([]); setSesionId(null); setBulkAsistio(false);
-    if (!moduleId) return;
+    setClassId(""); setAssignedTeacherId(""); setAssignedTeacherName(""); setSuplentId(""); setSesionId(null); setBulkAsistio(false);
+    if (!moduleId || moduleId === "todos") {
+      setClasses(allClassesRef.current);
+      return;
+    }
     apiFetch(`/api/monitor/classes?module_id=${moduleId}`)
       .then((r: { items?: ClassItem[] }) => setClasses(r?.items || []))
       .catch((e) => console.error("classes fetch:", e));
@@ -104,12 +120,12 @@ export default function RegistrarAsistencia({ me }: Props) {
 
   // ── Carga sesión existente cuando filtros están completos ────
   const loadSession = useCallback(async () => {
-    if (!moduleId || !classId || !fecha) return;
+    if (!effectiveModuleId || !classId || !fecha) return;
     setLoadingSession(true);
     setSesionId(null);
     try {
       const r = await apiFetch(
-        `/api/monitor/attendance/session?module_id=${moduleId}&class_id=${classId}&fecha=${fecha}`
+        `/api/monitor/attendance/session?module_id=${effectiveModuleId}&class_id=${classId}&fecha=${fecha}`
       ) as { sesion?: { id: number; id_teacher: string; profesor_asistio: boolean }; detalle?: Array<{ id_student: string; asistio: boolean; motivo: string }> };
       if (r?.sesion) {
         setSesionId(r.sesion.id);
@@ -139,7 +155,7 @@ export default function RegistrarAsistencia({ me }: Props) {
     } finally {
       setLoadingSession(false);
     }
-  }, [moduleId, classId, fecha, students]);
+  }, [effectiveModuleId, classId, fecha, students]);
 
   useEffect(() => { loadSession(); }, [loadSession]);
 
@@ -162,7 +178,7 @@ export default function RegistrarAsistencia({ me }: Props) {
 
   // ── Guardar ──────────────────────────────────────────────────
   async function handleGuardar() {
-    if (!moduleId || !classId || !fecha) return setMsg({ type: "err", text: "Completa módulo, materia y fecha." });
+    if (!effectiveModuleId || !classId || !fecha) return setMsg({ type: "err", text: "Completa materia y fecha." });
     if (profesorAsistio === true && !assignedTeacherId) return setMsg({ type: "err", text: "No hay profesor asignado a esta materia." });
     if (profesorAsistio === false && !suplentId) return setMsg({ type: "err", text: "Seleccione un profesor suplente." });
     setSaving(true);
@@ -172,7 +188,7 @@ export default function RegistrarAsistencia({ me }: Props) {
         method: "POST",
         body: JSON.stringify({
           id_course:        course?.id,
-          id_module:        Number(moduleId),
+          id_module:        Number(effectiveModuleId),
           id_class:         Number(classId),
           fecha_clase:      fecha,
           id_teacher:       profesorAsistio === true ? assignedTeacherId : suplentId,
@@ -195,14 +211,14 @@ export default function RegistrarAsistencia({ me }: Props) {
     (profesorAsistio === true ? !!assignedTeacherId : !!suplentId) && !saving;
 
   function handleCancelar() {
-    setModuleId("");
+    setModuleId("todos");
     setClassId("");
     setFecha(todayISO());
     setAssignedTeacherId("");
     setAssignedTeacherName("");
     setSuplentId("");
     setProfAsistio(true);
-    setClasses([]);
+    setClasses(allClassesRef.current);
     setSesionId(null);
     setDetalle(makeDefaultDetalle(students));
     setFilterStudentId("");
@@ -218,9 +234,9 @@ export default function RegistrarAsistencia({ me }: Props) {
           <button
             className="btn"
             onClick={handleCancelar}
-            style={{ width: 120, minHeight: 36, background: "rgba(100,116,139,.18)", color: "var(--text)", border: "1px solid rgba(100,116,139,.3)" }}
+            style={{ width: 120, minHeight: 36, background: "#6b7280", borderColor: "#6b7280", whiteSpace: "nowrap" }}
           >
-            Cancelar
+            Limpiar
           </button>
           <button
             className="btn actionBtn"
@@ -264,14 +280,14 @@ export default function RegistrarAsistencia({ me }: Props) {
         <div>
           <div className="label">Módulo</div>
           <select className="select" style={{ width: "100%", fontSize: 13 }} value={moduleId} onChange={(e) => setModuleId(e.target.value)}>
-            <option value="">Selecciona...</option>
+            <option value="todos">— Todos —</option>
             {modules.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </div>
 
         <div>
           <div className="label">Materia</div>
-          <select className="select" style={{ width: "100%", fontSize: 13 }} value={classId} onChange={(e) => setClassId(e.target.value)} disabled={!moduleId}>
+          <select className="select" style={{ width: "100%", fontSize: 13 }} value={classId} onChange={(e) => setClassId(e.target.value)}>
             <option value="">Selecciona...</option>
             {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>

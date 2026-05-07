@@ -96,10 +96,13 @@ secretariaRouter.get("/attendance/classes", requireAuth, requireSecretaria, asyn
       .from("class")
       .select("id,name")
       .eq("level", course.level)
-      .eq("year", course.year)
-      .order("name", { ascending: true });
+      .eq("year", course.year);
 
-    if (moduleId !== "todos") query = query.eq("id_module", moduleId);
+    if (moduleId !== "todos") {
+      query = query.eq("id_module", moduleId).order("orden", { ascending: true });
+    } else {
+      query = query.order("name", { ascending: true });
+    }
 
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });

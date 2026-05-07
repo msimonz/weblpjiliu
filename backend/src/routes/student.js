@@ -370,6 +370,25 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   }
   const avg_weighted = avgCount > 0 ? Number((avgSum / avgCount).toFixed(2)) : null;
 
+  // Count absences for this student in this course
+  let absences = 0;
+  try {
+    const { data: absSessions } = await supabaseAdmin
+      .from("asistencia_sesion")
+      .select("id")
+      .eq("id_course", activeCourseId);
+    const sesIds = (absSessions || []).map(s => Number(s.id));
+    if (sesIds.length > 0) {
+      const { count } = await supabaseAdmin
+        .from("asistencia_detalle")
+        .select("*", { count: "exact", head: true })
+        .eq("id_student", userId)
+        .eq("asistio", false)
+        .in("id_sesion", sesIds);
+      absences = count ?? 0;
+    }
+  } catch { /* ignorar */ }
+
   return res.json({
     blocked: false,
     course: activeCourse,
@@ -380,6 +399,7 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
       pending,
       avg_weighted,
       pass_grade: PASS_GRADE,
+      absences,
     },
   });
 });
@@ -1022,4 +1042,63 @@ studentRouter.get("/exam/:id_evaluation/result", requireAuth, async (req, res) =
     respuestas: rta.respuestas,
     preguntas: preguntas || [],
   });
+});
+
+// GET /api/student/absences?course_id=X
+// Retorna lista de inasistencias del alumno autenticado para el curso dado
+studentRouter.get("/absences", requireAuth, async (req, res) => {
+  const userId = req.auth.user.id;
+  const requestedCourseId = Number(req.query.course_id || 0);
+
+  const studentCourse = await getStudentCourse(req, res);
+  if (!studentCourse) return;
+
+  let activeCourse = studentCourse;
+  if (requestedCourseId && requestedCourseId !== studentCourse.id) {
+    const { data: histEntry } = await supabaseAdmin
+      .from("user_history")
+      .select("id_course, course:course(id,name,level,year)")
+      .eq("id_student", userId)
+      .eq("id_course", requestedCourseId)
+      .maybeSingle();
+    if (histEntry?.course?.id) activeCourse = histEntry.course;
+  }
+
+  try {
+    const { data: sessions, error: sErr } = await supabaseAdmin
+      .from("asistencia_sesion")
+      .select("id, fecha_clase, class:id_class(name)")
+      .eq("id_course", activeCourse.id)
+      .order("fecha_clase", { ascending: false });
+
+    if (sErr) return res.status(500).json({ error: sErr.message });
+
+    const sessionIds = (sessions || []).map(s => Number(s.id));
+    if (sessionIds.length === 0) return res.json({ items: [] });
+
+    const { data: abs, error: aErr } = await supabaseAdmin
+      .from("asistencia_detalle")
+      .select("id_sesion")
+      .eq("id_student", userId)
+      .eq("asistio", false)
+      .in("id_sesion", sessionIds);
+
+    if (aErr) return res.status(500).json({ error: aErr.message });
+
+    const absentIds = new Set((abs || []).map(a => Number(a.id_sesion)));
+    const sessionMap = new Map((sessions || []).map(s => [Number(s.id), s]));
+
+    const items = [...absentIds]
+      .map(id => {
+        const s = sessionMap.get(id);
+        if (!s) return null;
+        return { fecha_clase: s.fecha_clase, class_name: s.class?.name ?? "—" };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.fecha_clase.localeCompare(a.fecha_clase));
+
+    return res.json({ items });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || "Error obteniendo inasistencias" });
+  }
 });
