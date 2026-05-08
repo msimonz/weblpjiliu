@@ -240,8 +240,7 @@ export default function AdminPage() {
   const isHistoricalYear = adminYear !== null && adminYear !== adminYearActivo;
 
   const [newCourseName, setNewCourseName] = useState("");
-  const [newCourseLevel, setNewCourseLevel] = useState<number>(1);
-  const [newCourseYear, setNewCourseYear] = useState<string>("");
+  const [newCourseLevel, setNewCourseLevel] = useState<number>(0);
 
   // Monitor assignment
   const [monitorEditCourseId, setMonitorEditCourseId] = useState<number | null>(null);
@@ -628,17 +627,24 @@ export default function AdminPage() {
     });
   }, [classes, tblFilterLevel, tblFilterModule, tblFilterGroup, tblFilterName]);
 
+  const coursesForGrid = useMemo(() => {
+    let r = courses;
+    if (newCourseLevel) r = r.filter((c) => Number(c.level) === newCourseLevel);
+    if (newCourseName)  r = r.filter((c) => c.name === newCourseName);
+    return r;
+  }, [courses, newCourseLevel, newCourseName]);
+
   const availableCourseOptions = useMemo(() => {
     if (!newCourseLevel) return [];
     const taken = new Set(
       courses
-        .filter((c) => Number(c.level) === newCourseLevel && String(c.year) === newCourseYear)
+        .filter((c) => Number(c.level) === newCourseLevel)
         .map((c) => String(c.name).trim())
     );
     return [1, 2, 3, 4]
       .map((n) => String(newCourseLevel * 100 + n))
       .filter((opt) => !taken.has(opt));
-  }, [courses, newCourseLevel, newCourseYear]);
+  }, [courses, newCourseLevel]);
 
   const availableLevels = useMemo(() => {
     const set = new Set<number>();
@@ -1022,7 +1028,7 @@ export default function AdminPage() {
         body: JSON.stringify({
           name,
           level: newCourseLevel,
-          year: newCourseYear || null,
+          year: adminYear || null,
         }),
       });
       setNewCourseName("");
@@ -1238,8 +1244,7 @@ export default function AdminPage() {
     switch (v) {
       case "COURSES":
         setNewCourseName("");
-        setNewCourseLevel(1);
-        setNewCourseYear("");
+        setNewCourseLevel(0);
         setMonitorEditCourseId(null);
         setMonitorStudents([]);
         setMonitorSelectedId("");
@@ -1641,6 +1646,7 @@ export default function AdminPage() {
     if (!cedula)                                      return showErr("Cédula requerida.");
     if (!email || !email.includes("@"))               return showErr("Email inválido.");
     if (roles.length === 0)                           return showErr("Selecciona al menos 1 rol.");
+    if (uRoles.M && !uRoles.S)                        return showErr("Un monitor debe tener también el rol Estudiante.");
     if (needsStudentFields && !uCodeJiliu.trim())     return showErr("Código Jiliu requerido para Estudiante/Monitor.");
     if (needsStudentFields && !uCourseId)             return showErr("Curso requerido para Estudiante/Monitor.");
 
@@ -2530,7 +2536,7 @@ export default function AdminPage() {
             <div className="card" style={{ marginTop: 18 }}>
               <h2 style={{ marginTop: 0 }}>Crear/Editar Curso</h2>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto auto", gap: 12, alignItems: "flex-end" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto auto", gap: 12, alignItems: "flex-end" }}>
                 <div>
                   <div className="label">Nivel</div>
                   <select
@@ -2538,33 +2544,13 @@ export default function AdminPage() {
                     value={newCourseLevel}
                     onChange={(e) => {
                       setNewCourseLevel(Number(e.target.value));
-                      setNewCourseYear("");
                       setNewCourseName("");
                     }}
                   >
-                    <option value={0} disabled>Selecciona...</option>
+                    <option value={0}>Todos</option>
                     {levels.map((x) => (
                       <option key={x.id} value={x.id}>{x.name}</option>
                     ))}
-                  </select>
-                </div>
-
-                <div>
-                  <div className="label">Año</div>
-                  <select
-                    className="select"
-                    value={newCourseYear}
-                    onChange={(e) => {
-                      setNewCourseYear(e.target.value);
-                      setNewCourseName("");
-                    }}
-                    disabled={!newCourseLevel}
-                  >
-                    <option value="">Selecciona...</option>
-                    {[0, 1, 2].map((offset) => {
-                      const y = new Date().getFullYear() + offset;
-                      return <option key={y} value={String(y)}>{y}</option>;
-                    })}
                   </select>
                 </div>
 
@@ -2574,9 +2560,9 @@ export default function AdminPage() {
                     className="select"
                     value={newCourseName}
                     onChange={(e) => setNewCourseName(e.target.value)}
-                    disabled={!newCourseYear}
+                    disabled={!newCourseLevel}
                   >
-                    <option value="">Selecciona...</option>
+                    <option value="">Todos</option>
                     {availableCourseOptions.map((opt) => (
                       <option key={opt} value={opt}>{opt}</option>
                     ))}
@@ -2586,64 +2572,59 @@ export default function AdminPage() {
                 <button
                   className="btn"
                   onClick={createCourse}
-                  disabled={isHistoricalYear}
+                  disabled={isHistoricalYear || !newCourseLevel || !newCourseName}
                   title={isHistoricalYear ? `Solo se puede modificar el año vigente (${adminYearActivo})` : undefined}
-                  style={{ padding: "10px 16px", whiteSpace: "nowrap" }}
+                  style={{ padding: "10px 16px", whiteSpace: "nowrap", width: 100 }}
                 >
                   Crear
                 </button>
                 <button
                   type="button"
                   className="btn"
-                  style={{ padding: "10px 16px", whiteSpace: "nowrap", background: "#4b5563", borderColor: "#4b5563" }}
-                  onClick={() => { setNewCourseLevel(0); setNewCourseYear(""); setNewCourseName(""); setMsg(null); setOkMsg(null); }}
+                  style={{ padding: "10px 16px", whiteSpace: "nowrap", background: "#4b5563", borderColor: "#4b5563", width: 100 }}
+                  onClick={() => { setNewCourseLevel(0); setNewCourseName(""); setMsg(null); setOkMsg(null); }}
                 >
                   Cancelar
                 </button>
               </div>
 
               <div style={{ marginTop: 16 }}>
+
                 <div
                   style={{
                     overflow: "hidden",
                     borderRadius: 18,
                     border: "1px solid var(--stroke)",
-                    width: "100%",
+                    width: "66%",
+                    margin: "0 auto",
                   }}
                 >
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                       <tr style={{ background: "rgba(14,165,233,.08)" }}>
+                        <th style={{ textAlign: "center", padding: 12 }}>Año Lectivo</th>
                         <th style={{ textAlign: "center", padding: 12 }}>Nivel</th>
-                        <th style={{ textAlign: "center", padding: 12 }}>Año</th>
                         <th style={{ textAlign: "center", padding: 12 }}>Curso</th>
                         <th style={{ textAlign: "left",   padding: 12 }}>Monitor</th>
-                        <th style={{ textAlign: "center", padding: 12 }}></th>
+                        <th style={{ textAlign: "center", padding: 12 }}>Eliminar</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {!newCourseYear ? (
+                      {coursesForGrid.length === 0 ? (
                         <tr>
                           <td colSpan={5} style={{ padding: 12, color: "var(--muted)", textAlign: "center" }}>
-                            Selecciona un año para ver los cursos existentes
-                          </td>
-                        </tr>
-                      ) : courses.filter((c) => String(c.year) === newCourseYear).length === 0 ? (
-                        <tr>
-                          <td colSpan={5} style={{ padding: 12, color: "var(--muted)", textAlign: "center" }}>
-                            No hay cursos para el año {newCourseYear}
+                            No hay cursos para los filtros seleccionados
                           </td>
                         </tr>
                       ) : (
-                        courses
-                          .filter((c) => String(c.year) === newCourseYear)
+                        coursesForGrid
                           .map((c, idx) => {
                             const hasUsers      = (c.user_count ?? 0) > 0;
                             const isEditingMon  = monitorEditCourseId === c.id;
                             return (
                               <tr key={c.id} style={{ borderTop: "1px solid rgba(2,132,199,.10)", background: getGrillaBaseRowBg(idx, isDarkThemeEnabled()) }}>
-                                <td style={{ padding: 12, textAlign: "center" }}>{levels.find((l) => l.id === Number(c.level))?.name ?? c.level}</td>
                                 <td style={{ padding: 12, textAlign: "center" }}>{c.year ?? "—"}</td>
+                                <td style={{ padding: 12, textAlign: "center" }}>{levels.find((l) => l.id === Number(c.level))?.name ?? c.level}</td>
                                 <td style={{ padding: 12, textAlign: "center", fontWeight: 500 }}>{c.name}</td>
 
                                 {/* Columna Monitor */}
@@ -3725,7 +3706,19 @@ export default function AdminPage() {
                         <input
                           type="checkbox"
                           checked={!!uRoles[r.value]}
-                          onChange={(e) => setURoles((p) => ({ ...p, [r.value]: e.target.checked }))}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            if (r.value === "S" && !checked && uRoles.M) {
+                              showErr("No se puede quitar el rol Estudiante a un Monitor. Quita primero el rol Monitor.");
+                              return;
+                            }
+                            setURoles((p) => {
+                              const next = { ...p, [r.value]: checked };
+                              // M requiere S; si activas M, activa S automáticamente
+                              if (r.value === "M" && checked) next.S = true;
+                              return next;
+                            });
+                          }}
                         />
                         <span>{r.label}</span>
                       </label>

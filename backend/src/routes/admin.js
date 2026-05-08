@@ -74,6 +74,44 @@ async function getTypeIdByCode(code) {
 /**
  * Reemplaza completamente los roles del usuario en public.user_type
  */
+// Sincroniza course.id_monitor cuando se asigna o quita el rol M a un usuario.
+// Si isMonitor=true: asigna userId como monitor del curso (desplaza al anterior si lo había).
+// Si isMonitor=false: limpia course.id_monitor donde userId era el monitor.
+async function syncMonitorCourse(userId, idCourse, isMonitor) {
+  if (isMonitor) {
+    // Quitar rol M al monitor anterior de este curso (si era otro)
+    const { data: courseRow } = await supabaseAdmin
+      .from("course")
+      .select("id_monitor")
+      .eq("id", idCourse)
+      .maybeSingle();
+
+    const prevMonitorId = courseRow?.id_monitor;
+    if (prevMonitorId && prevMonitorId !== userId) {
+      const { data: typeM } = await supabaseAdmin
+        .from("type").select("id").eq("code", "M").maybeSingle();
+      if (typeM?.id) {
+        await supabaseAdmin
+          .from("user_type")
+          .delete()
+          .eq("id_user", prevMonitorId)
+          .eq("id_type", typeM.id);
+      }
+    }
+
+    await supabaseAdmin
+      .from("course")
+      .update({ id_monitor: userId })
+      .eq("id", idCourse);
+  } else {
+    // Limpiar course.id_monitor si este usuario era el monitor
+    await supabaseAdmin
+      .from("course")
+      .update({ id_monitor: null })
+      .eq("id_monitor", userId);
+  }
+}
+
 async function replaceUserRoles(id_user, roleCodes) {
   const codes = (roleCodes || [])
     .map((x) => String(x).trim().toUpperCase())
@@ -1961,6 +1999,10 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
     }
     const roleList = roles.map((r) => String(r).toUpperCase());
 
+    if (roleList.includes("M") && !roleList.includes("S")) {
+      return res.status(400).json({ error: "Un monitor debe tener también el rol Estudiante" });
+    }
+
     const needsStudentFields = roleList.includes("S") || roleList.includes("M");
     if (needsStudentFields && !code_jiliu) {
       return res.status(400).json({ error: "code_jiliu requerido para rol S o M" });
@@ -2039,6 +2081,8 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
       }
     }
 
+    await syncMonitorCourse(authUserId, id_course, roleList.includes("M"));
+
     return res.json({ ok: true, item: up, created: !createRes?.error });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando usuario" });
@@ -2066,6 +2110,10 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
     }
 
     const roleList = roles.map((r) => String(r).toUpperCase());
+
+    if (roleList.includes("M") && !roleList.includes("S")) {
+      return res.status(400).json({ error: "Un monitor debe tener también el rol Estudiante" });
+    }
 
     const needsStudentFields = roleList.includes("S") || roleList.includes("M");
     if (needsStudentFields && !code_jiliu) {
@@ -2152,6 +2200,8 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
       .upsert({ id_student: userId, id_course }, { onConflict: "id_student,id_course" });
 
     if (histErr) warn = `history: ${histErr.message}`;
+
+    await syncMonitorCourse(userId, id_course, roleList.includes("M"));
 
     return res.json({ ok: true, item: up, warn });
   } catch (e) {
