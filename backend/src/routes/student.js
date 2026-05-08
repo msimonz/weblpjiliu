@@ -362,7 +362,7 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
       : it.weighted;
     const isFailed = normalizedGrade < PASS_GRADE;
     if (!it.complete) {
-      if (isFailed) failed += 1; else pending += 1;
+      pending += 1;
       continue;
     }
     avgSum += it.weighted; avgCount += 1;
