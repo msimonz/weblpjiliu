@@ -115,6 +115,9 @@ export default function SecretariaPage() {
   const [upsertClassFilter,  setUpsertClassFilter]  = useState<number | "all">("all");
   const [upsertGroupFilter,  setUpsertGroupFilter]  = useState<number | "all">("all");
 
+  // Modo de visualización de notas
+  const [notasMode, setNotasMode] = useState<"detalle" | "definitivas">("detalle");
+
   // Filtros de búsqueda en la tabla
   const [gFilterCedula, setGFilterCedula] = useState("all");
   const [gFilterName,   setGFilterName]   = useState("all");
@@ -354,34 +357,50 @@ export default function SecretariaPage() {
   }
 
   function countNoAprobadas(student: StudentRow): number {
-    const applicable = gEvaluations.filter(ev => isEvaluationApplicableToStudent(student, ev));
-    const subjectKey = (ev: EvalItem) => `c_${ev.id_class}`;
-    const subjects = new Map<string, EvalItem[]>();
-    for (const ev of applicable) {
-      const k = subjectKey(ev);
-      if (!subjects.has(k)) subjects.set(k, []);
-      subjects.get(k)!.push(ev);
-    }
     let count = 0;
-    for (const evals of subjects.values()) {
-      let earnedPoints = 0, evaluatedPercent = 0;
-      for (const ev of evals) {
-        const g = gGrades.find(r => r.id_student === student.id && r.id_exam === ev.id);
-        if (!g?.finished_at) continue;
-        earnedPoints += (Number(g.grade ?? 0) * Number(ev.percent)) / 100;
-        evaluatedPercent += Number(ev.percent);
-      }
-      if (evaluatedPercent === 0) continue;
-      const normalized = (earnedPoints / evaluatedPercent) * 100;
-      if (normalized < 70) count += 1;
+    for (const g of classGroups) {
+      const defVal = computeDefinitiva(student, g.evals);
+      if (defVal === "-") continue;
+      if (Number(defVal) < 70) count++;
     }
     return count;
   }
 
+  // Agrupa evaluaciones por materia manteniendo el orden de gEvaluations
+  const classGroups = useMemo(() => {
+    const groups: Array<{ classId: number; className: string; evals: EvalItem[]; hasMultiple: boolean }> = [];
+    for (const ev of gEvaluations) {
+      const last = groups[groups.length - 1];
+      if (last && last.classId === ev.id_class) {
+        last.evals.push(ev);
+      } else {
+        groups.push({ classId: ev.id_class, className: ev.class?.name || `Clase ${ev.id_class}`, evals: [ev], hasMultiple: false });
+      }
+    }
+    for (const g of groups) g.hasMultiple = g.evals.length > 1;
+    return groups;
+  }, [gEvaluations]);
+
+  function computeDefinitiva(student: StudentRow, evals: EvalItem[]): string {
+    let earned = 0, total = 0;
+    for (const ev of evals) {
+      if (!isEvaluationApplicableToStudent(student, ev)) continue;
+      const gr = gGrades.find(g => g.id_student === student.id && g.id_exam === ev.id);
+      if (!gr?.finished_at) return "-";
+      earned += Number(gr.grade ?? 0) * Number(ev.percent);
+      total  += Number(ev.percent);
+    }
+    if (total === 0) return "-";
+    return (earned / total).toFixed(1);
+  }
+
   const upsertDynamicMinWidth = useMemo(() => {
-    // Sin columna de acción (solo lectura)
-    return CEDULA_COL_W + ALUMNO_COL_W + 90 + gEvaluations.length * 120;
-  }, [gEvaluations.length]);
+    const definitivaCount = classGroups.filter(g => g.hasMultiple).length;
+    if (notasMode === "definitivas") {
+      return CEDULA_COL_W + ALUMNO_COL_W + 90 + classGroups.length * 100;
+    }
+    return CEDULA_COL_W + ALUMNO_COL_W + 90 + gEvaluations.length * 120 + definitivaCount * 100;
+  }, [gEvaluations.length, classGroups, notasMode]);
 
   const isSingleItemView = upsertClassFilter !== "all" || upsertGroupFilter !== "all";
 
@@ -802,6 +821,22 @@ export default function SecretariaPage() {
                 </button>
               </div>
 
+              {/* Radio buttons modo visualización */}
+              <div style={{ display: "flex", gap: 20, marginTop: 12, alignItems: "center" }}>
+                {(["detalle", "definitivas"] as const).map(mode => (
+                  <label key={mode} style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer", fontSize: 14, fontWeight: notasMode === mode ? 600 : 400 }}>
+                    <input
+                      type="radio"
+                      name="notasMode"
+                      value={mode}
+                      checked={notasMode === mode}
+                      onChange={() => setNotasMode(mode)}
+                    />
+                    {mode === "detalle" ? "Detalle" : "Definitivas"}
+                  </label>
+                ))}
+              </div>
+
               {/* Grid de notas */}
               {!upsertLevelFilter && upsertCourseFilter === "all" && upsertModuleFilter === "all" && upsertClassFilter === "all" && upsertGroupFilter === "all" ? (
                 <div style={{ marginTop: 24, color: "var(--muted)", fontSize: 14 }}>
@@ -836,42 +871,41 @@ export default function SecretariaPage() {
                           <col style={{ width: `${CEDULA_COL_W}px` }} />
                           <col style={{ width: `${ALUMNO_COL_W}px` }} />
                           <col style={{ width: "90px" }} />
-                          {gEvaluations.map(ev => (
-                            <col key={`${ev.id}-grade`} style={{ width: "120px" }} />
-                          ))}
+                          {notasMode === "definitivas"
+                            ? classGroups.map(g => <col key={`def-${g.classId}`} style={{ width: "100px" }} />)
+                            : classGroups.flatMap(g => [
+                                ...g.evals.map(ev => <col key={`${ev.id}-grade`} style={{ width: "120px" }} />),
+                                ...(g.hasMultiple ? [<col key={`def-${g.classId}`} style={{ width: "100px" }} />] : []),
+                              ])
+                          }
                         </colgroup>
 
                         <thead>
-                          {/* Subheader de materias cuando hay múltiples */}
-                          {!isSingleItemView && gEvaluations.length > 0 && (() => {
-                            const groups: { classId: number; className: string; count: number }[] = [];
-                            for (const ev of gEvaluations) {
-                              const last = groups[groups.length - 1];
-                              if (last && last.classId === ev.id_class) last.count++;
-                              else groups.push({ classId: ev.id_class, className: ev.class?.name || `Clase ${ev.id_class}`, count: 1 });
-                            }
-                            return (
-                              <tr>
-                                <td colSpan={3} style={{ borderBottom: GRILLA.headerBottomBorder, background: GRILLA.headerBgLight, position: "sticky", top: 0, left: 0, zIndex: 7 }} />
-                                {groups.map(g => (
-                                  <td key={g.classId} colSpan={g.count} style={{
+                          {/* Subheader de materias cuando hay múltiples — solo en modo Detalle */}
+                          {!isSingleItemView && gEvaluations.length > 0 && notasMode !== "definitivas" && (
+                            <tr>
+                              <td colSpan={3} style={{ borderBottom: GRILLA.headerBottomBorder, background: GRILLA.headerBgLight, position: "sticky", top: 0, left: 0, zIndex: 7 }} />
+                              {classGroups.map(g => {
+                                const span = g.evals.length + (g.hasMultiple ? 1 : 0);
+                                return (
+                                  <td key={g.classId} colSpan={span} style={{
                                     padding: "4px 10px", borderBottom: GRILLA.headerBottomBorder,
                                     fontSize: 11, fontWeight: 700, textAlign: "center", background: GRILLA.headerBgLight,
                                     borderLeft: "1px solid var(--stroke)", position: "sticky", top: 0, zIndex: 5,
                                   }}>
                                     {g.className}
                                   </td>
-                                ))}
-                              </tr>
-                            );
-                          })()}
+                                );
+                              })}
+                            </tr>
+                          )}
 
                           <tr>
                             {/* Cédula */}
                             <th style={{
                               textAlign: "left", padding: "8px 12px",
                               borderBottom: GRILLA.headerBottomBorder,
-                              position: "sticky", top: isSingleItemView ? 0 : 33,
+                              position: "sticky", top: (isSingleItemView || notasMode === "definitivas") ? 0 : 33,
                               left: 0, zIndex: 6, whiteSpace: "nowrap", boxShadow: "none",
                             }}>
                               <select
@@ -890,7 +924,7 @@ export default function SecretariaPage() {
                             <th style={{
                               textAlign: "left", padding: "8px 12px",
                               borderBottom: GRILLA.headerBottomBorder,
-                              position: "sticky", top: isSingleItemView ? 0 : 33,
+                              position: "sticky", top: (isSingleItemView || notasMode === "definitivas") ? 0 : 33,
                               left: STICKY_ALUMNO_LEFT, zIndex: 6, boxShadow: "none",
                             }}>
                               <select
@@ -909,31 +943,58 @@ export default function SecretariaPage() {
                             <th style={{
                               textAlign: "center", padding: "8px 10px",
                               borderBottom: GRILLA.headerBottomBorder,
-                              position: "sticky", top: isSingleItemView ? 0 : 33,
+                              position: "sticky", top: (isSingleItemView || notasMode === "definitivas") ? 0 : 33,
                               zIndex: 5, whiteSpace: "nowrap", color: "#64748b", fontWeight: 700,
                             }}>
                               <span style={{ color: "#64748b", fontSize: 12 }}>No Aprobadas</span>
                             </th>
 
-                            {/* Columnas de evaluaciones */}
-                            {gEvaluations.map(ev => {
-                              const typeLabel = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim();
-                              const showTitle = ev.title && ev.title.trim() !== typeLabel;
-                              return (
-                                <th key={`${ev.id}-grade`} style={{
-                                  textAlign: "left", padding: "8px 10px",
-                                  borderBottom: GRILLA.headerBottomBorder,
-                                  position: "sticky", top: isSingleItemView ? 0 : 33,
-                                  zIndex: 5, lineHeight: 1.3,
-                                  borderLeft: isSingleItemView ? undefined : "1px solid var(--stroke)",
-                                }}>
-                                  <div>{typeLabel} ({Number(ev.percent).toFixed(0)}%)</div>
-                                  {showTitle && (
-                                    <div style={{ fontSize: 11, opacity: 0.8 }}>{ev.title}</div>
-                                  )}
-                                </th>
-                              );
-                            })}
+                            {/* Columnas de evaluaciones / definitivas */}
+                            {notasMode === "definitivas"
+                              ? classGroups.map((g, gi) => (
+                                  <th key={`def-hdr-${g.classId}`} style={{
+                                    textAlign: "center", padding: "8px 10px",
+                                    borderBottom: GRILLA.headerBottomBorder,
+                                    position: "sticky", top: 0,
+                                    zIndex: 5, fontWeight: 700, fontSize: 13,
+                                    borderLeft: gi === 0 ? undefined : "1px solid var(--stroke)",
+                                  }}>
+                                    <strong>{g.className}</strong>
+                                  </th>
+                                ))
+                              : classGroups.flatMap((g, gi) => {
+                                  const isFirstClass = gi === 0;
+                                  const cols = g.evals.map((ev, ei) => {
+                                    const typeLabel = String(ev.evaluation_type?.type || ev.title || "Evaluación").trim();
+                                    const showTitle = ev.title && ev.title.trim() !== typeLabel;
+                                    return (
+                                      <th key={`${ev.id}-grade`} style={{
+                                        textAlign: "left", padding: "8px 10px",
+                                        borderBottom: GRILLA.headerBottomBorder,
+                                        position: "sticky", top: isSingleItemView ? 0 : 33,
+                                        zIndex: 5, lineHeight: 1.3,
+                                        borderLeft: (!isSingleItemView && ei === 0 && !isFirstClass) ? "1px solid var(--stroke)" : undefined,
+                                      }}>
+                                        <div style={{ color: g.hasMultiple ? "#94a3b8" : undefined, fontSize: 13 }}>{typeLabel} ({Number(ev.percent).toFixed(0)}%)</div>
+                                        {showTitle && <div style={{ fontSize: 11, opacity: 0.7, color: g.hasMultiple ? "#94a3b8" : undefined }}>{ev.title}</div>}
+                                      </th>
+                                    );
+                                  });
+                                  if (g.hasMultiple) {
+                                    cols.push(
+                                      <th key={`def-hdr-${g.classId}`} style={{
+                                        textAlign: "center", padding: "8px 10px",
+                                        borderBottom: GRILLA.headerBottomBorder,
+                                        position: "sticky", top: isSingleItemView ? 0 : 33,
+                                        zIndex: 5, fontWeight: 700,
+                                      }}>
+                                        Definitiva
+                                      </th>
+                                    );
+                                  }
+                                  return cols;
+                                })
+                            }
                           </tr>
                         </thead>
 
@@ -1007,62 +1068,99 @@ export default function SecretariaPage() {
                                     {perdidas > 0 ? perdidas : ""}
                                   </td>
 
-                                  {/* Celdas de nota — input readOnly, mismo estilo que admin */}
-                                  {gEvaluations.map(ev => {
-                                    const key              = gradeCellKey(st.id, ev.id);
-                                    const enabledForCourse = isEvaluationApplicableToStudent(st, ev);
-                                    const gradeRecord      = gGrades.find(g => g.id_student === st.id && g.id_exam === ev.id);
-                                    const attempts         = gradeRecord?.attempts ?? 0;
-                                    const gradeVal         = gradeRecord?.grade ?? null;
-                                    const hasClosedGrade   = !!gradeRecord?.finished_at;
-                                    const noPresentó       = enabledForCourse && hasClosedGrade && attempts === 0 && gradeVal === 0;
-                                    const pendingPlaceholder = isExamEvaluation(ev) ? "—" : "+";
-                                    const draftVal         = gradeDraft[key] ?? "";
+                                  {/* Celdas de nota */}
+                                  {notasMode === "definitivas"
+                                    ? classGroups.map((g, gi) => {
+                                        const defVal = computeDefinitiva(st, g.evals);
+                                        const defNum = defVal !== "-" ? Number(defVal) : null;
+                                        return (
+                                          <td key={`def-${g.classId}`} style={{
+                                            padding: "0 10px", borderBottom: GRILLA.rowBottomBorder,
+                                            background: "transparent",
+                                            textAlign: "center", fontSize: 13, fontWeight: 600,
+                                            color: defNum !== null && defNum < 70 ? "#dc2626" : cellTextColor,
+                                            borderLeft: (isSingleItemView && gi === 0) ? undefined : "1px solid var(--stroke)",
+                                          }}>
+                                            {defVal}
+                                          </td>
+                                        );
+                                      })
+                                    : classGroups.flatMap((g, gi) => {
+                                        const isFirstClass = gi === 0;
+                                        const cells = g.evals.map((ev, ei) => {
+                                          const key              = gradeCellKey(st.id, ev.id);
+                                          const enabledForCourse = isEvaluationApplicableToStudent(st, ev);
+                                          const gradeRecord      = gGrades.find(r => r.id_student === st.id && r.id_exam === ev.id);
+                                          const attempts         = gradeRecord?.attempts ?? 0;
+                                          const gradeVal         = gradeRecord?.grade ?? null;
+                                          const hasClosedGrade   = !!gradeRecord?.finished_at;
+                                          const noPresentó       = enabledForCourse && hasClosedGrade && attempts === 0 && gradeVal === 0;
+                                          const pendingPlaceholder = isExamEvaluation(ev) ? "—" : "+";
+                                          const draftVal         = gradeDraft[key] ?? "";
 
-                                    return (
-                                      <td key={`${ev.id}-grade`} style={{
-                                        padding: 0,
-                                        borderBottom: GRILLA.rowBottomBorder,
-                                        background: enabledForCourse ? "transparent" : disabledCellBg,
-                                        position: "relative",
-                                        borderLeft: isSingleItemView ? undefined : "1px solid var(--stroke)",
-                                      }}>
-                                        {noPresentó ? (
-                                          <div style={{ display: "flex", alignItems: "center", justifyContent: "left", height: 26, padding: "0 6px" }}>
-                                            <span style={{
-                                              display: "inline-block", padding: "2px 4px", borderRadius: 4,
-                                              fontSize: 8, fontWeight: 700, letterSpacing: 0.3,
-                                              background: isDark ? "rgba(239,68,68,0.15)" : "rgba(239,68,68,0.1)",
-                                              color: isDark ? "#fca5a5" : "#dc2626",
-                                              border: isDark ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(239,68,68,0.25)",
-                                              whiteSpace: "nowrap",
+                                          return (
+                                            <td key={`${ev.id}-grade`} style={{
+                                              padding: 0, borderBottom: GRILLA.rowBottomBorder,
+                                              background: enabledForCourse ? "transparent" : disabledCellBg,
+                                              position: "relative",
+                                              borderLeft: (!isSingleItemView && ei === 0 && !isFirstClass) ? "1px solid var(--stroke)" : undefined,
                                             }}>
-                                              No Presentó
-                                            </span>
-                                          </div>
-                                        ) : (
-                                          <input
-                                            className="input"
-                                            readOnly
-                                            value={draftVal}
-                                            placeholder={enabledForCourse ? pendingPlaceholder : "-"}
-                                            style={{
-                                              width: "100%", minWidth: 0, height: 26,
-                                              border: "none", borderRadius: 0, outline: "none",
-                                              background: "transparent", boxShadow: "none",
-                                              padding: "0 10px", fontSize: 13, lineHeight: 1,
-                                              fontWeight: 500,
-                                              color: enabledForCourse
-                                                ? (hasClosedGrade && draftVal !== "" && Number(draftVal) < 70 ? "#dc2626" : cellTextColor)
-                                                : isDark ? "var(--muted)" : "#94a3b8",
-                                              cursor: "default",
-                                              opacity: enabledForCourse ? 1 : 0.6,
-                                            }}
-                                          />
-                                        )}
-                                      </td>
-                                    );
-                                  })}
+                                              {noPresentó ? (
+                                                <div style={{ display: "flex", alignItems: "center", justifyContent: "left", height: 26, padding: "0 6px" }}>
+                                                  <span style={{
+                                                    display: "inline-block", padding: "2px 4px", borderRadius: 4,
+                                                    fontSize: 8, fontWeight: 700, letterSpacing: 0.3,
+                                                    background: isDark ? "rgba(239,68,68,0.15)" : "rgba(239,68,68,0.1)",
+                                                    color: isDark ? "#fca5a5" : "#dc2626",
+                                                    border: isDark ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(239,68,68,0.25)",
+                                                    whiteSpace: "nowrap",
+                                                  }}>
+                                                    No Presentó
+                                                  </span>
+                                                </div>
+                                              ) : (
+                                                <input
+                                                  className="input"
+                                                  readOnly
+                                                  value={draftVal}
+                                                  placeholder={enabledForCourse ? pendingPlaceholder : "-"}
+                                                  style={{
+                                                    width: "100%", minWidth: 0, height: 26,
+                                                    border: "none", borderRadius: 0, outline: "none",
+                                                    background: "transparent", boxShadow: "none",
+                                                    padding: "0 10px", fontSize: 13, lineHeight: 1,
+                                                    fontWeight: g.hasMultiple ? 400 : 600,
+                                                    color: enabledForCourse
+                                                      ? (g.hasMultiple
+                                                          ? "#94a3b8"
+                                                          : (hasClosedGrade && draftVal !== "" && Number(draftVal) < 70 ? "#dc2626" : cellTextColor))
+                                                      : isDark ? "var(--muted)" : "#94a3b8",
+                                                    cursor: "default",
+                                                    opacity: enabledForCourse ? 1 : 0.6,
+                                                  }}
+                                                />
+                                              )}
+                                            </td>
+                                          );
+                                        });
+
+                                        if (g.hasMultiple) {
+                                          const defVal = computeDefinitiva(st, g.evals);
+                                          const defNum = defVal !== "-" ? Number(defVal) : null;
+                                          cells.push(
+                                            <td key={`def-${g.classId}`} style={{
+                                              padding: "0 10px", borderBottom: GRILLA.rowBottomBorder,
+                                              background: "transparent",
+                                              textAlign: "center", fontSize: 13, fontWeight: 600,
+                                              color: defNum !== null && defNum < 70 ? "#dc2626" : cellTextColor,
+                                            }}>
+                                              {defVal}
+                                            </td>
+                                          );
+                                        }
+                                        return cells;
+                                      })
+                                  }
 
                                 </tr>
                               );
