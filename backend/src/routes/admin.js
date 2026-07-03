@@ -868,6 +868,7 @@ adminRouter.get("/courses-by-class", requireAuth, requireAdmin, async (req, res)
 });
 
 adminRouter.get("/evaluations", requireAuth, requireAdmin, async (req, res) => {
+  res.set("Cache-Control", "no-store");
   try {
     const classId = toInt(req.query.class_id);
     const level = toInt(req.query.level);

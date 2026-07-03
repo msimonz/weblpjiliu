@@ -93,17 +93,17 @@ SELECT
   JOIN public.evaluation_type   et ON et.id = e.id_type
   JOIN public.class_teacher     ct ON ct.id_class = e.id_class
   JOIN public.anio_lectivo      al ON al.year = co.year 
-  where c.level = 1
+  where c.level <  8
   AND al.activo = true  
   AND ct.id_course = e.id_course
-  --AND ct.id_teacher in ( select id from users where name like '%Liliana%')
+  AND ct.id_teacher in ( select id from users where name like '%ancel%')
   ORDER BY co.year DESC, m.name, c.name, e.created_at;
 
 
 select * from grades where  id_student in ( select id from users where name like '%Alexander%')
 
   
-
+select id from users where name like '%ancel%'
 
 
 
