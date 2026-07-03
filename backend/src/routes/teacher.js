@@ -422,6 +422,7 @@ teacherRouter.post("/evaluation-types", requireAuth, requireTeacher, async (req,
  * GET /api/teacher/evaluations
  */
 teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) => {
+  res.set("Cache-Control", "no-store");
   try {
     const teacherId = req.auth.user.id;
     const classId = req.query.class_id ? Number(req.query.class_id) : null;
@@ -457,9 +458,14 @@ teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) 
     if (error) return res.status(500).json({ error: error.message });
 
     // Also include group evaluations for groups the teacher is assigned to,
-    // regardless of who created them.
+    // regardless of who created them. When a specific class is requested,
+    // scope this to that class's own group (if any) instead of every group
+    // the teacher teaches — otherwise unrelated classes' evaluations leak in.
     const teacherClasses = await getTeacherClasses(teacherId, year);
-    const groupIds = [...new Set(teacherClasses.map((c) => c.id_group).filter(Boolean))];
+    const relevantClasses = classId
+      ? teacherClasses.filter((c) => Number(c.id) === classId)
+      : teacherClasses;
+    const groupIds = [...new Set(relevantClasses.map((c) => c.id_group).filter(Boolean))];
 
     let groupData = [];
     if (groupIds.length > 0) {
