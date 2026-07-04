@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { setToken, signOut } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { getRoles, roleLabelFromRole, type RoleCode } from "@/lib/roles";
 import Header from "@/components/Header";
@@ -15,8 +15,7 @@ export default function LoginPage() {
   const [logoUrl, setLogoUrl] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    const { data } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
-    setLogoUrl(data.publicUrl);
+    setLogoUrl("/logo.png");
   }, []);
 
   const [cedula, setCedula] = useState("");
@@ -69,17 +68,25 @@ export default function LoginPage() {
     try {
       const email = await resolveEmailByCedula(c);
 
-      const { error: authErr } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (authErr) throw new Error("Cédula o contraseña incorrectas");
+      let loginRes;
+      try {
+        loginRes = await apiFetch("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+          requireAuth: false,
+          skipAuthRedirect: true,
+        });
+      } catch {
+        throw new Error("Cédula o contraseña incorrectas");
+      }
+
+      setToken(loginRes.token);
 
       const info = await apiFetch("/api/auth/me");
       const roles = getRoles(info);
 
       if (!roles.includes(rolePick)) {
-        await supabase.auth.signOut();
+        signOut();
         throw new Error(`No tienes el rol "${roleLabelFromRole(rolePick)}" asignado.`);
       }
 
@@ -127,9 +134,12 @@ export default function LoginPage() {
     setSendingReset(true);
 
     try {
-      const redirectTo = `${window.location.origin}/update-password`;
-      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-      if (resetErr) throw resetErr;
+      await apiFetch("/api/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+        requireAuth: false,
+        skipAuthRedirect: true,
+      });
       setShowForgotModal(false);
     } catch (e) {
       setResetEmailError((e as { message?: string })?.message || "No fue posible enviar el correo de recuperación");

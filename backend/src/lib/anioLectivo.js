@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "../supabase.js";
+import { query } from "../db.js";
 
 // ─────────────────────────────────────────────
 // Cache en memoria: año lectivo activo
@@ -6,17 +6,27 @@ import { supabaseAdmin } from "../supabase.js";
 let _cache = { year: null, loadedAt: null };
 const TTL_MS = 5 * 60 * 1000; // 5 minutos
 
+// Tablas válidas para requireAnioVigenteForRecord (whitelist: el nombre
+// se interpola en el SQL, nunca aceptar uno que no esté acá).
+const ALLOWED_RECORD_TABLES = new Set([
+  "course",
+  "evaluation_type",
+  "level",
+  "module",
+  "group",
+  "class",
+]);
+
 export async function getAnioLectivoVigente() {
   const now = Date.now();
   if (_cache.year && now - _cache.loadedAt < TTL_MS) return _cache.year;
 
-  const { data, error } = await supabaseAdmin
-    .from("anio_lectivo")
-    .select("year")
-    .eq("activo", true)
-    .single();
+  const { rows } = await query(
+    `SELECT year FROM anio_lectivo WHERE activo = true LIMIT 1`
+  );
+  const data = rows[0];
 
-  if (error || !data) throw new Error("No hay año lectivo activo configurado");
+  if (!data) throw new Error("No hay año lectivo activo configurado");
   _cache = { year: data.year, loadedAt: now };
   return _cache.year;
 }
@@ -33,13 +43,13 @@ export function invalidarCacheAnioLectivo() {
 export async function requireAnioVigenteForCourse(id_course) {
   const vigente = await getAnioLectivoVigente();
 
-  const { data, error } = await supabaseAdmin
-    .from("course")
-    .select("year")
-    .eq("id", id_course)
-    .single();
+  const { rows } = await query(
+    `SELECT year FROM course WHERE id = $1 LIMIT 1`,
+    [id_course]
+  );
+  const data = rows[0];
 
-  if (error || !data) throw { status: 404, message: "Curso no encontrado" };
+  if (!data) throw { status: 404, message: "Curso no encontrado" };
 
   if (data.year !== vigente) {
     throw {
@@ -54,15 +64,19 @@ export async function requireAnioVigenteForCourse(id_course) {
 // (level, module, group, class, evaluation_type)
 // ─────────────────────────────────────────────
 export async function requireAnioVigenteForRecord(table, id) {
+  if (!ALLOWED_RECORD_TABLES.has(table)) {
+    throw new Error(`requireAnioVigenteForRecord: tabla no permitida "${table}"`);
+  }
+
   const vigente = await getAnioLectivoVigente();
 
-  const { data, error } = await supabaseAdmin
-    .from(table)
-    .select("year")
-    .eq("id", id)
-    .single();
+  const { rows } = await query(
+    `SELECT year FROM "${table}" WHERE id = $1 LIMIT 1`,
+    [id]
+  );
+  const data = rows[0];
 
-  if (error || !data) throw { status: 404, message: `${table}: registro no encontrado` };
+  if (!data) throw { status: 404, message: `${table}: registro no encontrado` };
 
   if (data.year !== vigente) {
     throw {

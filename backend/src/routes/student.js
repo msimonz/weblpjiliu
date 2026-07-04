@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middlewares/auth.js";
-import { supabaseAdmin } from "../supabase.js";
+import { query } from "../db.js";
 import { requireAnioVigenteForCourse, handleYearError } from "../lib/anioLectivo.js";
 import { closeExpiredExams } from "../lib/examClosure.js";
 
@@ -17,16 +17,12 @@ async function getStudentCourse(req, res) {
     return null;
   }
 
-  const { data: course, error } = await supabaseAdmin
-    .from("course")
-    .select("id,year,level,name")
-    .eq("id", courseId)
-    .maybeSingle();
+  const { rows } = await query(
+    `SELECT id, year, level, name FROM course WHERE id = $1 LIMIT 1`,
+    [courseId]
+  );
+  const course = rows[0];
 
-  if (error) {
-    res.status(500).json({ error: error.message });
-    return null;
-  }
   if (!course?.id) {
     res.status(404).json({ error: "El course del usuario no existe" });
     return null;
@@ -38,6 +34,18 @@ async function getStudentCourse(req, res) {
 // ✅ helper: valida level solicitado vs level real del estudiante
 function checkLevelAllowed(level, course) {
   return Number(level) === Number(course.level);
+}
+
+async function getHistoryCourse(userId, requestedCourseId) {
+  const { rows } = await query(
+    `SELECT uh.id_course, c.id, c.name, c.level, c.year
+     FROM user_history uh
+     JOIN course c ON c.id = uh.id_course
+     WHERE uh.id_student = $1 AND uh.id_course = $2
+     LIMIT 1`,
+    [userId, requestedCourseId]
+  );
+  return rows[0] || null;
 }
 
 /**
@@ -67,17 +75,14 @@ studentRouter.get("/classes", requireAuth, async (req, res) => {
     });
   }
 
-  const { data, error } = await supabaseAdmin
-    .from("class")
-    .select("id,name,level")
-    .eq("level", level)
-    .eq("year", course.year)
-    .ilike("name", `%${q}%`)
-    .order("name", { ascending: true })
-    .limit(10);
+  const { rows } = await query(
+    `SELECT id, name, level FROM class
+     WHERE level = $1 AND year = $2 AND name ILIKE $3
+     ORDER BY name ASC LIMIT 10`,
+    [level, course.year, `%${q}%`]
+  );
 
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ blocked: false, items: data || [], course });
+  return res.json({ blocked: false, items: rows, course });
 });
 
 /**
@@ -86,13 +91,10 @@ studentRouter.get("/classes", requireAuth, async (req, res) => {
  */
 studentRouter.get("/anio-lectivo", requireAuth, async (req, res) => {
   try {
-    const { data, error } = await supabaseAdmin
-      .from("anio_lectivo")
-      .select("year, nombre, activo")
-      .order("year", { ascending: false });
-
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ items: data || [] });
+    const { rows } = await query(
+      `SELECT year, nombre, activo FROM anio_lectivo ORDER BY year DESC`
+    );
+    return res.json({ items: rows });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error obteniendo años lectivos" });
   }
@@ -108,18 +110,19 @@ studentRouter.get("/my-courses", requireAuth, async (req, res) => {
   const course = await getStudentCourse(req, res);
   if (!course) return;
 
-  const { data: histRows, error: histErr } = await supabaseAdmin
-    .from("user_history")
-    .select("id_course, course:course(id,name,level,year)")
-    .eq("id_student", userId);
-
-  if (histErr) return res.status(500).json({ error: histErr.message });
+  const { rows: histRows } = await query(
+    `SELECT c.id, c.name, c.level, c.year
+     FROM user_history uh
+     JOIN course c ON c.id = uh.id_course
+     WHERE uh.id_student = $1`,
+    [userId]
+  );
 
   const coursesMap = new Map();
   coursesMap.set(course.id, course);
-  for (const h of histRows || []) {
-    if (h.course?.id && !coursesMap.has(h.course.id)) {
-      coursesMap.set(h.course.id, h.course);
+  for (const h of histRows) {
+    if (h.id && !coursesMap.has(h.id)) {
+      coursesMap.set(h.id, h);
     }
   }
 
@@ -143,13 +146,8 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   // Resolver curso activo: actual o uno del historial del estudiante
   let activeCourse = studentCourse;
   if (requestedCourseId && requestedCourseId !== studentCourse.id) {
-    const { data: histEntry } = await supabaseAdmin
-      .from("user_history")
-      .select("id_course, course:course(id,name,level,year)")
-      .eq("id_student", userId)
-      .eq("id_course", requestedCourseId)
-      .maybeSingle();
-    if (histEntry?.course?.id) activeCourse = histEntry.course;
+    const histEntry = await getHistoryCourse(userId, requestedCourseId);
+    if (histEntry?.id) activeCourse = histEntry;
   }
 
   const level = Number(activeCourse.level);
@@ -161,16 +159,16 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   }
 
   // 1) Traer TODAS las materias del nivel con módulo y grupo
-  const { data: classRows, error: classErr } = await supabaseAdmin
-    .from("class")
-    .select("id,name,level,id_module,id_group,orden,module:module(id,name)")
-    .eq("level", level)
-    .eq("year", activeCourse.year)
-    .order("name", { ascending: true });
+  const { rows: classRows } = await query(
+    `SELECT c.id, c.name, c.level, c.id_module, c.id_group, c.orden, m.id AS module_id, m.name AS module_name
+     FROM class c
+     LEFT JOIN module m ON m.id = c.id_module
+     WHERE c.level = $1 AND c.year = $2
+     ORDER BY c.name ASC`,
+    [level, activeCourse.year]
+  );
 
-  if (classErr) return res.status(500).json({ error: classErr.message });
-
-  const classes = classRows || [];
+  const classes = classRows;
 
   if (classes.length === 0) {
     return res.json({
@@ -183,8 +181,11 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   const groupIds = [...new Set(classes.map(c => c.id_group).filter(Boolean))];
   let groupNameMap = new Map();
   if (groupIds.length > 0) {
-    const { data: grpData } = await supabaseAdmin.from("group").select("id,name").in("id", groupIds);
-    for (const g of (grpData || [])) groupNameMap.set(Number(g.id), g.name);
+    const { rows: grpData } = await query(
+      `SELECT id, name FROM "group" WHERE id = ANY($1::bigint[])`,
+      [groupIds]
+    );
+    for (const g of grpData) groupNameMap.set(Number(g.id), g.name);
   }
 
   // 2) Inicializar mapa con TODAS las materias
@@ -196,7 +197,7 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
     byClass.set(classId, {
       class_id: classId,
       name: String(cls.name ?? `Materia ${classId}`),
-      module_name: cls.module?.name ?? null,
+      module_name: cls.module_name ?? null,
       module_id: cls.id_module ? Number(cls.id_module) : null,
       group_id: groupId,
       group_name: groupId ? (groupNameMap.get(groupId) ?? null) : null,
@@ -212,7 +213,7 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
         byGroup.set(groupId, {
           group_id: groupId,
           group_name: groupNameMap.get(groupId) ?? `Grupo ${groupId}`,
-          module_name: cls.module?.name ?? null,
+          module_name: cls.module_name ?? null,
           classes: [],
           sum: 0,
           sumPercent: 0,
@@ -229,26 +230,21 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   }
 
   // 3) Traer evaluaciones del curso activo (clase y grupo)
-  const { data: evals, error: evalErr } = await supabaseAdmin
-    .from("evaluation")
-    .select("id,id_class,id_group,id_module,percent")
-    .eq("id_course", activeCourseId);
+  const { rows: evaluations } = await query(
+    `SELECT id, id_class, id_group, id_module, percent FROM evaluation WHERE id_course = $1`,
+    [activeCourseId]
+  );
 
-  if (evalErr) return res.status(500).json({ error: evalErr.message });
-
-  const evaluations = evals || [];
   const evalIds = evaluations.map((e) => Number(e.id));
 
   // 4) Traer notas del estudiante
   let gradeRows = [];
   if (evalIds.length > 0) {
-    const { data: gradesData, error: gradesErr } = await supabaseAdmin
-      .from("grades")
-      .select("id_exam,grade,finished_at,attempts")
-      .eq("id_student", userId)
-      .in("id_exam", evalIds);
-    if (gradesErr) return res.status(500).json({ error: gradesErr.message });
-    gradeRows = gradesData || [];
+    const { rows: gradesData } = await query(
+      `SELECT id_exam, grade, finished_at, attempts FROM grades WHERE id_student = $1 AND id_exam = ANY($2::bigint[])`,
+      [userId, evalIds]
+    );
+    gradeRows = gradesData;
   }
 
   const gradeMap = new Map();
@@ -373,19 +369,17 @@ studentRouter.get("/subjects-summary", requireAuth, async (req, res) => {
   // Count absences for this student in this course
   let absences = 0;
   try {
-    const { data: absSessions } = await supabaseAdmin
-      .from("asistencia_sesion")
-      .select("id")
-      .eq("id_course", activeCourseId);
-    const sesIds = (absSessions || []).map(s => Number(s.id));
+    const { rows: absSessions } = await query(
+      `SELECT id FROM asistencia_sesion WHERE id_course = $1`,
+      [activeCourseId]
+    );
+    const sesIds = absSessions.map(s => Number(s.id));
     if (sesIds.length > 0) {
-      const { count } = await supabaseAdmin
-        .from("asistencia_detalle")
-        .select("*", { count: "exact", head: true })
-        .eq("id_student", userId)
-        .eq("asistio", false)
-        .in("id_sesion", sesIds);
-      absences = count ?? 0;
+      const { rows: countRows } = await query(
+        `SELECT count(*) FROM asistencia_detalle WHERE id_student = $1 AND asistio = false AND id_sesion = ANY($2::bigint[])`,
+        [userId, sesIds]
+      );
+      absences = Number(countRows[0]?.count ?? 0);
     }
   } catch { /* ignorar */ }
 
@@ -418,31 +412,23 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
   // Resolver curso activo: actual o uno del historial del estudiante
   let activeCourse = studentCourse;
   if (requestedCourseId && requestedCourseId !== studentCourse.id) {
-    const { data: histEntry } = await supabaseAdmin
-      .from("user_history")
-      .select("id_course, course:course(id,name,level,year)")
-      .eq("id_student", userId)
-      .eq("id_course", requestedCourseId)
-      .maybeSingle();
-    if (histEntry?.course?.id) activeCourse = histEntry.course;
+    const histEntry = await getHistoryCourse(userId, requestedCourseId);
+    if (histEntry?.id) activeCourse = histEntry;
   }
 
-  const scopeFilters = groupId
-    ? [`id_group.eq.${groupId}`]
-    : [`id_class.eq.${classId}`];
-
   // evaluaciones de esa materia o grupo en el curso activo
-  let evalQuery = supabaseAdmin
-    .from("evaluation")
-    .select("id,title,percent,created_at,id_type,id_teacher,teacher:users!id_teacher(id,name)")
-    .eq("id_course", activeCourse.id)
-    .or(scopeFilters.join(","))
-    .order("created_at", { ascending: true });
-  const { data: evals, error: evalErr } = await evalQuery;
+  const scopeColumn = groupId ? "id_group" : "id_class";
+  const scopeValue  = groupId ? groupId : classId;
 
-  if (evalErr) return res.status(500).json({ error: evalErr.message });
+  const { rows: evaluations } = await query(
+    `SELECT ev.id, ev.title, ev.percent, ev.created_at, ev.id_type, ev.id_teacher, t.name AS teacher_name
+     FROM evaluation ev
+     LEFT JOIN users t ON t.id = ev.id_teacher
+     WHERE ev.id_course = $1 AND ev.${scopeColumn} = $2
+     ORDER BY ev.created_at ASC`,
+    [activeCourse.id, scopeValue]
+  );
 
-  const evaluations = evals || [];
   if (evaluations.length === 0) {
     return res.json({ blocked: false, items: [], weighted: null, course: activeCourse });
   }
@@ -466,54 +452,51 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
   const typeMap = new Map();
 
   if (typeIds.length > 0) {
-    const { data: typeRows, error: typeErr } = await supabaseAdmin
-      .from("evaluation_type")
-      .select("id,type")
-      .in("id", typeIds);
+    const { rows: typeRows } = await query(
+      `SELECT id, type FROM evaluation_type WHERE id = ANY($1::bigint[])`,
+      [typeIds]
+    );
 
-    if (typeErr) return res.status(500).json({ error: typeErr.message });
-
-    for (const t of typeRows || []) {
+    for (const t of typeRows) {
       typeMap.set(String(t.id), t.type);
     }
   }
 
   // Auto-cierre: cerrar exámenes en progreso cuyo tiempo ya expiró
-  const { data: rtaEnProgreso } = await supabaseAdmin
-    .from("rta_examen")
-    .select("id, id_evaluation, iniciado_at, respuestas, evaluation:evaluation(tiempo_minutos)")
-    .eq("id_student", userId)
-    .in("id_evaluation", evalIds)
-    .is("finalizado_at", null)
-    .not("iniciado_at", "is", null);
+  const { rows: rtaEnProgreso } = await query(
+    `SELECT r.id, r.id_evaluation, r.iniciado_at, r.respuestas, ev.tiempo_minutos
+     FROM rta_examen r
+     JOIN evaluation ev ON ev.id = r.id_evaluation
+     WHERE r.id_student = $1 AND r.id_evaluation = ANY($2::bigint[])
+       AND r.finalizado_at IS NULL AND r.iniciado_at IS NOT NULL`,
+    [userId, evalIds]
+  );
 
-  for (const r of (rtaEnProgreso || [])) {
-    if (isTimeExpired(r.iniciado_at, r.evaluation?.tiempo_minutos)) {
+  for (const r of rtaEnProgreso) {
+    if (isTimeExpired(r.iniciado_at, r.tiempo_minutos)) {
       await autoCloseRta(r.id, userId, r.id_evaluation, r.respuestas || []);
     }
   }
 
-  const { data: gradeRows, error: gradesErr } = await supabaseAdmin
-    .from("grades")
-    .select("id_exam,grade,finished_at,attempts,created_at,updated_at")
-    .eq("id_student", userId)
-    .in("id_exam", evalIds);
-
-  if (gradesErr) return res.status(500).json({ error: gradesErr.message });
+  const { rows: gradeRows } = await query(
+    `SELECT id_exam, grade, finished_at, attempts, created_at, updated_at FROM grades
+     WHERE id_student = $1 AND id_exam = ANY($2::bigint[])`,
+    [userId, evalIds]
+  );
 
   const gradeMap = new Map();
-  for (const g of gradeRows || []) gradeMap.set(g.id_exam, g);
+  for (const g of gradeRows) gradeMap.set(g.id_exam, g);
 
   // Obtener fecha_fin y fecha_limite_ver por evaluación desde examen_programacion
-  const { data: schedRows } = await supabaseAdmin
-    .from("examen_programacion")
-    .select("id_evaluation, fecha_fin, fecha_limite_ver")
-    .eq("id_course", activeCourse.id)
-    .in("id_evaluation", evalIds);
+  const { rows: schedRows } = await query(
+    `SELECT id_evaluation, fecha_fin, fecha_limite_ver FROM examen_programacion
+     WHERE id_course = $1 AND id_evaluation = ANY($2::bigint[])`,
+    [activeCourse.id, evalIds]
+  );
 
   const fechaFinMap = new Map();
   const fechaLimiteVerMap = new Map();
-  for (const s of schedRows || []) {
+  for (const s of schedRows) {
     fechaFinMap.set(Number(s.id_evaluation), s.fecha_fin ?? null);
     fechaLimiteVerMap.set(Number(s.id_evaluation), s.fecha_limite_ver ?? null);
   }
@@ -537,7 +520,7 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
       fecha_fin: fechaFinMap.get(Number(ev.id)) ?? null,
       fecha_limite_ver: fechaLimiteVerMap.get(Number(ev.id)) ?? null,
       teacher_id: ev.id_teacher ?? null,
-      teacher_name: ev.teacher?.name ?? null,
+      teacher_name: ev.teacher_name ?? null,
     };
   });
 
@@ -563,24 +546,25 @@ studentRouter.get("/grades", requireAuth, async (req, res) => {
 // ─── BLOQUE 3 — Exámenes Online (Estudiante) ────────────────────────────────
 
 async function resolveExamenTypeId(year) {
-  let q = supabaseAdmin.from("evaluation_type").select("id").eq("type", "Examen");
-  if (year) q = q.eq("year", year);
-  const { data } = await q.maybeSingle();
-  return data?.id ?? null;
+  let sql = `SELECT id FROM evaluation_type WHERE type = $1`;
+  const params = ["Examen"];
+  if (year) { params.push(year); sql += ` AND year = $${params.length}`; }
+  sql += ` LIMIT 1`;
+  const { rows } = await query(sql, params);
+  return rows[0]?.id ?? null;
 }
 
 async function getActiveSchedule(id_evaluation, id_course) {
   const now = new Date().toISOString();
-  const { data } = await supabaseAdmin
-    .from("examen_programacion")
-    .select("id")
-    .eq("id_evaluation", id_evaluation)
-    .eq("id_course", id_course)
-    .eq("habilitado", true)
-    .or(`fecha_ini.is.null,fecha_ini.lte.${now}`)
-    .or(`fecha_fin.is.null,fecha_fin.gte.${now}`)
-    .maybeSingle();
-  return data;
+  const { rows } = await query(
+    `SELECT id FROM examen_programacion
+     WHERE id_evaluation = $1 AND id_course = $2 AND habilitado = true
+       AND (fecha_ini IS NULL OR fecha_ini <= $3)
+       AND (fecha_fin IS NULL OR fecha_fin >= $3)
+     LIMIT 1`,
+    [id_evaluation, id_course, now]
+  );
+  return rows[0] || null;
 }
 
 function isTimeExpired(iniciado_at, tiempo_minutos) {
@@ -593,23 +577,22 @@ function isTimeExpired(iniciado_at, tiempo_minutos) {
 async function autoCloseRta(rtaId, userId, id_evaluation, respuestas) {
   const finalizadoAt = new Date().toISOString();
 
-  const { data: preguntas } = await supabaseAdmin
-    .from("examen_detalle")
-    .select("id, tipo, puntos, respuesta_correcta")
-    .eq("id_evaluation", id_evaluation);
+  const { rows: preguntas } = await query(
+    `SELECT id, tipo, puntos, respuesta_correcta FROM examen_detalle WHERE id_evaluation = $1`,
+    [id_evaluation]
+  );
 
-  const calificacion = gradeExam(preguntas || [], respuestas);
+  const calificacion = gradeExam(preguntas, respuestas);
 
   await Promise.all([
-    supabaseAdmin
-      .from("grades")
-      .update({ grade: calificacion, finished_at: finalizadoAt, attempts: 1 })
-      .eq("id_exam", id_evaluation)
-      .eq("id_student", userId),
-    supabaseAdmin
-      .from("rta_examen")
-      .update({ calificacion, finalizado_at: finalizadoAt })
-      .eq("id", rtaId),
+    query(
+      `UPDATE grades SET grade = $1, finished_at = $2, attempts = 1 WHERE id_exam = $3 AND id_student = $4`,
+      [calificacion, finalizadoAt, id_evaluation, userId]
+    ),
+    query(
+      `UPDATE rta_examen SET calificacion = $1, finalizado_at = $2 WHERE id = $3`,
+      [calificacion, finalizadoAt, rtaId]
+    ),
   ]);
 
   return { calificacion, finalizado_at: finalizadoAt };
@@ -660,48 +643,46 @@ studentRouter.get("/exam-available", requireAuth, async (req, res) => {
 
   const now = new Date().toISOString();
 
-  const { data: schedules, error: schedErr } = await supabaseAdmin
-    .from("examen_programacion")
-    .select(`
-      id, fecha_ini, fecha_fin, fecha_limite_ver,
-      evaluation:evaluation(
-        id, title, tiempo_minutos, id_class, id_group,
-        class:class(id, name, module:module(id, name)),
-        group:group(id, name)
-      )
-    `)
-    .eq("id_course", course.id)
-    .eq("habilitado", true)
-    .or(`fecha_ini.is.null,fecha_ini.lte.${now}`)
-    .or(`fecha_fin.is.null,fecha_fin.gte.${now}`);
+  const { rows: schedules } = await query(
+    `SELECT ep.id, ep.fecha_ini, ep.fecha_fin, ep.fecha_limite_ver,
+            ev.id AS ev_id, ev.title AS ev_title, ev.tiempo_minutos AS ev_tiempo_minutos,
+            ev.id_class AS ev_id_class, ev.id_group AS ev_id_group,
+            m.name AS module_name,
+            c.name AS class_name_from_class,
+            g.name AS group_name
+     FROM examen_programacion ep
+     JOIN evaluation ev ON ev.id = ep.id_evaluation
+     LEFT JOIN class c ON c.id = ev.id_class
+     LEFT JOIN module m ON m.id = c.id_module
+     LEFT JOIN "group" g ON g.id = ev.id_group
+     WHERE ep.id_course = $1 AND ep.habilitado = true
+       AND (ep.fecha_ini IS NULL OR ep.fecha_ini <= $2)
+       AND (ep.fecha_fin IS NULL OR ep.fecha_fin >= $2)`,
+    [course.id, now]
+  );
 
-  if (schedErr) return res.status(500).json({ error: schedErr.message });
+  if (schedules.length === 0) return res.json({ items: [], course });
 
-  const validSchedules = (schedules || []).filter((s) => s.evaluation?.id);
-  if (validSchedules.length === 0) return res.json({ items: [], course });
+  const evalIds = schedules.map((s) => s.ev_id);
 
-  const evalIds = validSchedules.map((s) => s.evaluation.id);
+  const { rows: rtaRows } = await query(
+    `SELECT id_evaluation, finalizado_at FROM rta_examen WHERE id_student = $1 AND id_evaluation = ANY($2::bigint[])`,
+    [userId, evalIds]
+  );
 
-  const { data: rtaRows } = await supabaseAdmin
-    .from("rta_examen")
-    .select("id_evaluation, finalizado_at")
-    .eq("id_student", userId)
-    .in("id_evaluation", evalIds);
+  const rtaMap = new Map(rtaRows.map((r) => [Number(r.id_evaluation), r]));
 
-  const rtaMap = new Map((rtaRows || []).map((r) => [Number(r.id_evaluation), r]));
-
-  const items = validSchedules.map((s) => {
-    const ev = s.evaluation;
-    const rta = rtaMap.get(Number(ev.id));
+  const items = schedules.map((s) => {
+    const rta = rtaMap.get(Number(s.ev_id));
     return {
       id_programacion: s.id,
-      id_evaluation: ev.id,
-      title: ev.title,
-      tiempo_minutos: ev.tiempo_minutos,
-      class_id: ev.id_class ?? null,
-      group_id: ev.id_group ?? null,
-      class_name: ev.class?.name ?? ev.group?.name ?? null,
-      module_name: ev.class?.module?.name ?? null,
+      id_evaluation: s.ev_id,
+      title: s.ev_title,
+      tiempo_minutos: s.ev_tiempo_minutos,
+      class_id: s.ev_id_class ?? null,
+      group_id: s.ev_id_group ?? null,
+      class_name: s.class_name_from_class ?? s.group_name ?? null,
+      module_name: s.module_name ?? null,
       fecha_ini: s.fecha_ini,
       fecha_fin: s.fecha_fin,
       fecha_limite_ver: s.fecha_limite_ver ?? null,
@@ -726,41 +707,34 @@ studentRouter.get("/exam/:id_evaluation", requireAuth, async (req, res) => {
   const examenTypeId = await resolveExamenTypeId(course.year);
   if (!examenTypeId) return res.status(500).json({ error: "Tipo Examen no configurado" });
 
-  const { data: ev, error: evErr } = await supabaseAdmin
-    .from("evaluation")
-    .select("id, title, tiempo_minutos, id_type")
-    .eq("id", id_evaluation)
-    .maybeSingle();
-
-  if (evErr) return res.status(500).json({ error: evErr.message });
+  const { rows: evRows } = await query(
+    `SELECT id, title, tiempo_minutos, id_type FROM evaluation WHERE id = $1 LIMIT 1`,
+    [id_evaluation]
+  );
+  const ev = evRows[0];
   if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
   if (ev.id_type !== examenTypeId) return res.status(400).json({ error: "No es de tipo Examen" });
 
   const sched = await getActiveSchedule(id_evaluation, course.id);
   if (!sched?.id) return res.status(403).json({ error: "Examen no disponible para tu curso" });
 
-  const { data: rta } = await supabaseAdmin
-    .from("rta_examen")
-    .select("id, iniciado_at, finalizado_at, respuestas, pregunta_actual")
-    .eq("id_student", userId)
-    .eq("id_evaluation", id_evaluation)
-    .maybeSingle();
+  const { rows: rtaRows } = await query(
+    `SELECT id, iniciado_at, finalizado_at, respuestas, pregunta_actual FROM rta_examen
+     WHERE id_student = $1 AND id_evaluation = $2 LIMIT 1`,
+    [userId, id_evaluation]
+  );
+  const rta = rtaRows[0];
 
   if (rta?.finalizado_at) return res.status(403).json({ error: "Ya has rendido este examen" });
 
-  const { data: preguntas, error: pregErr } = await supabaseAdmin
-    .from("examen_detalle")
-    .select("id, orden, tipo, enunciado, puntos, opciones")
-    .eq("id_evaluation", id_evaluation)
-    .order("orden", { ascending: true });
+  const { rows: preguntas } = await query(
+    `SELECT id, orden, tipo, enunciado, puntos, opciones FROM examen_detalle
+     WHERE id_evaluation = $1 ORDER BY orden ASC`,
+    [id_evaluation]
+  );
 
-  if (pregErr) return res.status(500).json({ error: pregErr.message });
-
-  const { data: levelRow } = await supabaseAdmin
-    .from("level")
-    .select("name")
-    .eq("id", course.level)
-    .maybeSingle();
+  const { rows: levelRows } = await query(`SELECT name FROM level WHERE id = $1 LIMIT 1`, [course.level]);
+  const levelRow = levelRows[0];
 
   return res.json({
     id_evaluation: ev.id,
@@ -770,7 +744,7 @@ studentRouter.get("/exam/:id_evaluation", requireAuth, async (req, res) => {
     iniciado_at:          rta?.iniciado_at   ?? null,
     respuestas_guardadas: Array.isArray(rta?.respuestas) ? rta.respuestas : [],
     pregunta_actual:      rta?.pregunta_actual ?? 0,
-    preguntas: preguntas || [],
+    preguntas,
     level_name: levelRow?.name ?? null,
   });
 });
@@ -788,11 +762,11 @@ studentRouter.post("/exam/:id_evaluation/start", requireAuth, async (req, res) =
   const examenTypeId = await resolveExamenTypeId(course.year);
   if (!examenTypeId) return res.status(500).json({ error: "Tipo Examen no configurado" });
 
-  const { data: ev } = await supabaseAdmin
-    .from("evaluation")
-    .select("id, id_type, tiempo_minutos")
-    .eq("id", id_evaluation)
-    .maybeSingle();
+  const { rows: evRows } = await query(
+    `SELECT id, id_type, tiempo_minutos FROM evaluation WHERE id = $1 LIMIT 1`,
+    [id_evaluation]
+  );
+  const ev = evRows[0];
 
   if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
   if (ev.id_type !== examenTypeId) return res.status(400).json({ error: "No es de tipo Examen" });
@@ -800,12 +774,11 @@ studentRouter.post("/exam/:id_evaluation/start", requireAuth, async (req, res) =
   const sched = await getActiveSchedule(id_evaluation, course.id);
   if (!sched?.id) return res.status(403).json({ error: "Examen no disponible para tu curso" });
 
-  const { data: existingRta } = await supabaseAdmin
-    .from("rta_examen")
-    .select("id, iniciado_at, finalizado_at")
-    .eq("id_student", userId)
-    .eq("id_evaluation", id_evaluation)
-    .maybeSingle();
+  const { rows: existingRtaRows } = await query(
+    `SELECT id, iniciado_at, finalizado_at FROM rta_examen WHERE id_student = $1 AND id_evaluation = $2 LIMIT 1`,
+    [userId, id_evaluation]
+  );
+  const existingRta = existingRtaRows[0];
 
   if (existingRta?.finalizado_at) return res.status(403).json({ error: "Ya has rendido este examen" });
 
@@ -815,29 +788,21 @@ studentRouter.post("/exam/:id_evaluation/start", requireAuth, async (req, res) =
   }
 
   // Asegurar fila en grades (requerido por FK de rta_examen)
-  const { error: gradesErr } = await supabaseAdmin
-    .from("grades")
-    .upsert(
-      { id_exam: id_evaluation, id_student: userId, grade: 0 },
-      { onConflict: "id_exam,id_student", ignoreDuplicates: true }
-    );
-
-  if (gradesErr) return res.status(500).json({ error: gradesErr.message });
+  await query(
+    `INSERT INTO grades (id_exam, id_student, grade) VALUES ($1, $2, 0)
+     ON CONFLICT (id_exam, id_student) DO NOTHING`,
+    [id_evaluation, userId]
+  );
 
   const iniciadoAt = new Date().toISOString();
 
-  const { data: rta, error: rtaErr } = await supabaseAdmin
-    .from("rta_examen")
-    .insert({
-      id_student: userId,
-      id_evaluation,
-      id_programacion: sched.id,
-      iniciado_at: iniciadoAt,
-    })
-    .select("id, iniciado_at")
-    .single();
-
-  if (rtaErr) return res.status(500).json({ error: rtaErr.message });
+  const { rows: rtaRows } = await query(
+    `INSERT INTO rta_examen (id_student, id_evaluation, id_programacion, iniciado_at)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, iniciado_at`,
+    [userId, id_evaluation, sched.id, iniciadoAt]
+  );
+  const rta = rtaRows[0];
 
   return res.json({ iniciado_at: rta.iniciado_at, id_programacion: sched.id });
 });
@@ -853,21 +818,17 @@ studentRouter.post("/exam/:id_evaluation/save-answer", requireAuth, async (req, 
   if (id_pregunta == null)  return res.status(400).json({ error: "id_pregunta requerido" });
   if (pregunta_idx == null) return res.status(400).json({ error: "pregunta_idx requerido" });
 
-  const [{ data: rta, error: rtaErr }, { data: ev }] = await Promise.all([
-    supabaseAdmin
-      .from("rta_examen")
-      .select("id, respuestas, finalizado_at, iniciado_at")
-      .eq("id_student", userId)
-      .eq("id_evaluation", id_evaluation)
-      .maybeSingle(),
-    supabaseAdmin
-      .from("evaluation")
-      .select("tiempo_minutos")
-      .eq("id", id_evaluation)
-      .maybeSingle(),
+  const [{ rows: rtaRows }, { rows: evRows }] = await Promise.all([
+    query(
+      `SELECT id, respuestas, finalizado_at, iniciado_at FROM rta_examen
+       WHERE id_student = $1 AND id_evaluation = $2 LIMIT 1`,
+      [userId, id_evaluation]
+    ),
+    query(`SELECT tiempo_minutos FROM evaluation WHERE id = $1 LIMIT 1`, [id_evaluation]),
   ]);
+  const rta = rtaRows[0];
+  const ev = evRows[0];
 
-  if (rtaErr) return res.status(500).json({ error: rtaErr.message });
   if (!rta?.id)         return res.status(400).json({ error: "El examen no fue iniciado" });
   if (rta.finalizado_at) return res.status(403).json({ error: "El examen ya fue finalizado" });
 
@@ -876,20 +837,18 @@ studentRouter.post("/exam/:id_evaluation/save-answer", requireAuth, async (req, 
   const sinEsta = prev.filter(r => Number(r.id_pregunta) !== Number(id_pregunta));
   const updated = [...sinEsta, { id_pregunta: Number(id_pregunta), respuesta }];
 
-  const { error: updErr } = await supabaseAdmin
-    .from("rta_examen")
-    .update({ respuestas: updated, pregunta_actual: Number(pregunta_idx) })
-    .eq("id", rta.id);
-
-  if (updErr) return res.status(500).json({ error: updErr.message });
+  await query(
+    `UPDATE rta_examen SET respuestas = $1, pregunta_actual = $2 WHERE id = $3`,
+    [JSON.stringify(updated), Number(pregunta_idx), rta.id]
+  );
 
   // Calificación progresiva: calificar todo lo respondido hasta ahora
-  const { data: preguntas } = await supabaseAdmin
-    .from("examen_detalle")
-    .select("id, tipo, puntos, respuesta_correcta")
-    .eq("id_evaluation", id_evaluation);
+  const { rows: preguntas } = await query(
+    `SELECT id, tipo, puntos, respuesta_correcta FROM examen_detalle WHERE id_evaluation = $1`,
+    [id_evaluation]
+  );
 
-  const calificacion = gradeExam(preguntas || [], updated);
+  const calificacion = gradeExam(preguntas, updated);
 
   // Auto-cierre si el tiempo expiró
   if (isTimeExpired(rta.iniciado_at, ev?.tiempo_minutos)) {
@@ -898,11 +857,10 @@ studentRouter.post("/exam/:id_evaluation/save-answer", requireAuth, async (req, 
   }
 
   // Actualizar nota progresiva sin cerrar el examen
-  await supabaseAdmin
-    .from("grades")
-    .update({ grade: calificacion })
-    .eq("id_exam", id_evaluation)
-    .eq("id_student", userId);
+  await query(
+    `UPDATE grades SET grade = $1 WHERE id_exam = $2 AND id_student = $3`,
+    [calificacion, id_evaluation, userId]
+  );
 
   return res.json({ ok: true, calificacion });
 });
@@ -916,14 +874,12 @@ studentRouter.get("/exam/:id_evaluation/schedule", requireAuth, async (req, res)
   const course = await getStudentCourse(req, res);
   if (!course) return;
 
-  const { data, error } = await supabaseAdmin
-    .from("examen_programacion")
-    .select("fecha_fin, fecha_limite_ver")
-    .eq("id_evaluation", id_evaluation)
-    .eq("id_course", course.id)
-    .maybeSingle();
-
-  if (error) return res.status(500).json({ error: error.message });
+  const { rows } = await query(
+    `SELECT fecha_fin, fecha_limite_ver FROM examen_programacion
+     WHERE id_evaluation = $1 AND id_course = $2 LIMIT 1`,
+    [id_evaluation, course.id]
+  );
+  const data = rows[0];
   if (!data) return res.status(404).json({ error: "Programación no encontrada" });
 
   return res.json({ fecha_fin: data.fecha_fin ?? null, fecha_limite_ver: data.fecha_limite_ver ?? null });
@@ -945,20 +901,20 @@ studentRouter.post("/exam/:id_evaluation/submit", requireAuth, async (req, res) 
   try { await requireAnioVigenteForCourse(course.id); }
   catch (err) { return handleYearError(res, err); }
 
-  const { data: ev } = await supabaseAdmin
-    .from("evaluation")
-    .select("id, tiempo_minutos")
-    .eq("id", id_evaluation)
-    .maybeSingle();
+  const { rows: evRows } = await query(
+    `SELECT id, tiempo_minutos FROM evaluation WHERE id = $1 LIMIT 1`,
+    [id_evaluation]
+  );
+  const ev = evRows[0];
 
   if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
 
-  const { data: rta } = await supabaseAdmin
-    .from("rta_examen")
-    .select("id, iniciado_at, finalizado_at, respuestas")
-    .eq("id_student", userId)
-    .eq("id_evaluation", id_evaluation)
-    .maybeSingle();
+  const { rows: rtaRows } = await query(
+    `SELECT id, iniciado_at, finalizado_at, respuestas FROM rta_examen
+     WHERE id_student = $1 AND id_evaluation = $2 LIMIT 1`,
+    [userId, id_evaluation]
+  );
+  const rta = rtaRows[0];
 
   if (!rta?.id) return res.status(400).json({ error: "El examen no fue iniciado" });
   if (rta.finalizado_at) return res.status(403).json({ error: "Ya has rendido este examen" });
@@ -978,32 +934,25 @@ studentRouter.post("/exam/:id_evaluation/submit", requireAuth, async (req, res) 
   const mergedRespuestas = [...savedMap.values()];
 
   // Traer preguntas con respuesta_correcta para calificar
-  const { data: preguntas, error: pregErr } = await supabaseAdmin
-    .from("examen_detalle")
-    .select("id, tipo, puntos, respuesta_correcta")
-    .eq("id_evaluation", id_evaluation);
+  const { rows: preguntas } = await query(
+    `SELECT id, tipo, puntos, respuesta_correcta FROM examen_detalle WHERE id_evaluation = $1`,
+    [id_evaluation]
+  );
 
-  if (pregErr) return res.status(500).json({ error: pregErr.message });
-
-  const calificacion = gradeExam(preguntas || [], mergedRespuestas);
+  const calificacion = gradeExam(preguntas, mergedRespuestas);
   const finalizadoAt = new Date().toISOString();
 
   // Actualizar grades con la calificación final
-  const { error: gradesUpdErr } = await supabaseAdmin
-    .from("grades")
-    .update({ grade: calificacion, finished_at: finalizadoAt, attempts: 1 })
-    .eq("id_exam", id_evaluation)
-    .eq("id_student", userId);
-
-  if (gradesUpdErr) return res.status(500).json({ error: gradesUpdErr.message });
+  await query(
+    `UPDATE grades SET grade = $1, finished_at = $2, attempts = 1 WHERE id_exam = $3 AND id_student = $4`,
+    [calificacion, finalizadoAt, id_evaluation, userId]
+  );
 
   // Actualizar rta_examen con respuestas finales y resultado
-  const { error: rtaUpdErr } = await supabaseAdmin
-    .from("rta_examen")
-    .update({ respuestas: mergedRespuestas, calificacion, finalizado_at: finalizadoAt })
-    .eq("id", rta.id);
-
-  if (rtaUpdErr) return res.status(500).json({ error: rtaUpdErr.message });
+  await query(
+    `UPDATE rta_examen SET respuestas = $1, calificacion = $2, finalizado_at = $3 WHERE id = $4`,
+    [JSON.stringify(mergedRespuestas), calificacion, finalizadoAt, rta.id]
+  );
 
   return res.json({ calificacion, finalizado_at: finalizadoAt });
 });
@@ -1015,24 +964,21 @@ studentRouter.get("/exam/:id_evaluation/result", requireAuth, async (req, res) =
   const id_evaluation = Number(req.params.id_evaluation);
   if (!id_evaluation) return res.status(400).json({ error: "id_evaluation inválido" });
 
-  const { data: rta, error: rtaErr } = await supabaseAdmin
-    .from("rta_examen")
-    .select("id, respuestas, calificacion, iniciado_at, finalizado_at")
-    .eq("id_student", userId)
-    .eq("id_evaluation", id_evaluation)
-    .maybeSingle();
+  const { rows: rtaRows } = await query(
+    `SELECT id, respuestas, calificacion, iniciado_at, finalizado_at FROM rta_examen
+     WHERE id_student = $1 AND id_evaluation = $2 LIMIT 1`,
+    [userId, id_evaluation]
+  );
+  const rta = rtaRows[0];
 
-  if (rtaErr) return res.status(500).json({ error: rtaErr.message });
   if (!rta?.id) return res.status(404).json({ error: "No se encontró resultado para este examen" });
   if (!rta.finalizado_at) return res.status(400).json({ error: "El examen aún no ha sido finalizado" });
 
-  const { data: preguntas, error: pregErr } = await supabaseAdmin
-    .from("examen_detalle")
-    .select("id, orden, tipo, enunciado, puntos, opciones, respuesta_correcta")
-    .eq("id_evaluation", id_evaluation)
-    .order("orden", { ascending: true });
-
-  if (pregErr) return res.status(500).json({ error: pregErr.message });
+  const { rows: preguntas } = await query(
+    `SELECT id, orden, tipo, enunciado, puntos, opciones, respuesta_correcta FROM examen_detalle
+     WHERE id_evaluation = $1 ORDER BY orden ASC`,
+    [id_evaluation]
+  );
 
   return res.json({
     id_evaluation,
@@ -1040,7 +986,7 @@ studentRouter.get("/exam/:id_evaluation/result", requireAuth, async (req, res) =
     iniciado_at: rta.iniciado_at,
     finalizado_at: rta.finalizado_at,
     respuestas: rta.respuestas,
-    preguntas: preguntas || [],
+    preguntas,
   });
 });
 
@@ -1055,47 +1001,39 @@ studentRouter.get("/absences", requireAuth, async (req, res) => {
 
   let activeCourse = studentCourse;
   if (requestedCourseId && requestedCourseId !== studentCourse.id) {
-    const { data: histEntry } = await supabaseAdmin
-      .from("user_history")
-      .select("id_course, course:course(id,name,level,year)")
-      .eq("id_student", userId)
-      .eq("id_course", requestedCourseId)
-      .maybeSingle();
-    if (histEntry?.course?.id) activeCourse = histEntry.course;
+    const histEntry = await getHistoryCourse(userId, requestedCourseId);
+    if (histEntry?.id) activeCourse = histEntry;
   }
 
   try {
-    const { data: sessions, error: sErr } = await supabaseAdmin
-      .from("asistencia_sesion")
-      .select("id, fecha_clase, class:id_class(name)")
-      .eq("id_course", activeCourse.id)
-      .order("fecha_clase", { ascending: false });
+    const { rows: sessions } = await query(
+      `SELECT s.id, s.fecha_clase, c.name AS class_name
+       FROM asistencia_sesion s
+       LEFT JOIN class c ON c.id = s.id_class
+       WHERE s.id_course = $1
+       ORDER BY s.fecha_clase DESC`,
+      [activeCourse.id]
+    );
 
-    if (sErr) return res.status(500).json({ error: sErr.message });
-
-    const sessionIds = (sessions || []).map(s => Number(s.id));
+    const sessionIds = sessions.map(s => Number(s.id));
     if (sessionIds.length === 0) return res.json({ items: [] });
 
-    const { data: abs, error: aErr } = await supabaseAdmin
-      .from("asistencia_detalle")
-      .select("id_sesion")
-      .eq("id_student", userId)
-      .eq("asistio", false)
-      .in("id_sesion", sessionIds);
+    const { rows: abs } = await query(
+      `SELECT id_sesion FROM asistencia_detalle WHERE id_student = $1 AND asistio = false AND id_sesion = ANY($2::bigint[])`,
+      [userId, sessionIds]
+    );
 
-    if (aErr) return res.status(500).json({ error: aErr.message });
-
-    const absentIds = new Set((abs || []).map(a => Number(a.id_sesion)));
-    const sessionMap = new Map((sessions || []).map(s => [Number(s.id), s]));
+    const absentIds = new Set(abs.map(a => Number(a.id_sesion)));
+    const sessionMap = new Map(sessions.map(s => [Number(s.id), s]));
 
     const items = [...absentIds]
       .map(id => {
         const s = sessionMap.get(id);
         if (!s) return null;
-        return { fecha_clase: s.fecha_clase, class_name: s.class?.name ?? "—" };
+        return { fecha_clase: s.fecha_clase, class_name: s.class_name ?? "—" };
       })
       .filter(Boolean)
-      .sort((a, b) => b.fecha_clase.localeCompare(a.fecha_clase));
+      .sort((a, b) => String(b.fecha_clase).localeCompare(String(a.fecha_clase)));
 
     return res.json({ items });
   } catch (e) {

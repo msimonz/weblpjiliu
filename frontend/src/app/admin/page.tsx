@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSession, getToken, signOut } from "@/lib/auth";
 import { apiFetch } from "@/lib/api";
 import { primaryRole, roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
@@ -427,8 +427,7 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    const { data } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
-    setLogoUrl(data.publicUrl);
+    setLogoUrl("/logo.png");
   }, []);
 
   useEffect(() => {
@@ -446,8 +445,7 @@ export default function AdminPage() {
     (async () => {
       setLoadingMe(true);
       try {
-        const { data } = await supabase.auth.getSession();
-        if (!data.session) return router.replace("/login");
+        if (!getSession()) return router.replace("/login");
 
         const info = await apiFetch("/api/auth/me");
         setMe(info);
@@ -1678,8 +1676,7 @@ export default function AdminPage() {
   async function downloadTemplate() {
     setTemplateLoading(true);
     try {
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess.session?.access_token;
+      const token = getToken();
       const resp = await fetch(
         `${process.env.NEXT_PUBLIC_API_BASE_URL || ""}/api/admin/download-template`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} }
@@ -1712,8 +1709,7 @@ export default function AdminPage() {
       const fd = new FormData();
       fd.append("file", file);
 
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess.session?.access_token;
+      const token = getToken();
 
       const resp = await fetch(
         `${process.env.NEXT_PUBLIC_API_BASE_URL || ""}/api/admin/upload-users`,
@@ -2095,7 +2091,7 @@ export default function AdminPage() {
   }
 
   async function handleLogout() {
-    await supabase.auth.signOut();
+    signOut();
     router.replace("/login");
   }
 

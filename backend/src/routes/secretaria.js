@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middlewares/auth.js";
-import { supabaseAdmin } from "../supabase.js";
+import { query } from "../db.js";
 
 export const secretariaRouter = Router();
 
@@ -17,13 +17,10 @@ function requireSecretaria(req, res, next) {
 // ============================================================
 secretariaRouter.get("/attendance/courses", requireAuth, requireSecretaria, async (req, res) => {
   try {
-    const { data, error } = await supabaseAdmin
-      .from("course")
-      .select("id,name,year,level")
-      .order("name", { ascending: true });
-
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ items: data || [] });
+    const { rows } = await query(
+      `SELECT id, name, year, level FROM course ORDER BY name ASC`
+    );
+    return res.json({ items: rows });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
@@ -38,34 +35,27 @@ secretariaRouter.get("/attendance/modules", requireAuth, requireSecretaria, asyn
     const courseId = Number(req.query.course_id || 0);
     if (!courseId) return res.status(400).json({ error: "course_id requerido" });
 
-    const { data: course, error: cErr } = await supabaseAdmin
-      .from("course")
-      .select("id,name,year,level")
-      .eq("id", courseId)
-      .maybeSingle();
-
-    if (cErr) return res.status(500).json({ error: cErr.message });
+    const { rows: courseRows } = await query(
+      `SELECT id, name, year, level FROM course WHERE id = $1 LIMIT 1`,
+      [courseId]
+    );
+    const course = courseRows[0];
     if (!course) return res.status(404).json({ error: "Curso no encontrado" });
 
-    const { data: classRows, error: crErr } = await supabaseAdmin
-      .from("class")
-      .select("id_module")
-      .eq("level", course.level)
-      .eq("year", course.year);
+    const { rows: classRows } = await query(
+      `SELECT id_module FROM class WHERE level = $1 AND year = $2`,
+      [course.level, course.year]
+    );
 
-    if (crErr) return res.status(500).json({ error: crErr.message });
-
-    const moduleIds = [...new Set((classRows || []).map((r) => r.id_module))];
+    const moduleIds = [...new Set(classRows.map((r) => r.id_module))];
     if (!moduleIds.length) return res.json({ items: [] });
 
-    const { data, error } = await supabaseAdmin
-      .from("module")
-      .select("id,name")
-      .in("id", moduleIds)
-      .order("name", { ascending: true });
+    const { rows } = await query(
+      `SELECT id, name FROM module WHERE id = ANY($1::bigint[]) ORDER BY name ASC`,
+      [moduleIds]
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ items: data || [] });
+    return res.json({ items: rows });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
@@ -83,30 +73,25 @@ secretariaRouter.get("/attendance/classes", requireAuth, requireSecretaria, asyn
     if (!courseId)  return res.status(400).json({ error: "course_id requerido" });
     if (!moduleRaw) return res.status(400).json({ error: "module_id requerido" });
 
-    const { data: course, error: cErr } = await supabaseAdmin
-      .from("course")
-      .select("id,name,year,level")
-      .eq("id", courseId)
-      .maybeSingle();
-
-    if (cErr) return res.status(500).json({ error: cErr.message });
+    const { rows: courseRows } = await query(
+      `SELECT id, name, year, level FROM course WHERE id = $1 LIMIT 1`,
+      [courseId]
+    );
+    const course = courseRows[0];
     if (!course) return res.status(404).json({ error: "Curso no encontrado" });
 
-    let query = supabaseAdmin
-      .from("class")
-      .select("id,name")
-      .eq("level", course.level)
-      .eq("year", course.year);
+    let sql = `SELECT id, name FROM class WHERE level = $1 AND year = $2`;
+    const params = [course.level, course.year];
 
     if (moduleId !== "todos") {
-      query = query.eq("id_module", moduleId).order("orden", { ascending: true });
+      params.push(moduleId);
+      sql += ` AND id_module = $${params.length} ORDER BY orden ASC`;
     } else {
-      query = query.order("name", { ascending: true });
+      sql += ` ORDER BY name ASC`;
     }
 
-    const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ items: data || [] });
+    const { rows } = await query(sql, params);
+    return res.json({ items: rows });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
@@ -128,21 +113,18 @@ secretariaRouter.get("/attendance/fechas", requireAuth, requireSecretaria, async
       return res.status(400).json({ error: "course_id, module_id y class_id requeridos" });
     }
 
-    let query = supabaseAdmin
-      .from("asistencia_sesion")
-      .select("id,fecha_clase")
-      .eq("id_course", courseId)
-      .order("fecha_clase", { ascending: false });
+    let sql = `SELECT id, fecha_clase FROM asistencia_sesion WHERE id_course = $1`;
+    const params = [courseId];
 
-    if (moduleId !== "todos") query = query.eq("id_module", moduleId);
-    if (classId  !== "todas") query = query.eq("id_class",  classId);
+    if (moduleId !== "todos") { params.push(moduleId); sql += ` AND id_module = $${params.length}`; }
+    if (classId  !== "todas") { params.push(classId);  sql += ` AND id_class = $${params.length}`; }
+    sql += ` ORDER BY fecha_clase DESC`;
 
-    const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    const { rows: data } = await query(sql, params);
 
     // Deduplica fechas cuando hay múltiples materias
     const seen = new Set();
-    const items = (data || []).filter((r) => {
+    const items = data.filter((r) => {
       if (seen.has(r.fecha_clase)) return false;
       seen.add(r.fecha_clase);
       return true;
@@ -169,42 +151,34 @@ secretariaRouter.get("/attendance/consulta", requireAuth, requireSecretaria, asy
       return res.status(400).json({ error: "course_id, module_id, class_id y fecha son requeridos" });
     }
 
-    const { data: sesion, error: sErr } = await supabaseAdmin
-      .from("asistencia_sesion")
-      .select("id,id_teacher,profesor_asistio,profesor_reemplazo")
-      .eq("id_course", courseId)
-      .eq("id_module", moduleId)
-      .eq("id_class", classId)
-      .eq("fecha_clase", fecha)
-      .maybeSingle();
-
-    if (sErr) return res.status(500).json({ error: sErr.message });
+    const { rows: sesionRows } = await query(
+      `SELECT id, id_teacher, profesor_asistio, profesor_reemplazo FROM asistencia_sesion
+       WHERE id_course = $1 AND id_module = $2 AND id_class = $3 AND fecha_clase = $4
+       LIMIT 1`,
+      [courseId, moduleId, classId, fecha]
+    );
+    const sesion = sesionRows[0];
     if (!sesion) return res.status(404).json({ error: "No hay registro para esa sesión" });
 
-    const { data: teacherRow } = await supabaseAdmin
-      .from("users")
-      .select("name")
-      .eq("id", sesion.id_teacher)
-      .maybeSingle();
+    const { rows: teacherRows } = await query(`SELECT name FROM users WHERE id = $1 LIMIT 1`, [sesion.id_teacher]);
+    const teacherRow = teacherRows[0];
 
-    const { data: detalleRows, error: dErr } = await supabaseAdmin
-      .from("asistencia_detalle")
-      .select("id_student,asistio,motivo")
-      .eq("id_sesion", sesion.id);
+    const { rows: detalleRows } = await query(
+      `SELECT id_student, asistio, motivo FROM asistencia_detalle WHERE id_sesion = $1`,
+      [sesion.id]
+    );
 
-    if (dErr) return res.status(500).json({ error: dErr.message });
-
-    const studentIds = (detalleRows || []).map((d) => d.id_student);
+    const studentIds = detalleRows.map((d) => d.id_student);
     let userMap = new Map();
     if (studentIds.length > 0) {
-      const { data: usersData } = await supabaseAdmin
-        .from("users")
-        .select("id,name,cedula")
-        .in("id", studentIds);
-      userMap = new Map((usersData || []).map((u) => [u.id, u]));
+      const { rows: usersData } = await query(
+        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[])`,
+        [studentIds]
+      );
+      userMap = new Map(usersData.map((u) => [u.id, u]));
     }
 
-    const detalle = (detalleRows || [])
+    const detalle = detalleRows
       .map((d) => ({
         id_student: d.id_student,
         name:       userMap.get(d.id_student)?.name   ?? null,
@@ -244,62 +218,60 @@ secretariaRouter.get("/attendance/consulta-todas", requireAuth, requireSecretari
 
     const fechaFiltro = String(req.query.fecha || "").trim();
 
-    let query = supabaseAdmin
-      .from("asistencia_sesion")
-      .select("id,fecha_clase,id_teacher,profesor_asistio,profesor_reemplazo,id_class,class:id_class(id,name)")
-      .eq("id_course", courseId)
-      .order("fecha_clase", { ascending: true });
+    let sql = `SELECT s.id, s.fecha_clase, s.id_teacher, s.profesor_asistio, s.profesor_reemplazo, s.id_class,
+                      c.id AS class_id, c.name AS class_name
+               FROM asistencia_sesion s
+               LEFT JOIN class c ON c.id = s.id_class
+               WHERE s.id_course = $1`;
+    const params = [courseId];
 
-    if (moduleId   !== "todos") query = query.eq("id_module",   moduleId);
-    if (classId    !== "todas") query = query.eq("id_class",    classId);
-    if (fechaFiltro)            query = query.eq("fecha_clase", fechaFiltro);
+    if (moduleId   !== "todos") { params.push(moduleId);    sql += ` AND s.id_module = $${params.length}`; }
+    if (classId    !== "todas") { params.push(classId);     sql += ` AND s.id_class = $${params.length}`; }
+    if (fechaFiltro)            { params.push(fechaFiltro); sql += ` AND s.fecha_clase = $${params.length}`; }
+    sql += ` ORDER BY s.fecha_clase ASC`;
 
-    const { data: sesiones, error: sErr } = await query;
-
-    if (sErr) return res.status(500).json({ error: sErr.message });
-    if (!sesiones?.length) return res.json({ fechas: [], detalle: [] });
+    const { rows: sesiones } = await query(sql, params);
+    if (!sesiones.length) return res.json({ fechas: [], detalle: [] });
 
     // Cargar nombres de profesores
     const teacherIds = [...new Set(sesiones.map((s) => s.id_teacher).filter(Boolean))];
     let teacherMap = new Map();
     if (teacherIds.length > 0) {
-      const { data: teachersData } = await supabaseAdmin
-        .from("users")
-        .select("id,name")
-        .in("id", teacherIds);
-      teacherMap = new Map((teachersData || []).map((u) => [u.id, u.name]));
+      const { rows: teachersData } = await query(
+        `SELECT id, name FROM users WHERE id = ANY($1::uuid[])`,
+        [teacherIds]
+      );
+      teacherMap = new Map(teachersData.map((u) => [u.id, u.name]));
     }
 
     const sesionIds = sesiones.map((s) => s.id);
     const fechasList = sesiones.map((s) => ({
       fecha:              s.fecha_clase,
       class_id:           s.id_class   ?? null,
-      class_name:         s.class?.name ?? null,
+      class_name:         s.class_name ?? null,
       teacher_name:       teacherMap.get(s.id_teacher) ?? null,
       profesor_asistio:   s.profesor_asistio,
       profesor_reemplazo: s.profesor_reemplazo ?? null,
     }));
     const sesionInfoMap = new Map(sesiones.map((s) => [s.id, { fecha: s.fecha_clase, class_id: s.id_class ?? null }]));
 
-    const { data: detalleRows, error: dErr } = await supabaseAdmin
-      .from("asistencia_detalle")
-      .select("id_sesion,id_student,asistio,motivo")
-      .in("id_sesion", sesionIds);
+    const { rows: detalleRows } = await query(
+      `SELECT id_sesion, id_student, asistio, motivo FROM asistencia_detalle WHERE id_sesion = ANY($1::bigint[])`,
+      [sesionIds]
+    );
 
-    if (dErr) return res.status(500).json({ error: dErr.message });
-
-    const studentIds = [...new Set((detalleRows || []).map((d) => d.id_student))];
+    const studentIds = [...new Set(detalleRows.map((d) => d.id_student))];
     let userMap = new Map();
     if (studentIds.length > 0) {
-      const { data: usersData } = await supabaseAdmin
-        .from("users")
-        .select("id,name,cedula")
-        .in("id", studentIds);
-      userMap = new Map((usersData || []).map((u) => [u.id, u]));
+      const { rows: usersData } = await query(
+        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[])`,
+        [studentIds]
+      );
+      userMap = new Map(usersData.map((u) => [u.id, u]));
     }
 
     const studentMap = new Map();
-    for (const d of (detalleRows || [])) {
+    for (const d of detalleRows) {
       const info = sesionInfoMap.get(d.id_sesion);
       if (!info) continue;
       if (!studentMap.has(d.id_student)) {
@@ -331,55 +303,50 @@ secretariaRouter.get("/attendance/reporte", requireAuth, requireSecretaria, asyn
     const courseId = Number(req.query.course_id || 0);
     if (!courseId) return res.status(400).json({ error: "course_id requerido" });
 
-    const { data: course, error: courseErr } = await supabaseAdmin
-      .from("course")
-      .select("id,name,year,level")
-      .eq("id", courseId)
-      .maybeSingle();
-
-    if (courseErr) return res.status(500).json({ error: courseErr.message });
+    const { rows: courseRows } = await query(
+      `SELECT id, name, year, level FROM course WHERE id = $1 LIMIT 1`,
+      [courseId]
+    );
+    const course = courseRows[0];
     if (!course) return res.status(404).json({ error: "Curso no encontrado" });
 
-    const { data: sesiones, error: sErr } = await supabaseAdmin
-      .from("asistencia_sesion")
-      .select("id,id_class,class:class(id,name)")
-      .eq("id_course", courseId);
-
-    if (sErr) return res.status(500).json({ error: sErr.message });
-    if (!sesiones?.length) return res.json({ students: [], classes: [], rows: [] });
+    const { rows: sesiones } = await query(
+      `SELECT s.id, s.id_class, c.id AS class_id, c.name AS class_name
+       FROM asistencia_sesion s
+       LEFT JOIN class c ON c.id = s.id_class
+       WHERE s.id_course = $1`,
+      [courseId]
+    );
+    if (!sesiones.length) return res.json({ students: [], classes: [], rows: [] });
 
     const sesionIds = sesiones.map((s) => s.id);
 
-    const { data: detalle, error: dErr } = await supabaseAdmin
-      .from("asistencia_detalle")
-      .select("id_sesion,id_student,asistio")
-      .in("id_sesion", sesionIds)
-      .eq("asistio", false);
+    const { rows: detalle } = await query(
+      `SELECT id_sesion, id_student, asistio FROM asistencia_detalle
+       WHERE id_sesion = ANY($1::bigint[]) AND asistio = false`,
+      [sesionIds]
+    );
 
-    if (dErr) return res.status(500).json({ error: dErr.message });
+    const { rows: typeRows } = await query(`SELECT id FROM type WHERE code = $1 LIMIT 1`, ["S"]);
+    const typeRow = typeRows[0];
 
-    const { data: typeRow } = await supabaseAdmin
-      .from("type").select("id").eq("code", "S").maybeSingle();
+    const { rows: users } = await query(
+      `SELECT id, name, cedula FROM users WHERE id_course = $1 ORDER BY name ASC`,
+      [courseId]
+    );
 
-    const { data: users } = await supabaseAdmin
-      .from("users")
-      .select("id,name,cedula")
-      .eq("id_course", courseId)
-      .order("name", { ascending: true });
+    const { rows: roleRows } = await query(
+      `SELECT id_user FROM user_type WHERE id_type = $1 AND id_user = ANY($2::uuid[])`,
+      [typeRow.id, users.map((u) => u.id)]
+    );
 
-    const { data: roleRows } = await supabaseAdmin
-      .from("user_type")
-      .select("id_user")
-      .eq("id_type", typeRow.id)
-      .in("id_user", (users || []).map((u) => u.id));
-
-    const studentSet = new Set((roleRows || []).map((r) => r.id_user));
-    const students = (users || []).filter((u) => studentSet.has(u.id));
+    const studentSet = new Set(roleRows.map((r) => r.id_user));
+    const students = users.filter((u) => studentSet.has(u.id));
 
     const classMap = new Map();
     for (const s of sesiones) {
-      if (s.class?.id && !classMap.has(s.class.id)) {
-        classMap.set(s.class.id, s.class.name);
+      if (s.class_id && !classMap.has(s.class_id)) {
+        classMap.set(s.class_id, s.class_name);
       }
     }
     const classes = [...classMap.entries()].map(([id, name]) => ({ id, name }))
@@ -388,7 +355,7 @@ secretariaRouter.get("/attendance/reporte", requireAuth, requireSecretaria, asyn
     const sesionClassMap = new Map(sesiones.map((s) => [s.id, s.id_class]));
 
     const pivot = new Map();
-    for (const d of (detalle || [])) {
+    for (const d of detalle) {
       const cId = sesionClassMap.get(d.id_sesion);
       if (!cId) continue;
       if (!pivot.has(d.id_student)) pivot.set(d.id_student, new Map());

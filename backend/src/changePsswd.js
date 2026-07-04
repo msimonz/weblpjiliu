@@ -1,43 +1,23 @@
 import 'dotenv/config'
-import { createClient } from '@supabase/supabase-js'
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-)
+import bcrypt from 'bcryptjs'
+import { query, pool } from './db.js'
 
 async function cambiarPasswordATodos() {
-  let page = 1
-  const perPage = 100
+  const { rows: users } = await query('SELECT id, email FROM auth.users')
 
-  while (true) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage })
+  const hash = bcrypt.hashSync('123456', 10)
 
-    if (error) {
-      console.error('Error listando usuarios:', error.message)
-      return
+  for (const user of users) {
+    try {
+      await query('UPDATE auth.users SET encrypted_password = $1, updated_at = now() WHERE id = $2', [hash, user.id])
+      console.log(`Password actualizada: ${user.email || user.id}`)
+    } catch (e) {
+      console.error(`Error actualizando ${user.email || user.id}:`, e.message)
     }
-
-    const users = data?.users || []
-    if (users.length === 0) break
-
-    for (const user of users) {
-      const { error: updateError } = await supabase.auth.admin.updateUserById(
-        user.id,
-        { password: '123456' }
-      )
-
-      if (updateError) {
-        console.error(`Error actualizando ${user.email || user.id}:`, updateError.message)
-      } else {
-        console.log(`Password actualizada: ${user.email || user.id}`)
-      }
-    }
-
-    page++
   }
 
   console.log('Proceso terminado')
+  await pool.end()
 }
 
 cambiarPasswordATodos()

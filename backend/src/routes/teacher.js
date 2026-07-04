@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middlewares/auth.js";
-import { supabaseAdmin } from "../supabase.js";
+import { query } from "../db.js";
 import {
   getAnioLectivoVigente,
   requireAnioVigenteForCourse,
@@ -19,11 +19,13 @@ function requireTeacher(req, res, next) {
 }
 
 async function getLevelMap(year) {
-  let q = supabaseAdmin.from("level").select("id,name").order("id", { ascending: true });
-  if (year) q = q.eq("year", year);
-  const { data } = await q;
+  let sql = `SELECT id, name FROM level`;
+  const params = [];
+  if (year) { params.push(year); sql += ` WHERE year = $${params.length}`; }
+  sql += ` ORDER BY id ASC`;
+  const { rows } = await query(sql, params);
   const map = {};
-  for (const l of data || []) map[l.id] = l.name;
+  for (const l of rows) map[l.id] = l.name;
   return map;
 }
 
@@ -32,32 +34,39 @@ function levelLabel(level, levelMap = {}) {
 }
 
 async function getTeacherClasses(teacherId, year) {
-  let q = supabaseAdmin
-    .from("class_teacher")
-    .select("id_class, id_course, class:class(id,name,level,id_module,id_group,module:module(id,name)), course:course(id,year)")
-    .eq("id_teacher", teacherId)
-    .order("id_class", { ascending: true });
+  let sql = `
+    SELECT ct.id_class, ct.id_course, c.id, c.name, c.level, c.id_module, c.id_group,
+           m.id AS module_id, m.name AS module_name, co.year AS course_year
+    FROM class_teacher ct
+    JOIN class c ON c.id = ct.id_class
+    LEFT JOIN module m ON m.id = c.id_module
+    JOIN course co ON co.id = ct.id_course
+    WHERE ct.id_teacher = $1
+  `;
+  const params = [teacherId];
+  if (year) { params.push(year); sql += ` AND co.year = $${params.length}`; }
+  sql += ` ORDER BY ct.id_class ASC`;
 
-  const { data, error } = await q;
-  if (error) throw error;
+  const { rows } = await query(sql, params);
 
-  // Filter by year if provided (via course.year)
-  const filtered = year
-    ? (data || []).filter((r) => Number(r.course?.year) === Number(year))
-    : (data || []);
-
-  const classes = filtered
-    .map((r) => r.class ? { ...r.class, id_course: r.id_course ?? null } : null)
-    .filter(Boolean);
+  const classes = rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    level: r.level,
+    id_module: r.id_module,
+    id_group: r.id_group,
+    module: r.module_id ? { id: r.module_id, name: r.module_name } : null,
+    id_course: r.id_course ?? null,
+  }));
 
   const groupIds = [...new Set(classes.map((c) => Number(c.id_group)).filter(Boolean))];
   if (groupIds.length > 0) {
-    const { data: groups } = await supabaseAdmin
-      .from("group")
-      .select("id,name")
-      .in("id", groupIds);
+    const { rows: groups } = await query(
+      `SELECT id, name FROM "group" WHERE id = ANY($1::bigint[])`,
+      [groupIds]
+    );
 
-    const groupMap = new Map((groups || []).map((g) => [Number(g.id), g]));
+    const groupMap = new Map(groups.map((g) => [Number(g.id), g]));
     for (const cls of classes) {
       cls.group = groupMap.get(Number(cls.id_group)) ?? null;
     }
@@ -67,60 +76,45 @@ async function getTeacherClasses(teacherId, year) {
 }
 
 async function teacherHasClass(teacherId, classId) {
-  const { data, error } = await supabaseAdmin
-    .from("class_teacher")
-    .select("id_class")
-    .eq("id_teacher", teacherId)
-    .eq("id_class", classId)
-    .maybeSingle();
-
-  if (error) throw error;
-  return !!data?.id_class;
+  const { rows } = await query(
+    `SELECT id_class FROM class_teacher WHERE id_teacher = $1 AND id_class = $2 LIMIT 1`,
+    [teacherId, classId]
+  );
+  return !!rows[0]?.id_class;
 }
 
 // Cache the student type id — it never changes between requests
 let _studentTypeId = null;
 async function getStudentTypeId() {
   if (_studentTypeId) return _studentTypeId;
-  const { data, error } = await supabaseAdmin
-    .from("type")
-    .select("id")
-    .eq("code", "S")
-    .maybeSingle();
-  if (error) throw error;
-  if (!data?.id) throw new Error("No existe type 'S'");
-  _studentTypeId = data.id;
+  const { rows } = await query(`SELECT id FROM type WHERE code = $1 LIMIT 1`, ["S"]);
+  if (!rows[0]?.id) throw new Error("No existe type 'S'");
+  _studentTypeId = rows[0].id;
   return _studentTypeId;
 }
 
 async function getStudentsByCourseIds(courseIds) {
   if (!courseIds?.length) return [];
 
-  const [{ data: users, error: uErr }, studentTypeId] = await Promise.all([
-    supabaseAdmin
-      .from("users")
-      .select("id,name,cedula,id_course")
-      .in("id_course", courseIds)
-      .order("name", { ascending: true }),
+  const [{ rows: users }, studentTypeId] = await Promise.all([
+    query(
+      `SELECT id, name, cedula, id_course FROM users WHERE id_course = ANY($1::bigint[]) ORDER BY name ASC`,
+      [courseIds]
+    ),
     getStudentTypeId(),
   ]);
 
-  if (uErr) throw uErr;
-
-  const ids = (users || []).map((u) => u.id);
+  const ids = users.map((u) => u.id);
   if (ids.length === 0) return [];
 
-  const { data: utRows, error: utErr } = await supabaseAdmin
-    .from("user_type")
-    .select("id_user")
-    .eq("id_type", studentTypeId)
-    .in("id_user", ids);
+  const { rows: utRows } = await query(
+    `SELECT id_user FROM user_type WHERE id_type = $1 AND id_user = ANY($2::uuid[])`,
+    [studentTypeId, ids]
+  );
 
-  if (utErr) throw utErr;
+  const isStudent = new Set(utRows.map((r) => r.id_user));
 
-  const isStudent = new Set((utRows || []).map((r) => r.id_user));
-
-  return (users || []).filter((u) => isStudent.has(u.id));
+  return users.filter((u) => isStudent.has(u.id));
 }
 
 /**
@@ -133,17 +127,23 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
     const vigente = await getAnioLectivoVigente();
     const year = req.query.year ? Number(req.query.year) : vigente;
 
-    const [teacherClasses, levelMap, assignData] = await Promise.all([
+    const [teacherClasses, levelMap, assignRows] = await Promise.all([
       getTeacherClasses(teacherId, year),
       getLevelMap(year),
-      supabaseAdmin
-        .from("class_teacher")
-        .select("id_class, id_course, course:course(id,name,year), class:class(id,name,level,id_module,id_group,module:module(id,name))")
-        .eq("id_teacher", teacherId)
-        .order("id_class", { ascending: true })
-        .then(({ data }) => (data || []).filter((r) => Number(r.course?.year) === Number(year))),
+      query(
+        `SELECT ct.id_class, ct.id_course, co.id AS course_id, co.name AS course_name, co.year AS course_year,
+                c.id AS class_id, c.name AS class_name, c.level, c.id_module, c.id_group,
+                m.id AS module_id, m.name AS module_name
+         FROM class_teacher ct
+         JOIN course co ON co.id = ct.id_course
+         JOIN class c ON c.id = ct.id_class
+         LEFT JOIN module m ON m.id = c.id_module
+         WHERE ct.id_teacher = $1
+         ORDER BY ct.id_class ASC`,
+        [teacherId]
+      ).then(({ rows }) => rows.filter((r) => Number(r.course_year) === Number(year))),
     ]);
-    const cleanClasses = (teacherClasses || []).filter(Boolean);
+    const cleanClasses = teacherClasses.filter(Boolean);
 
     const classGroupMap = new Map(cleanClasses.map((cls) => [Number(cls.id), cls.group ?? null]));
 
@@ -181,25 +181,20 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
     const studentCountByCourseId = {};
 
     if (levels.length > 0) {
-      const { data: courses, error: cErr } = await supabaseAdmin
-        .from("course")
-        .select("id,year,level")
-        .in("level", levels)
-        .eq("year", year)
-        .order("level", { ascending: true });
+      const { rows: courses } = await query(
+        `SELECT id, year, level FROM course WHERE level = ANY($1::int[]) AND year = $2 ORDER BY level ASC`,
+        [levels, year]
+      );
 
-      if (cErr) return res.status(500).json({ error: cErr.message });
-
-      const courseIds = (courses || []).map((c) => Number(c.id)).filter(Boolean);
+      const courseIds = courses.map((c) => Number(c.id)).filter(Boolean);
 
       const students = await getStudentsByCourseIds(courseIds);
       const studentList = students || [];
       totalStudents = new Set(studentList.map((s) => s.id)).size;
 
       // Conteo de estudiantes por nivel
-      // Usamos String() para evitar problemas de tipo con bigint de Supabase
       const courseIdToLevel = {};
-      for (const c of courses || []) {
+      for (const c of courses) {
         courseIdToLevel[String(c.id)] = Number(c.level);
       }
 
@@ -228,21 +223,21 @@ teacherRouter.get("/dashboard", requireAuth, requireTeacher, async (req, res) =>
       }
     }
 
-    const assignments = assignData
-      .filter((r) => r.class?.id)
+    const assignments = assignRows
+      .filter((r) => r.class_id)
       .map((r) => {
-        const group = classGroupMap.get(Number(r.class?.id)) ?? r.class?.group ?? null;
+        const group = classGroupMap.get(Number(r.class_id)) ?? null;
         return {
           class_id: r.id_class,
-          class_name: r.class?.name || "",
-          level: Number(r.class?.level || 0),
-          level_label: levelLabel(Number(r.class?.level || 0), levelMap),
+          class_name: r.class_name || "",
+          level: Number(r.level || 0),
+          level_label: levelLabel(Number(r.level || 0), levelMap),
           course_id: r.id_course || null,
-          course_name: r.course?.name || "",
+          course_name: r.course_name || "",
           course_student_count: r.id_course ? studentCountByCourseId[String(r.id_course)] ?? 0 : 0,
-          module_id: r.class?.id_module || null,
-          module_name: r.class?.module?.name || "",
-          group_id: r.class?.id_group || null,
+          module_id: r.id_module || null,
+          module_name: r.module_name || "",
+          group_id: r.id_group || null,
           group_name: group?.name || "",
         };
       })
@@ -302,49 +297,37 @@ teacherRouter.get("/courses", requireAuth, requireTeacher, async (req, res) => {
         return res.status(403).json({ error: "La materia no está asignada a este profesor" });
       }
 
-      const { data: cls, error: clsErr } = await supabaseAdmin
-        .from("class")
-        .select("id,level,name")
-        .eq("id", classId)
-        .maybeSingle();
-
-      if (clsErr) return res.status(500).json({ error: clsErr.message });
+      const { rows: clsRows } = await query(
+        `SELECT id, level, name FROM class WHERE id = $1 LIMIT 1`,
+        [classId]
+      );
+      const cls = clsRows[0];
       if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
 
-      const { data: courses, error: cErr } = await supabaseAdmin
-        .from("course")
-        .select("id,name,level,year")
-        .eq("level", cls.level)
-        .order("level", { ascending: true })
-        .order("id", { ascending: true });
+      const { rows: courses } = await query(
+        `SELECT id, name, level, year FROM course WHERE level = $1 ORDER BY level ASC, id ASC`,
+        [cls.level]
+      );
 
-      if (cErr) return res.status(500).json({ error: cErr.message });
-
-      return res.json({ items: courses || [] });
+      return res.json({ items: courses });
     }
 
     const year = req.query.year ? Number(req.query.year) : null;
     const teacherClasses = await getTeacherClasses(teacherId, year);
-    const levels = [...new Set((teacherClasses || []).map((c) => Number(c.level)).filter(Boolean))];
+    const levels = [...new Set(teacherClasses.map((c) => Number(c.level)).filter(Boolean))];
 
     if (levels.length === 0) {
       return res.json({ items: [] });
     }
 
-    let cq = supabaseAdmin
-      .from("course")
-      .select("id,name,level,year")
-      .in("level", levels)
-      .order("level", { ascending: true })
-      .order("id", { ascending: true });
+    let sql = `SELECT id, name, level, year FROM course WHERE level = ANY($1::int[])`;
+    const params = [levels];
+    if (year) { params.push(year); sql += ` AND year = $${params.length}`; }
+    sql += ` ORDER BY level ASC, id ASC`;
 
-    if (year) cq = cq.eq("year", year);
+    const { rows: courses } = await query(sql, params);
 
-    const { data: courses, error: cErr } = await cq;
-
-    if (cErr) return res.status(500).json({ error: cErr.message });
-
-    return res.json({ items: courses || [] });
+    return res.json({ items: courses });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -358,21 +341,17 @@ teacherRouter.get("/levels", requireAuth, requireTeacher, async (req, res) => {
 
     const teacherClasses = await getTeacherClasses(teacherId, year);
     const assignedLevelIds = [
-      ...new Set((teacherClasses || []).map((c) => Number(c.level)).filter(Boolean)),
+      ...new Set(teacherClasses.map((c) => Number(c.level)).filter(Boolean)),
     ].sort((a, b) => a - b);
 
     if (assignedLevelIds.length === 0) return res.json({ items: [] });
 
-    const { data, error } = await supabaseAdmin
-      .from("level")
-      .select("id,name")
-      .in("id", assignedLevelIds)
-      .eq("year", year)
-      .order("id", { ascending: true });
+    const { rows } = await query(
+      `SELECT id, name FROM level WHERE id = ANY($1::int[]) AND year = $2 ORDER BY id ASC`,
+      [assignedLevelIds, year]
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-
-    const levelNameById = new Map((data || []).map((l) => [Number(l.id), l.name]));
+    const levelNameById = new Map(rows.map((l) => [Number(l.id), l.name]));
     const items = assignedLevelIds.map((id) => ({
       id,
       name: levelNameById.get(id) ?? `Año ${id}`,
@@ -385,42 +364,65 @@ teacherRouter.get("/levels", requireAuth, requireTeacher, async (req, res) => {
 });
 
 teacherRouter.get("/evaluation-types", requireAuth, requireTeacher, async (req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from("evaluation_type")
-    .select("id,type,created_at")
-    .order("id", { ascending: true });
-
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ items: data || [] });
+  const { rows } = await query(`SELECT id, type, created_at FROM evaluation_type ORDER BY id ASC`);
+  return res.json({ items: rows });
 });
 
 teacherRouter.post("/evaluation-types", requireAuth, requireTeacher, async (req, res) => {
   const raw = String(req.body?.type || "").trim();
   if (!raw) return res.status(400).json({ error: "type requerido" });
 
-  const { data: existing, error: exErr } = await supabaseAdmin
-    .from("evaluation_type")
-    .select("id,type")
-    .eq("type", raw)
-    .maybeSingle();
+  const { rows: existingRows } = await query(
+    `SELECT id, type FROM evaluation_type WHERE type = $1 LIMIT 1`,
+    [raw]
+  );
+  if (existingRows[0]?.id) return res.json({ item: existingRows[0] });
 
-  if (exErr) return res.status(500).json({ error: exErr.message });
-  if (existing?.id) return res.json({ item: existing });
-
-  const { data, error } = await supabaseAdmin
-    .from("evaluation_type")
-    .insert({ type: raw })
-    .select("id,type")
-    .maybeSingle();
-
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ item: data });
+  const { rows } = await query(
+    `INSERT INTO evaluation_type (type) VALUES ($1) RETURNING id, type`,
+    [raw]
+  );
+  return res.json({ item: rows[0] });
 });
 
 /**
  * 1) Mis evaluaciones
  * GET /api/teacher/evaluations
  */
+const EVAL_SELECT = `
+  ev.id, ev.title, ev.percent, ev.created_at, ev.id_course, ev.id_class, ev.id_type, ev.id_module, ev.id_group,
+  co.id AS course_id, co.name AS course_name, co.level AS course_level, co.year AS course_year,
+  cl.id AS class_id, cl.name AS class_name, cl.level AS class_level,
+  et.id AS et_id, et.type AS et_type,
+  m.id AS mod_id, m.name AS mod_name,
+  g.id AS grp_id, g.name AS grp_name
+  FROM evaluation ev
+  LEFT JOIN course co ON co.id = ev.id_course
+  LEFT JOIN class cl ON cl.id = ev.id_class
+  LEFT JOIN evaluation_type et ON et.id = ev.id_type
+  LEFT JOIN module m ON m.id = ev.id_module
+  LEFT JOIN "group" g ON g.id = ev.id_group
+`;
+
+function mapEvalRow(r) {
+  return {
+    id: r.id,
+    title: r.title,
+    percent: r.percent,
+    created_at: r.created_at,
+    id_course: r.id_course,
+    id_class: r.id_class,
+    id_type: r.id_type,
+    id_module: r.id_module,
+    id_group: r.id_group,
+    course: r.course_id ? { id: r.course_id, name: r.course_name, level: r.course_level, year: r.course_year } : null,
+    class: r.class_id ? { id: r.class_id, name: r.class_name, level: r.class_level } : null,
+    evaluation_type: r.et_id ? { id: r.et_id, type: r.et_type } : null,
+    module: r.mod_id ? { id: r.mod_id, name: r.mod_name } : null,
+    group: r.grp_id ? { id: r.grp_id, name: r.grp_name } : null,
+  };
+}
+
 teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) => {
   res.set("Cache-Control", "no-store");
   try {
@@ -429,33 +431,13 @@ teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) 
     const level = req.query.level ? Number(req.query.level) : null;
     const year = req.query.year ? Number(req.query.year) : null;
 
-    const evalSelect = `
-      id,
-      title,
-      percent,
-      created_at,
-      id_course,
-      id_class,
-      id_type,
-      id_module,
-      id_group,
-      course:course(id,name,level,year),
-      class:class(id,name,level),
-      evaluation_type:evaluation_type(id,type),
-      module:module(id,name),
-      group:group(id,name)
-    `;
+    let sql = `SELECT ${EVAL_SELECT} WHERE ev.id_teacher = $1`;
+    const params = [teacherId];
+    if (classId) { params.push(classId); sql += ` AND ev.id_class = $${params.length}`; }
+    sql += ` ORDER BY ev.created_at DESC`;
 
-    let q = supabaseAdmin
-      .from("evaluation")
-      .select(evalSelect)
-      .eq("id_teacher", teacherId)
-      .order("created_at", { ascending: false });
-
-    if (classId) q = q.eq("id_class", classId);
-
-    const { data: ownData, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
+    const { rows: ownRows } = await query(sql, params);
+    const ownData = ownRows.map(mapEvalRow);
 
     // Also include group evaluations for groups the teacher is assigned to,
     // regardless of who created them. When a specific class is requested,
@@ -469,18 +451,16 @@ teacherRouter.get("/evaluations", requireAuth, requireTeacher, async (req, res) 
 
     let groupData = [];
     if (groupIds.length > 0) {
-      const { data: gd, error: gErr } = await supabaseAdmin
-        .from("evaluation")
-        .select(evalSelect)
-        .in("id_group", groupIds)
-        .order("created_at", { ascending: false });
-      if (gErr) return res.status(500).json({ error: gErr.message });
-      groupData = gd || [];
+      const { rows: gRows } = await query(
+        `SELECT ${EVAL_SELECT} WHERE ev.id_group = ANY($1::bigint[]) ORDER BY ev.created_at DESC`,
+        [groupIds]
+      );
+      groupData = gRows.map(mapEvalRow);
     }
 
     // Merge, keeping own evals first and deduplicating by id.
-    const ownIds = new Set((ownData || []).map((e) => e.id));
-    const merged = [...(ownData || [])];
+    const ownIds = new Set(ownData.map((e) => e.id));
+    const merged = [...ownData];
     for (const ge of groupData) {
       if (!ownIds.has(ge.id)) merged.push(ge);
     }
@@ -517,36 +497,19 @@ teacherRouter.get("/class-grade-grid", requireAuth, requireTeacher, async (req, 
       return res.status(403).json({ error: "La materia no está asignada a este profesor" });
     }
 
-    const { data: cls, error: clsErr } = await supabaseAdmin
-      .from("class")
-      .select("id,name,level")
-      .eq("id", classId)
-      .maybeSingle();
-
-    if (clsErr) return res.status(500).json({ error: clsErr.message });
+    const { rows: clsRows } = await query(
+      `SELECT id, name, level FROM class WHERE id = $1 LIMIT 1`,
+      [classId]
+    );
+    const cls = clsRows[0];
     if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
 
-    const { data: evaluations, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select(`
-        id,
-        title,
-        percent,
-        created_at,
-        id_course,
-        id_class,
-        id_type,
-        course:course(id,name,level,year),
-        class:class(id,name,level),
-        evaluation_type:evaluation_type(id,type)
-      `)
-      .eq("id_class", classId)
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true });
+    const { rows: evalRows } = await query(
+      `SELECT ${EVAL_SELECT} WHERE ev.id_class = $1 ORDER BY ev.created_at ASC, ev.id ASC`,
+      [classId]
+    );
+    const evals = evalRows.map(mapEvalRow);
 
-    if (evErr) return res.status(500).json({ error: evErr.message });
-
-    const evals = evaluations || [];
     if (evals.length === 0) {
       return res.json({
         class: cls,
@@ -559,16 +522,14 @@ teacherRouter.get("/class-grade-grid", requireAuth, requireTeacher, async (req, 
     const courseIds = [...new Set(evals.map((e) => Number(e.id_course)).filter(Boolean))];
     const studentsRaw = await getStudentsByCourseIds(courseIds);
 
-    const { data: courses, error: cErr } = await supabaseAdmin
-      .from("course")
-      .select("id,name")
-      .in("id", courseIds);
+    const { rows: courses } = await query(
+      `SELECT id, name FROM course WHERE id = ANY($1::bigint[])`,
+      [courseIds]
+    );
 
-    if (cErr) return res.status(500).json({ error: cErr.message });
+    const courseNameMap = new Map(courses.map((c) => [Number(c.id), c.name]));
 
-    const courseNameMap = new Map((courses || []).map((c) => [Number(c.id), c.name]));
-
-    const students = (studentsRaw || []).map((u) => ({
+    const students = studentsRaw.map((u) => ({
       id: u.id,
       name: u.name,
       cedula: u.cedula,
@@ -582,14 +543,12 @@ teacherRouter.get("/class-grade-grid", requireAuth, requireTeacher, async (req, 
     let grades = [];
     if (examIds.length > 0 && studentIds.length > 0) {
       await closeExpiredExams({ courseIds, evaluationIds: examIds });
-      const { data: gRows, error: gErr } = await supabaseAdmin
-        .from("grades")
-        .select("id_student,id_exam,grade,finished_at,attempts")
-        .in("id_exam", examIds)
-        .in("id_student", studentIds);
-
-      if (gErr) return res.status(500).json({ error: gErr.message });
-      grades = gRows || [];
+      const { rows: gRows } = await query(
+        `SELECT id_student, id_exam, grade, finished_at, attempts FROM grades
+         WHERE id_exam = ANY($1::bigint[]) AND id_student = ANY($2::uuid[])`,
+        [examIds, studentIds]
+      );
+      grades = gRows;
     }
 
     return res.json({
@@ -612,13 +571,11 @@ teacherRouter.get("/exam-grades", requireAuth, requireTeacher, async (req, res) 
   const examId = Number(req.query.exam_id);
   if (!examId) return res.status(400).json({ error: "exam_id requerido" });
 
-  const { data: ev, error: evErr } = await supabaseAdmin
-    .from("evaluation")
-    .select("id,id_teacher")
-    .eq("id", examId)
-    .maybeSingle();
-
-  if (evErr) return res.status(500).json({ error: evErr.message });
+  const { rows: evRows } = await query(
+    `SELECT id, id_teacher FROM evaluation WHERE id = $1 LIMIT 1`,
+    [examId]
+  );
+  const ev = evRows[0];
   if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
   if (ev.id_teacher !== teacherId) {
     return res.status(403).json({ error: "No es tu evaluación" });
@@ -626,14 +583,12 @@ teacherRouter.get("/exam-grades", requireAuth, requireTeacher, async (req, res) 
 
   await closeExpiredExams({ evaluationIds: [examId] });
 
-  const { data, error } = await supabaseAdmin
-    .from("grades")
-    .select("id_student,grade,finished_at,attempts")
-    .eq("id_exam", examId);
+  const { rows } = await query(
+    `SELECT id_student, grade, finished_at, attempts FROM grades WHERE id_exam = $1`,
+    [examId]
+  );
 
-  if (error) return res.status(500).json({ error: error.message });
-
-  return res.json({ items: data || [] });
+  return res.json({ items: rows });
 });
 
 /**
@@ -665,22 +620,18 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
     const t = String(title || "").trim();
     if (!t) return res.status(400).json({ error: "title requerido" });
 
-    const { data: cls, error: clsErr } = await supabaseAdmin
-      .from("class")
-      .select("id,level,name,id_group,id_module")
-      .eq("id", classIdNum)
-      .maybeSingle();
-
-    if (clsErr) return res.status(500).json({ error: clsErr.message });
+    const { rows: clsRows } = await query(
+      `SELECT id, level, name, id_group, id_module FROM class WHERE id = $1 LIMIT 1`,
+      [classIdNum]
+    );
+    const cls = clsRows[0];
     if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
 
-    const { data: course, error: courseErr } = await supabaseAdmin
-      .from("course")
-      .select("id,name,level,year")
-      .eq("id", courseIdNum)
-      .maybeSingle();
-
-    if (courseErr) return res.status(500).json({ error: courseErr.message });
+    const { rows: courseRows } = await query(
+      `SELECT id, name, level, year FROM course WHERE id = $1 LIMIT 1`,
+      [courseIdNum]
+    );
+    const course = courseRows[0];
     if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
 
     if (Number(course.level) !== Number(cls.level)) {
@@ -698,45 +649,33 @@ teacherRouter.post("/evaluations", requireAuth, requireTeacher, async (req, res)
       const raw = String(type_text || "").trim();
       if (!raw) return res.status(400).json({ error: "Selecciona un tipo o escribe type_text" });
 
-      const { data: existing, error: exErr } = await supabaseAdmin
-        .from("evaluation_type")
-        .select("id,type")
-        .eq("type", raw)
-        .eq("year", course.year)
-        .maybeSingle();
+      const { rows: existingRows } = await query(
+        `SELECT id, type FROM evaluation_type WHERE type = $1 AND year = $2 LIMIT 1`,
+        [raw, course.year]
+      );
 
-      if (exErr) return res.status(500).json({ error: exErr.message });
-
-      if (existing?.id) {
-        typeId = existing.id;
+      if (existingRows[0]?.id) {
+        typeId = existingRows[0].id;
       } else {
-        const { data: created, error: crErr } = await supabaseAdmin
-          .from("evaluation_type")
-          .insert({ type: raw, year: course.year })
-          .select("id,type")
-          .maybeSingle();
-
-        if (crErr) return res.status(500).json({ error: crErr.message });
-        typeId = created.id;
+        const { rows: createdRows } = await query(
+          `INSERT INTO evaluation_type (type, year) VALUES ($1, $2) RETURNING id, type`,
+          [raw, course.year]
+        );
+        typeId = createdRows[0].id;
       }
     }
 
-    const { data, error } = await supabaseAdmin
-      .from("evaluation")
-      .insert({
-        id_course: courseIdNum,
-        id_teacher: teacherId,
-        id_type: Number(typeId),
-        percent: p,
-        title: t,
-        id_module: cls.id_module ?? null,
-        ...(cls.id_group ? { id_group: cls.id_group } : { id_class: classIdNum }),
-      })
-      .select("id,title,percent,created_at,id_course,id_class,id_type")
-      .maybeSingle();
+    const idClassField = cls.id_group ? null : classIdNum;
+    const idGroupField = cls.id_group ? cls.id_group : null;
 
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ item: data });
+    const { rows: insRows } = await query(
+      `INSERT INTO evaluation (id_course, id_teacher, id_type, percent, title, id_module, id_group, id_class)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, title, percent, created_at, id_course, id_class, id_type`,
+      [courseIdNum, teacherId, Number(typeId), p, t, cls.id_module ?? null, idGroupField, idClassField]
+    );
+
+    return res.json({ item: insRows[0] });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -762,27 +701,27 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
     return res.status(400).json({ error: "grade inválida (0..100)" });
   }
 
-  const { data: ev, error: evErr } = await supabaseAdmin
-    .from("evaluation")
-    .select("id,id_teacher,id_course,evaluation_type:evaluation_type(type)")
-    .eq("id", examId)
-    .maybeSingle();
-
-  if (evErr) return res.status(500).json({ error: evErr.message });
+  const { rows: evRows } = await query(
+    `SELECT ev.id, ev.id_teacher, ev.id_course, et.type AS evaluation_type
+     FROM evaluation ev
+     LEFT JOIN evaluation_type et ON et.id = ev.id_type
+     WHERE ev.id = $1 LIMIT 1`,
+    [examId]
+  );
+  const ev = evRows[0];
   if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
   if (ev.id_teacher !== teacherId) {
     return res.status(403).json({ error: "No es tu evaluación" });
   }
 
-  let stQuery = supabaseAdmin.from("users").select("id,cedula,name,email,id_course");
-  if (ced) {
-    stQuery = stQuery.eq("cedula", ced);
-  } else {
-    stQuery = stQuery.eq("id", stId);
-  }
-  const { data: st, error: stErr } = await stQuery.maybeSingle();
+  const { rows: stRows } = await query(
+    ced
+      ? `SELECT id, cedula, name, email, id_course FROM users WHERE cedula = $1 LIMIT 1`
+      : `SELECT id, cedula, name, email, id_course FROM users WHERE id = $1 LIMIT 1`,
+    [ced || stId]
+  );
+  const st = stRows[0];
 
-  if (stErr) return res.status(500).json({ error: stErr.message });
   if (!st?.id) return res.status(404).json({ error: ced ? "No existe estudiante con esa cédula" : "No existe estudiante con ese id" });
 
   if (Number(st.id_course) !== Number(ev.id_course)) {
@@ -792,35 +731,28 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
   try { await requireAnioVigenteForCourse(ev.id_course); }
   catch (err) { return handleYearError(res, err); }
 
-  const { data: existingGrade, error: existingGradeErr } = await supabaseAdmin
-    .from("grades")
-    .select("attempts")
-    .eq("id_exam", examId)
-    .eq("id_student", st.id)
-    .maybeSingle();
+  const { rows: existingGradeRows } = await query(
+    `SELECT attempts FROM grades WHERE id_exam = $1 AND id_student = $2 LIMIT 1`,
+    [examId, st.id]
+  );
+  const existingGrade = existingGradeRows[0];
 
-  if (existingGradeErr) return res.status(500).json({ error: existingGradeErr.message });
+  const finishedAt = new Date().toISOString();
+  const attempts = Number(existingGrade?.attempts ?? 0) + 1;
 
-  const payload = {
-    id_exam: examId,
-    id_student: st.id,
-    grade: g,
-    finished_at: new Date().toISOString(),
-    attempts: Number(existingGrade?.attempts ?? 0) + 1,
-  };
-
-  const { data, error } = await supabaseAdmin
-    .from("grades")
-    .upsert(payload, { onConflict: "id_exam,id_student" })
-    .select("id_exam,id_student,grade,finished_at")
-    .maybeSingle();
-
-  if (error) return res.status(500).json({ error: error.message });
+  const { rows: gradeRows } = await query(
+    `INSERT INTO grades (id_exam, id_student, grade, finished_at, attempts)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (id_exam, id_student)
+     DO UPDATE SET grade = EXCLUDED.grade, finished_at = EXCLUDED.finished_at, attempts = EXCLUDED.attempts
+     RETURNING id_exam, id_student, grade, finished_at`,
+    [examId, st.id, g, finishedAt, attempts]
+  );
 
   return res.json({
     ok: true,
     student: { id: st.id, cedula: st.cedula, name: st.name },
-    grade: data,
+    grade: gradeRows[0],
   });
 });
 
@@ -838,13 +770,11 @@ teacherRouter.patch("/evaluations/:id", requireAuth, requireTeacher, async (req,
       return res.status(400).json({ error: "Percent inválido (1..100)" });
     }
 
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id,id_teacher,id_course")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (evErr) return res.status(500).json({ error: evErr.message });
+    const { rows: evRows } = await query(
+      `SELECT id, id_teacher, id_course FROM evaluation WHERE id = $1 LIMIT 1`,
+      [id]
+    );
+    const ev = evRows[0];
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
     if (ev.id_teacher !== teacherId) {
       return res.status(403).json({ error: "No puedes editar esta evaluación" });
@@ -853,16 +783,12 @@ teacherRouter.patch("/evaluations/:id", requireAuth, requireTeacher, async (req,
     try { await requireAnioVigenteForCourse(ev.id_course); }
     catch (err) { return handleYearError(res, err); }
 
-    const { data, error } = await supabaseAdmin
-      .from("evaluation")
-      .update({ percent })
-      .eq("id", id)
-      .select("id,percent")
-      .maybeSingle();
+    const { rows } = await query(
+      `UPDATE evaluation SET percent = $1 WHERE id = $2 RETURNING id, percent`,
+      [percent, id]
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-
-    return res.json({ item: data });
+    return res.json({ item: rows[0] });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error actualizando porcentaje" });
   }
@@ -878,13 +804,11 @@ teacherRouter.delete("/evaluations/:id", requireAuth, requireTeacher, async (req
 
     if (!id) return res.status(400).json({ error: "ID inválido" });
 
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id,id_teacher,id_course")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (evErr) return res.status(500).json({ error: evErr.message });
+    const { rows: evRows } = await query(
+      `SELECT id, id_teacher, id_course FROM evaluation WHERE id = $1 LIMIT 1`,
+      [id]
+    );
+    const ev = evRows[0];
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
     if (ev.id_teacher !== teacherId) {
       return res.status(403).json({ error: "No puedes eliminar esta evaluación" });
@@ -893,8 +817,7 @@ teacherRouter.delete("/evaluations/:id", requireAuth, requireTeacher, async (req
     try { await requireAnioVigenteForCourse(ev.id_course); }
     catch (err) { return handleYearError(res, err); }
 
-    const { error } = await supabaseAdmin.from("evaluation").delete().eq("id", id);
-    if (error) return res.status(500).json({ error: error.message });
+    await query(`DELETE FROM evaluation WHERE id = $1`, [id]);
 
     return res.json({ ok: true });
   } catch (e) {
@@ -918,25 +841,17 @@ teacherRouter.get("/group-grade-grid", requireAuth, requireTeacher, async (req, 
     if (!hasGroup) return res.status(403).json({ error: "No tienes materias asignadas en este grupo" });
 
     // Fetch ALL evaluations for this group (any teacher).
-    const { data: evRows, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select(`id,title,percent,created_at,id_course,id_class,id_group,id_type,
-        course:course(id,name,level,year),
-        class:class(id,name,level),
-        evaluation_type:evaluation_type(id,type),
-        group:group(id,name)`)
-      .eq("id_group", groupId)
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true });
-
-    if (evErr) return res.status(500).json({ error: evErr.message });
-    const evals = evRows || [];
+    const { rows: evRows } = await query(
+      `SELECT ${EVAL_SELECT} WHERE ev.id_group = $1 ORDER BY ev.created_at ASC, ev.id ASC`,
+      [groupId]
+    );
+    const evals = evRows.map(mapEvalRow);
 
     // Resolve group metadata even when there are no evaluations yet.
     let groupMeta = evals[0]?.group ?? null;
     if (!groupMeta) {
-      const { data: gRow } = await supabaseAdmin.from("group").select("id,name").eq("id", groupId).maybeSingle();
-      groupMeta = gRow ?? { id: groupId, name: `Grupo ${groupId}` };
+      const { rows: gRows } = await query(`SELECT id, name FROM "group" WHERE id = $1 LIMIT 1`, [groupId]);
+      groupMeta = gRows[0] ?? { id: groupId, name: `Grupo ${groupId}` };
     }
 
     if (evals.length === 0) {
@@ -951,11 +866,11 @@ teacherRouter.get("/group-grade-grid", requireAuth, requireTeacher, async (req, 
 
     let courseNameMap = new Map();
     if (courseIds.length > 0) {
-      const { data: cRows } = await supabaseAdmin.from("course").select("id,name").in("id", courseIds);
-      courseNameMap = new Map((cRows || []).map((c) => [Number(c.id), c.name]));
+      const { rows: cRows } = await query(`SELECT id, name FROM course WHERE id = ANY($1::bigint[])`, [courseIds]);
+      courseNameMap = new Map(cRows.map((c) => [Number(c.id), c.name]));
     }
 
-    const students = (studentsRaw || []).map((u) => ({
+    const students = studentsRaw.map((u) => ({
       id: u.id, name: u.name, cedula: u.cedula,
       id_course: u.id_course,
       course_name: courseNameMap.get(Number(u.id_course)) || null,
@@ -966,13 +881,12 @@ teacherRouter.get("/group-grade-grid", requireAuth, requireTeacher, async (req, 
     let grades = [];
     if (examIds.length > 0 && studentIds.length > 0) {
       await closeExpiredExams({ courseIds, evaluationIds: examIds });
-      const { data: gRows, error: gErr } = await supabaseAdmin
-        .from("grades")
-        .select("id_student,id_exam,grade,finished_at,attempts")
-        .in("id_exam", examIds)
-        .in("id_student", studentIds);
-      if (gErr) return res.status(500).json({ error: gErr.message });
-      grades = gRows || [];
+      const { rows: gRows } = await query(
+        `SELECT id_student, id_exam, grade, finished_at, attempts FROM grades
+         WHERE id_exam = ANY($1::bigint[]) AND id_student = ANY($2::uuid[])`,
+        [examIds, studentIds]
+      );
+      grades = gRows;
     }
 
     return res.json({ class: null, group: { ...group, level }, evaluations: evals, students, grades });
@@ -997,45 +911,25 @@ teacherRouter.get("/grade-grids-batch", requireAuth, requireTeacher, async (req,
     if (classIds.length === 0) return res.status(400).json({ error: "class_ids requerido" });
 
     // 1) Verify all requested classes belong to this teacher (one query)
-    const { data: ctRows, error: ctErr } = await supabaseAdmin
-      .from("class_teacher")
-      .select("id_class")
-      .eq("id_teacher", teacherId)
-      .in("id_class", classIds);
+    const { rows: ctRows } = await query(
+      `SELECT id_class FROM class_teacher WHERE id_teacher = $1 AND id_class = ANY($2::bigint[])`,
+      [teacherId, classIds]
+    );
 
-    if (ctErr) return res.status(500).json({ error: ctErr.message });
-
-    const allowedSet = new Set((ctRows || []).map((r) => Number(r.id_class)));
+    const allowedSet = new Set(ctRows.map((r) => Number(r.id_class)));
     const denied = classIds.filter((id) => !allowedSet.has(id));
     if (denied.length > 0) {
       return res.status(403).json({ error: `Materias no asignadas: ${denied.join(",")}` });
     }
 
     // 2) Fetch all class metadata + all evaluations in parallel
-    const [{ data: classRows, error: clsErr }, { data: evalRows, error: evErr }] = await Promise.all([
-      supabaseAdmin
-        .from("class")
-        .select("id,name,level")
-        .in("id", classIds),
-      supabaseAdmin
-        .from("evaluation")
-        .select(`
-          id,title,percent,created_at,
-          id_course,id_class,id_type,
-          course:course(id,name,level,year),
-          class:class(id,name,level),
-          evaluation_type:evaluation_type(id,type)
-        `)
-        .in("id_class", classIds)
-        .order("created_at", { ascending: true })
-        .order("id", { ascending: true }),
+    const [{ rows: classRows }, { rows: evalRows }] = await Promise.all([
+      query(`SELECT id, name, level FROM class WHERE id = ANY($1::bigint[])`, [classIds]),
+      query(`SELECT ${EVAL_SELECT} WHERE ev.id_class = ANY($1::bigint[]) ORDER BY ev.created_at ASC, ev.id ASC`, [classIds]),
     ]);
 
-    if (clsErr) return res.status(500).json({ error: clsErr.message });
-    if (evErr) return res.status(500).json({ error: evErr.message });
-
-    const classMap = new Map((classRows || []).map((c) => [c.id, c]));
-    const evals = evalRows || [];
+    const classMap = new Map(classRows.map((c) => [c.id, c]));
+    const evals = evalRows.map(mapEvalRow);
 
     // 3) Fetch students for all unique course_ids (one call)
     const allCourseIds = [...new Set(evals.map((e) => Number(e.id_course)).filter(Boolean))];
@@ -1044,12 +938,8 @@ teacherRouter.get("/grade-grids-batch", requireAuth, requireTeacher, async (req,
     // 4) Fetch course names
     let courseNameMap = new Map();
     if (allCourseIds.length > 0) {
-      const { data: courseRows, error: cErr } = await supabaseAdmin
-        .from("course")
-        .select("id,name")
-        .in("id", allCourseIds);
-      if (cErr) return res.status(500).json({ error: cErr.message });
-      courseNameMap = new Map((courseRows || []).map((c) => [Number(c.id), c.name]));
+      const { rows: courseRows } = await query(`SELECT id, name FROM course WHERE id = ANY($1::bigint[])`, [allCourseIds]);
+      courseNameMap = new Map(courseRows.map((c) => [Number(c.id), c.name]));
     }
 
     const students = studentsRaw.map((u) => ({
@@ -1066,14 +956,12 @@ teacherRouter.get("/grade-grids-batch", requireAuth, requireTeacher, async (req,
     let allGrades = [];
     if (allExamIds.length > 0 && allStudentIds.length > 0) {
       await closeExpiredExams({ courseIds: allCourseIds, evaluationIds: allExamIds });
-      const { data: gRows, error: gErr } = await supabaseAdmin
-        .from("grades")
-        .select("id_student,id_exam,grade,finished_at,attempts")
-        .in("id_exam", allExamIds)
-        .in("id_student", allStudentIds);
-
-      if (gErr) return res.status(500).json({ error: gErr.message });
-      allGrades = gRows || [];
+      const { rows: gRows } = await query(
+        `SELECT id_student, id_exam, grade, finished_at, attempts FROM grades
+         WHERE id_exam = ANY($1::bigint[]) AND id_student = ANY($2::uuid[])`,
+        [allExamIds, allStudentIds]
+      );
+      allGrades = gRows;
     }
 
     // Build per-class sections
@@ -1101,29 +989,22 @@ teacherRouter.get("/grade-grids-batch", requireAuth, requireTeacher, async (req,
 // ============================================================================
 
 async function resolveExamenTypeId(year) {
-  const { data: existing } = await supabaseAdmin
-    .from("evaluation_type")
-    .select("id")
-    .eq("type", "Examen")
-    .eq("year", year)
-    .maybeSingle();
-  if (existing?.id) return existing.id;
+  const { rows: existingRows } = await query(
+    `SELECT id FROM evaluation_type WHERE type = $1 AND year = $2 LIMIT 1`,
+    ["Examen", year]
+  );
+  if (existingRows[0]?.id) return existingRows[0].id;
 
-  const { data: created, error } = await supabaseAdmin
-    .from("evaluation_type")
-    .insert({ type: "Examen", year })
-    .select("id")
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  return created.id;
+  const { rows: createdRows } = await query(
+    `INSERT INTO evaluation_type (type, year) VALUES ($1, $2) RETURNING id`,
+    ["Examen", year]
+  );
+  return createdRows[0].id;
 }
 
 async function getExamenTypeIds() {
-  const { data } = await supabaseAdmin
-    .from("evaluation_type")
-    .select("id")
-    .eq("type", "Examen");
-  return (data || []).map((r) => r.id);
+  const { rows } = await query(`SELECT id FROM evaluation_type WHERE type = $1`, ["Examen"]);
+  return rows.map((r) => r.id);
 }
 
 const TIPOS_VALIDOS_EXAMEN = ["multiple_multi", "multiple_single", "falso_verdadero", "emparejamiento"];
@@ -1185,20 +1066,18 @@ teacherRouter.post("/exams", requireAuth, requireTeacher, async (req, res) => {
     const allowed = await teacherHasClass(teacherId, id_class);
     if (!allowed) return res.status(403).json({ error: "La materia no está asignada a este profesor" });
 
-    const { data: cls, error: clsErr } = await supabaseAdmin
-      .from("class")
-      .select("id,name,level,id_module,id_group")
-      .eq("id", id_class)
-      .maybeSingle();
-    if (clsErr) return res.status(500).json({ error: clsErr.message });
+    const { rows: clsRows } = await query(
+      `SELECT id, name, level, id_module, id_group FROM class WHERE id = $1 LIMIT 1`,
+      [id_class]
+    );
+    const cls = clsRows[0];
     if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
 
-    const { data: course, error: cErr } = await supabaseAdmin
-      .from("course")
-      .select("id,name,level,year")
-      .eq("id", id_course)
-      .maybeSingle();
-    if (cErr) return res.status(500).json({ error: cErr.message });
+    const { rows: courseRows } = await query(
+      `SELECT id, name, level, year FROM course WHERE id = $1 LIMIT 1`,
+      [id_course]
+    );
+    const course = courseRows[0];
     if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
     if (Number(course.level) !== Number(cls.level))
       return res.status(400).json({ error: "El curso no corresponde al nivel de la materia" });
@@ -1208,36 +1087,37 @@ teacherRouter.post("/exams", requireAuth, requireTeacher, async (req, res) => {
 
     const examenTypeId = await resolveExamenTypeId(course.year);
 
-    const { data: evalData, error: evalErr } = await supabaseAdmin
-      .from("evaluation")
-      .insert({
-        id_course,
-        id_class,
-        id_teacher:     teacherId,
-        id_type:        examenTypeId,
-        percent,
-        title,
-        id_module:      cls.id_module || null,
-        id_group:       cls.id_group  || null,
-        tiempo_minutos,
-      })
-      .select("id,title,percent,tiempo_minutos,created_at")
-      .maybeSingle();
-    if (evalErr) return res.status(500).json({ error: evalErr.message });
+    const { rows: evalRows } = await query(
+      `INSERT INTO evaluation (id_course, id_class, id_teacher, id_type, percent, title, id_module, id_group, tiempo_minutos)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, title, percent, tiempo_minutos, created_at`,
+      [id_course, id_class, teacherId, examenTypeId, percent, title, cls.id_module || null, cls.id_group || null, tiempo_minutos]
+    );
+    const evalData = evalRows[0];
 
-    const detalleRows = preguntas.map((p, idx) => ({
-      id_evaluation:      evalData.id,
-      orden:              idx + 1,
-      tipo:               p.tipo,
-      enunciado:          String(p.enunciado || "").trim(),
-      puntos:             Number(p.puntos),
-      opciones:           p.opciones,
-      respuesta_correcta: p.respuesta_correcta,
-    }));
+    const values = [];
+    const placeholders = preguntas.map((p, idx) => {
+      const base = idx * 7;
+      values.push(
+        evalData.id,
+        idx + 1,
+        p.tipo,
+        String(p.enunciado || "").trim(),
+        Number(p.puntos),
+        JSON.stringify(p.opciones),
+        JSON.stringify(p.respuesta_correcta)
+      );
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`;
+    });
 
-    const { error: detErr } = await supabaseAdmin.from("examen_detalle").insert(detalleRows);
-    if (detErr) {
-      await supabaseAdmin.from("evaluation").delete().eq("id", evalData.id);
+    try {
+      await query(
+        `INSERT INTO examen_detalle (id_evaluation, orden, tipo, enunciado, puntos, opciones, respuesta_correcta)
+         VALUES ${placeholders.join(", ")}`,
+        values
+      );
+    } catch (detErr) {
+      await query(`DELETE FROM evaluation WHERE id = $1`, [evalData.id]);
       return res.status(500).json({ error: `Error guardando preguntas: ${detErr.message}` });
     }
 
@@ -1258,24 +1138,22 @@ teacherRouter.get("/exams/:id", requireAuth, requireTeacher, async (req, res) =>
 
     const examenTypeIds = await getExamenTypeIds();
 
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id,title,percent,tiempo_minutos,id_course,id_class,id_module,id_group,id_teacher")
-      .eq("id", id)
-      .in("id_type", examenTypeIds)
-      .maybeSingle();
-    if (evErr) return res.status(500).json({ error: evErr.message });
+    const { rows: evRows } = await query(
+      `SELECT id, title, percent, tiempo_minutos, id_course, id_class, id_module, id_group, id_teacher
+       FROM evaluation WHERE id = $1 AND id_type = ANY($2::bigint[]) LIMIT 1`,
+      [id, examenTypeIds]
+    );
+    const ev = evRows[0];
     if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
     if (ev.id_teacher !== teacherId) return res.status(403).json({ error: "No es tu examen" });
 
-    const { data: preguntas, error: detErr } = await supabaseAdmin
-      .from("examen_detalle")
-      .select("id,orden,tipo,enunciado,puntos,opciones,respuesta_correcta")
-      .eq("id_evaluation", id)
-      .order("orden");
-    if (detErr) return res.status(500).json({ error: detErr.message });
+    const { rows: preguntas } = await query(
+      `SELECT id, orden, tipo, enunciado, puntos, opciones, respuesta_correcta
+       FROM examen_detalle WHERE id_evaluation = $1 ORDER BY orden`,
+      [id]
+    );
 
-    return res.json({ item: { ...ev, preguntas: preguntas || [] } });
+    return res.json({ item: { ...ev, preguntas } });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error cargando examen" });
   }
@@ -1302,12 +1180,11 @@ teacherRouter.put("/exams/:id", requireAuth, requireTeacher, async (req, res) =>
     if (pregErr) return res.status(400).json({ error: pregErr });
 
     const examenTypeIds = await getExamenTypeIds();
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id,id_teacher,id_course,id_type")
-      .eq("id", id)
-      .maybeSingle();
-    if (evErr) return res.status(500).json({ error: evErr.message });
+    const { rows: evRows } = await query(
+      `SELECT id, id_teacher, id_course, id_type FROM evaluation WHERE id = $1 LIMIT 1`,
+      [id]
+    );
+    const ev = evRows[0];
     if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
     if (!examenTypeIds.includes(ev.id_type))
       return res.status(400).json({ error: "Esta evaluación no es de tipo Examen" });
@@ -1316,42 +1193,44 @@ teacherRouter.put("/exams/:id", requireAuth, requireTeacher, async (req, res) =>
     try { await requireAnioVigenteForCourse(ev.id_course); }
     catch (err) { return handleYearError(res, err); }
 
-    const { count: intentosCount, error: intentosErr } = await supabaseAdmin
-      .from("rta_examen")
-      .select("id", { count: "exact", head: true })
-      .eq("id_evaluation", id)
-      .not("finalizado_at", "is", null);
-
-    if (intentosErr) return res.status(500).json({ error: intentosErr.message });
+    const { rows: countRows } = await query(
+      `SELECT count(*) FROM rta_examen WHERE id_evaluation = $1 AND finalizado_at IS NOT NULL`,
+      [id]
+    );
+    const intentosCount = Number(countRows[0]?.count ?? 0);
     if (intentosCount > 0)
       return res.status(409).json({
         error: `No se puede editar: ${intentosCount} alumno${intentosCount !== 1 ? "s" : ""} ya ${intentosCount !== 1 ? "rindieron" : "rindió"} este examen.`,
       });
 
-    const { error: updErr } = await supabaseAdmin
-      .from("evaluation")
-      .update({ tiempo_minutos, percent })
-      .eq("id", id);
-    if (updErr) return res.status(500).json({ error: updErr.message });
+    await query(`UPDATE evaluation SET tiempo_minutos = $1, percent = $2 WHERE id = $3`, [tiempo_minutos, percent, id]);
 
-    const { error: delErr } = await supabaseAdmin
-      .from("examen_detalle")
-      .delete()
-      .eq("id_evaluation", id);
-    if (delErr) return res.status(500).json({ error: delErr.message });
+    await query(`DELETE FROM examen_detalle WHERE id_evaluation = $1`, [id]);
 
-    const detalleRows = preguntas.map((p, idx) => ({
-      id_evaluation:      id,
-      orden:              idx + 1,
-      tipo:               p.tipo,
-      enunciado:          String(p.enunciado || "").trim(),
-      puntos:             Number(p.puntos),
-      opciones:           p.opciones,
-      respuesta_correcta: p.respuesta_correcta,
-    }));
+    const values = [];
+    const placeholders = preguntas.map((p, idx) => {
+      const base = idx * 7;
+      values.push(
+        id,
+        idx + 1,
+        p.tipo,
+        String(p.enunciado || "").trim(),
+        Number(p.puntos),
+        JSON.stringify(p.opciones),
+        JSON.stringify(p.respuesta_correcta)
+      );
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`;
+    });
 
-    const { error: insErr } = await supabaseAdmin.from("examen_detalle").insert(detalleRows);
-    if (insErr) return res.status(500).json({ error: `Error actualizando preguntas: ${insErr.message}` });
+    try {
+      await query(
+        `INSERT INTO examen_detalle (id_evaluation, orden, tipo, enunciado, puntos, opciones, respuesta_correcta)
+         VALUES ${placeholders.join(", ")}`,
+        values
+      );
+    } catch (insErr) {
+      return res.status(500).json({ error: `Error actualizando preguntas: ${insErr.message}` });
+    }
 
     return res.json({ ok: true });
   } catch (e) {
@@ -1371,22 +1250,22 @@ teacherRouter.get("/attendance/modules", requireAuth, requireTeacher, async (req
     const courseId  = Number(req.query.course_id || 0);
     if (!courseId) return res.status(400).json({ error: "course_id requerido" });
 
-    const { data: ctRows, error: ctErr } = await supabaseAdmin
-      .from("class_teacher")
-      .select("class:id_class(id_module)")
-      .eq("id_teacher", teacherId)
-      .eq("id_course", courseId);
+    const { rows: ctRows } = await query(
+      `SELECT c.id_module FROM class_teacher ct
+       JOIN class c ON c.id = ct.id_class
+       WHERE ct.id_teacher = $1 AND ct.id_course = $2`,
+      [teacherId, courseId]
+    );
 
-    if (ctErr) return res.status(500).json({ error: ctErr.message });
-
-    const moduleIds = [...new Set((ctRows || []).map((r) => r.class?.id_module).filter(Boolean))];
+    const moduleIds = [...new Set(ctRows.map((r) => r.id_module).filter(Boolean))];
     if (!moduleIds.length) return res.json({ items: [] });
 
-    const { data, error } = await supabaseAdmin
-      .from("module").select("id,name").in("id", moduleIds).order("name", { ascending: true });
+    const { rows } = await query(
+      `SELECT id, name FROM module WHERE id = ANY($1::bigint[]) ORDER BY name ASC`,
+      [moduleIds]
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ items: data || [] });
+    return res.json({ items: rows });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
@@ -1405,15 +1284,14 @@ teacherRouter.get("/attendance/classes", requireAuth, requireTeacher, async (req
 
     if (!courseId || !moduleRaw) return res.status(400).json({ error: "course_id y module_id requeridos" });
 
-    const { data: ctRows, error: ctErr } = await supabaseAdmin
-      .from("class_teacher")
-      .select("class:id_class(id,name,id_module)")
-      .eq("id_teacher", teacherId)
-      .eq("id_course", courseId);
+    const { rows: ctRows } = await query(
+      `SELECT c.id, c.name, c.id_module FROM class_teacher ct
+       JOIN class c ON c.id = ct.id_class
+       WHERE ct.id_teacher = $1 AND ct.id_course = $2`,
+      [teacherId, courseId]
+    );
 
-    if (ctErr) return res.status(500).json({ error: ctErr.message });
-
-    let classes = (ctRows || []).map((r) => r.class).filter(Boolean);
+    let classes = ctRows;
     if (moduleId !== "todos") classes = classes.filter((c) => Number(c.id_module) === Number(moduleId));
 
     const seen = new Set();
@@ -1443,27 +1321,27 @@ teacherRouter.get("/attendance/fechas", requireAuth, requireTeacher, async (req,
     if (!courseId || !moduleRaw || !classRaw)
       return res.status(400).json({ error: "course_id, module_id y class_id requeridos" });
 
-    const { data: ctRows } = await supabaseAdmin
-      .from("class_teacher").select("id_class")
-      .eq("id_teacher", teacherId).eq("id_course", courseId);
+    const { rows: ctRows } = await query(
+      `SELECT id_class FROM class_teacher WHERE id_teacher = $1 AND id_course = $2`,
+      [teacherId, courseId]
+    );
 
-    const teacherClassIds = (ctRows || []).map((r) => r.id_class);
+    const teacherClassIds = ctRows.map((r) => r.id_class);
     if (!teacherClassIds.length)
       return res.status(403).json({ error: "No tienes materias asignadas en este curso" });
 
-    let query = supabaseAdmin
-      .from("asistencia_sesion").select("id,fecha_clase")
-      .eq("id_course", courseId).order("fecha_clase", { ascending: false });
+    let sql = `SELECT id, fecha_clase FROM asistencia_sesion WHERE id_course = $1`;
+    const params = [courseId];
 
-    if (moduleId !== "todos") query = query.eq("id_module", moduleId);
-    if (classId  !== "todas") query = query.eq("id_class", classId);
-    else                      query = query.in("id_class", teacherClassIds);
+    if (moduleId !== "todos") { params.push(moduleId); sql += ` AND id_module = $${params.length}`; }
+    if (classId  !== "todas") { params.push(classId);  sql += ` AND id_class = $${params.length}`; }
+    else                      { params.push(teacherClassIds); sql += ` AND id_class = ANY($${params.length}::bigint[])`; }
+    sql += ` ORDER BY fecha_clase DESC`;
 
-    const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    const { rows: data } = await query(sql, params);
 
     const seen = new Set();
-    const items = (data || [])
+    const items = data
       .filter((r) => { if (seen.has(r.fecha_clase)) return false; seen.add(r.fecha_clase); return true; })
       .map((r) => ({ id: r.id, fecha_clase: r.fecha_clase }));
 
@@ -1487,38 +1365,38 @@ teacherRouter.get("/attendance/consulta", requireAuth, requireTeacher, async (re
     if (!courseId || !moduleId || !classId || !fecha)
       return res.status(400).json({ error: "course_id, module_id, class_id y fecha son requeridos" });
 
-    const { data: ct } = await supabaseAdmin
-      .from("class_teacher").select("id_class")
-      .eq("id_teacher", teacherId).eq("id_course", courseId).eq("id_class", classId).maybeSingle();
+    const { rows: ctRows } = await query(
+      `SELECT id_class FROM class_teacher WHERE id_teacher = $1 AND id_course = $2 AND id_class = $3 LIMIT 1`,
+      [teacherId, courseId, classId]
+    );
+    if (!ctRows[0]) return res.status(403).json({ error: "No tienes esta materia asignada en este curso" });
 
-    if (!ct) return res.status(403).json({ error: "No tienes esta materia asignada en este curso" });
-
-    const { data: sesion, error: sErr } = await supabaseAdmin
-      .from("asistencia_sesion")
-      .select("id,id_teacher,profesor_asistio,profesor_reemplazo")
-      .eq("id_course", courseId).eq("id_module", moduleId)
-      .eq("id_class", classId).eq("fecha_clase", fecha).maybeSingle();
-
-    if (sErr) return res.status(500).json({ error: sErr.message });
+    const { rows: sesionRows } = await query(
+      `SELECT id, id_teacher, profesor_asistio, profesor_reemplazo FROM asistencia_sesion
+       WHERE id_course = $1 AND id_module = $2 AND id_class = $3 AND fecha_clase = $4 LIMIT 1`,
+      [courseId, moduleId, classId, fecha]
+    );
+    const sesion = sesionRows[0];
     if (!sesion) return res.status(404).json({ error: "No hay registro para esa sesión" });
 
-    const { data: teacherRow } = await supabaseAdmin
-      .from("users").select("name").eq("id", sesion.id_teacher).maybeSingle();
+    const { rows: teacherRows } = await query(`SELECT name FROM users WHERE id = $1 LIMIT 1`, [sesion.id_teacher]);
 
-    const { data: detalleRows, error: dErr } = await supabaseAdmin
-      .from("asistencia_detalle").select("id_student,asistio,motivo").eq("id_sesion", sesion.id);
+    const { rows: detalleRows } = await query(
+      `SELECT id_student, asistio, motivo FROM asistencia_detalle WHERE id_sesion = $1`,
+      [sesion.id]
+    );
 
-    if (dErr) return res.status(500).json({ error: dErr.message });
-
-    const studentIds = (detalleRows || []).map((d) => d.id_student);
+    const studentIds = detalleRows.map((d) => d.id_student);
     let userMap = new Map();
     if (studentIds.length) {
-      const { data: usersData } = await supabaseAdmin
-        .from("users").select("id,name,cedula").in("id", studentIds);
-      userMap = new Map((usersData || []).map((u) => [u.id, u]));
+      const { rows: usersData } = await query(
+        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[])`,
+        [studentIds]
+      );
+      userMap = new Map(usersData.map((u) => [u.id, u]));
     }
 
-    const detalle = (detalleRows || [])
+    const detalle = detalleRows
       .map((d) => ({
         id_student: d.id_student,
         name:   userMap.get(d.id_student)?.name   ?? null,
@@ -1528,7 +1406,7 @@ teacherRouter.get("/attendance/consulta", requireAuth, requireTeacher, async (re
       }))
       .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", "es"));
 
-    return res.json({ sesion: { ...sesion, teacher_name: teacherRow?.name ?? null }, detalle });
+    return res.json({ sesion: { ...sesion, teacher_name: teacherRows[0]?.name ?? null }, detalle });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
@@ -1550,60 +1428,63 @@ teacherRouter.get("/attendance/consulta-todas", requireAuth, requireTeacher, asy
     if (!courseId || !moduleRaw || !classRaw)
       return res.status(400).json({ error: "course_id, module_id y class_id son requeridos" });
 
-    const { data: ctRows } = await supabaseAdmin
-      .from("class_teacher").select("id_class")
-      .eq("id_teacher", teacherId).eq("id_course", courseId);
+    const { rows: ctRows } = await query(
+      `SELECT id_class FROM class_teacher WHERE id_teacher = $1 AND id_course = $2`,
+      [teacherId, courseId]
+    );
 
-    const teacherClassIds = (ctRows || []).map((r) => r.id_class);
+    const teacherClassIds = ctRows.map((r) => r.id_class);
     if (!teacherClassIds.length)
       return res.status(403).json({ error: "No tienes materias asignadas en este curso" });
 
-    let query = supabaseAdmin
-      .from("asistencia_sesion")
-      .select("id,fecha_clase,id_teacher,profesor_asistio,profesor_reemplazo,id_class,class:id_class(id,name)")
-      .eq("id_course", courseId).order("fecha_clase", { ascending: true });
+    let sql = `SELECT s.id, s.fecha_clase, s.id_teacher, s.profesor_asistio, s.profesor_reemplazo, s.id_class,
+                      c.id AS class_id, c.name AS class_name
+               FROM asistencia_sesion s
+               LEFT JOIN class c ON c.id = s.id_class
+               WHERE s.id_course = $1`;
+    const params = [courseId];
 
-    if (moduleId    !== "todos") query = query.eq("id_module",   moduleId);
-    if (classId     !== "todas") query = query.eq("id_class",    classId);
-    else                         query = query.in("id_class",    teacherClassIds);
-    if (fechaFiltro)             query = query.eq("fecha_clase", fechaFiltro);
+    if (moduleId    !== "todos") { params.push(moduleId);         sql += ` AND s.id_module = $${params.length}`; }
+    if (classId     !== "todas") { params.push(classId);          sql += ` AND s.id_class = $${params.length}`; }
+    else                         { params.push(teacherClassIds);  sql += ` AND s.id_class = ANY($${params.length}::bigint[])`; }
+    if (fechaFiltro)             { params.push(fechaFiltro);      sql += ` AND s.fecha_clase = $${params.length}`; }
+    sql += ` ORDER BY s.fecha_clase ASC`;
 
-    const { data: sesiones, error: sErr } = await query;
-    if (sErr) return res.status(500).json({ error: sErr.message });
-    if (!sesiones?.length) return res.json({ fechas: [], detalle: [] });
+    const { rows: sesiones } = await query(sql, params);
+    if (!sesiones.length) return res.json({ fechas: [], detalle: [] });
 
     const teacherIds = [...new Set(sesiones.map((s) => s.id_teacher).filter(Boolean))];
     let teacherMap = new Map();
     if (teacherIds.length) {
-      const { data: td } = await supabaseAdmin.from("users").select("id,name").in("id", teacherIds);
-      teacherMap = new Map((td || []).map((u) => [u.id, u.name]));
+      const { rows: td } = await query(`SELECT id, name FROM users WHERE id = ANY($1::uuid[])`, [teacherIds]);
+      teacherMap = new Map(td.map((u) => [u.id, u.name]));
     }
 
     const sesionIds = sesiones.map((s) => s.id);
     const fechasList = sesiones.map((s) => ({
       fecha:              s.fecha_clase,
       class_id:           s.id_class   ?? null,
-      class_name:         s.class?.name ?? null,
+      class_name:         s.class_name ?? null,
       teacher_name:       teacherMap.get(s.id_teacher) ?? null,
       profesor_asistio:   s.profesor_asistio,
       profesor_reemplazo: s.profesor_reemplazo ?? null,
     }));
     const sesionInfoMap = new Map(sesiones.map((s) => [s.id, { fecha: s.fecha_clase, class_id: s.id_class ?? null }]));
 
-    const { data: detalleRows, error: dErr } = await supabaseAdmin
-      .from("asistencia_detalle").select("id_sesion,id_student,asistio,motivo").in("id_sesion", sesionIds);
+    const { rows: detalleRows } = await query(
+      `SELECT id_sesion, id_student, asistio, motivo FROM asistencia_detalle WHERE id_sesion = ANY($1::bigint[])`,
+      [sesionIds]
+    );
 
-    if (dErr) return res.status(500).json({ error: dErr.message });
-
-    const studentIds = [...new Set((detalleRows || []).map((d) => d.id_student))];
+    const studentIds = [...new Set(detalleRows.map((d) => d.id_student))];
     let userMap = new Map();
     if (studentIds.length) {
-      const { data: ud } = await supabaseAdmin.from("users").select("id,name,cedula").in("id", studentIds);
-      userMap = new Map((ud || []).map((u) => [u.id, u]));
+      const { rows: ud } = await query(`SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[])`, [studentIds]);
+      userMap = new Map(ud.map((u) => [u.id, u]));
     }
 
     const studentMap = new Map();
-    for (const d of (detalleRows || [])) {
+    for (const d of detalleRows) {
       const info = sesionInfoMap.get(d.id_sesion);
       if (!info) continue;
       if (!studentMap.has(d.id_student)) {
