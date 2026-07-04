@@ -21,8 +21,8 @@ Este documento es la fuente de verdad del avance. Cada paso se marca `[x]` cuand
 | Fase 1 — Capa de datos (`pg`) | ✅ Completa |
 | Fase 2 — Autenticación propia | ✅ Completa |
 | Fase 3 — Frontend | ✅ Completa |
-| Fase 4 — Infraestructura / despliegue | ⏳ Casi completa (bloqueada en el último punto hasta el deploy) |
-| Fase 5 — Validación y corte | Pendiente |
+| Fase 4 — Infraestructura / despliegue | ✅ Completa |
+| Fase 5 — Validación y corte | ⏳ En progreso |
 
 ---
 
@@ -77,14 +77,14 @@ Este documento es la fuente de verdad del avance. Cada paso se marca `[x]` cuand
 - [x] Actualizar variables de entorno en Render (backend, servicio DEV/QA): quitadas `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`, agregadas `DB_*`, `JWT_*`, `SMTP_*`, `FRONTEND_URL` (`https://qa-sofialapromesa.onrender.com`). Confirmado que DEV/QA comparten un solo servicio de Render, separado de `prod` (no tocado). Falta: pushear/mergear el código para que el redeploy tome estas variables.
 - [x] Actualizar variables de entorno en Render (frontend, servicio DEV/QA): quitadas `NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_ANON_KEY`/`NEXT_PUBLIC_USERS_TEMPLATE_URL` (código muerto, confirmado por búsqueda en el código — nada las lee). Queda solo `NEXT_PUBLIC_API_BASE_URL` (correcta, apunta al backend `qa-belapromesaxjiliu.onrender.com`). Aclarado el malentendido de nombres: `qa-belapromesaxjiliu` es el **backend**, `qa-sofialapromesa` es el **frontend**.
 - [x] Revisar CORS: `CORS_ORIGINS` en Render incluye el dominio real del frontend DEV/QA.
-- [ ] Revisar configuración SSL de la conexión a la VM desde Render (ya confirmado que funciona desde este entorno de desarrollo; **bloqueado hasta que se despliegue el código** — requiere push/merge, que Alex pidió no hacer todavía).
+- [x] Revisar configuración SSL de la conexión a la VM desde Render. Confirmado por Alex: el deploy en QA salió bien y la app levanta correctamente — Render conecta sin problemas a la VM.
 
 - **2026-07-04**: Corridas `changePsswd.js` a pedido de Alex — las 66 contraseñas de `auth.users` reseteadas a `123456`, para poder validar login con usuarios reales durante la Fase 5.
 
 ## Fase 5 — Validación y corte
 
 - [x] Probar flujo completo en local contra la VM de OCI (login, notas, cierre de exámenes, reportes). Validado manualmente por Alex — `dev` levanta bien en local (resuelto de paso un error de Next.js por Dropbox bloqueando `frontend/.next`).
-- [ ] Probar en QA/staging.
+- [x] Probar en QA/staging. Deploy en QA (Render) confirmado por Alex: levanta bien.
 - [ ] Cutover en producción.
 - [ ] Mantener Supabase activo de solo lectura como respaldo por un período prudencial.
 - [ ] Eliminar `backend/src/supabase.js`, la dependencia `@supabase/supabase-js` del backend, y los archivos temporales de inventario en `backend/src/usos/`.
@@ -105,4 +105,5 @@ _(Se agrega una entrada breve por sesión de trabajo, con fecha, qué se hizo y 
 - **2026-07-04**: Push de `dev` a `origin/dev`. Alex validó manualmente que `dev` levanta bien en local (resuelto de paso un error de Next.js por Dropbox bloqueando `frontend/.next`). Corridas `changePsswd.js` a pedido de Alex — las 66 contraseñas de `auth.users` reseteadas a `123456`. Merge de `dev` a `qa` sin conflictos y push a `origin/qa` (`74dbc8a..5e77db8`) — dispara el deploy en Render. Pendiente: confirmar que el deploy salga bien y que la conexión SSL a la VM funcione desde Render (último punto abierto de la Fase 4).
 - **2026-07-04**: Push de `dev` a `origin/dev` (`9985620..302318d`). **Sin mergear a `qa` todavía** — el deploy de Render sale de la rama `qa`, así que esto no dispara nada en Render aún.
 - **2026-07-04**: Fase 3 completada. Todo el frontend migrado de `supabase-js` al JWT propio y a los nuevos endpoints de auth. Probado en un navegador real (Firefox headless vía Playwright — Chromium no pudo correr en este entorno por faltar librerías del sistema sin acceso root; Firefox sí, extrayendo `libasound.so` de un `.deb` descargado sin instalar). Login, logout y "olvidé mi contraseña" verificados end-to-end sin errores de consola. `@supabase/supabase-js` ya no es dependencia del frontend.
+- **2026-07-04**: Fase 4 completada. Alex confirmó que el deploy en QA (Render) levanta bien — la conexión SSL desde Render a la VM de OCI funciona correctamente. Arranca la Fase 5: falta decidir cutover a producción y período de respaldo de Supabase.
 - **2026-07-04**: Fase 1 completada. Migrados `gradesBootstrap.js`, `examClosure.js`, `monitor.js`, `secretaria.js`, `student.js`, `teacher.js`, `admin.js` (3299 líneas, el más grande) y `routes/auth.js` (encontrado al auditar, no estaba en la lista original). Todos verificados en vivo contra la VM — GETs con datos reales, escrituras dentro de transacciones con `ROLLBACK` cuando no eran idempotentes de forma segura. Bug real encontrado y corregido: `pg` devuelve `bigint`/`numeric` como string (Supabase los devolvía como número JSON); se agregó `pg.types.setTypeParser` en `db.js` para restaurar el comportamiento anterior en todo el código ya migrado. Confirmado por `grep` que solo quedan referencias a `supabaseAdmin` en `supabase.js`, `middlewares/auth.js` y los 4 handlers de `admin.js` reservados para la Fase 2 (más `routes/teacher copy.js`, un archivo suelto no importado por `server.js`, sin tocar).
