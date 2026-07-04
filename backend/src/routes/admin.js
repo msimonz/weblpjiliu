@@ -2,8 +2,9 @@ import { Router } from "express";
 import multer from "multer";
 import XLSX from "xlsx";
 import ExcelJS from "exceljs";
+import bcrypt from "bcryptjs";
 import { requireAuth } from "../middlewares/auth.js";
-import { supabaseAdmin } from "../supabase.js";
+import { query } from "../db.js";
 import {
   getAnioLectivoVigente,
   invalidarCacheAnioLectivo,
@@ -50,6 +51,53 @@ function isUniqueViolation(err) {
   return msg.includes("duplicate key value") || msg.includes("unique constraint");
 }
 
+// ===== Auth propio: reemplaza supabaseAdmin.auth.admin.* =====
+// Crea el usuario en auth.users (antes: supabaseAdmin.auth.admin.createUser).
+// Lanza si el email ya existe (violación del índice único parcial de auth.users.email).
+async function createAuthUser({ email, password, name, roles }) {
+  const passwordHash = bcrypt.hashSync(password, 10);
+  const { rows } = await query(
+    `INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, raw_user_meta_data, created_at, updated_at)
+     VALUES (gen_random_uuid(), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', $1, $2, now(), $3::jsonb, now(), now())
+     RETURNING id, email`,
+    [email, passwordHash, JSON.stringify({ name, roles })]
+  );
+  return rows[0];
+}
+
+// Actualiza email/password/metadata en auth.users (antes: auth.admin.updateUserById).
+async function updateAuthUser(userId, { email, password, name, roles } = {}) {
+  const fields = [`updated_at = now()`];
+  const params = [];
+
+  if (email !== undefined) {
+    params.push(email);
+    fields.push(`email = $${params.length}`);
+  }
+  if (password !== undefined) {
+    params.push(bcrypt.hashSync(password, 10));
+    fields.push(`encrypted_password = $${params.length}`);
+  }
+  if (name !== undefined || roles !== undefined) {
+    params.push(JSON.stringify({ name, roles }));
+    fields.push(`raw_user_meta_data = $${params.length}::jsonb`);
+  }
+
+  params.push(userId);
+  const { rows } = await query(
+    `UPDATE auth.users SET ${fields.join(", ")} WHERE id = $${params.length} RETURNING id, email`,
+    params
+  );
+  return rows[0];
+}
+
+// Elimina el usuario de auth.users; cascada en BD limpia public.users y tablas relacionadas
+// (antes: auth.admin.deleteUser). Puede lanzar si el usuario es profesor con sesiones de
+// asistencia registradas (asistencia_sesion.id_teacher tiene ON DELETE RESTRICT).
+async function deleteAuthUser(userId) {
+  await query(`DELETE FROM auth.users WHERE id = $1`, [userId]);
+}
+
 // ===== Cache code -> typeId =====
 const typeCache = new Map();
 
@@ -58,17 +106,11 @@ async function getTypeIdByCode(code) {
   if (!c) throw new Error("type vacío");
   if (typeCache.has(c)) return typeCache.get(c);
 
-  const { data, error } = await supabaseAdmin
-    .from("type")
-    .select("id,code")
-    .eq("code", c)
-    .maybeSingle();
+  const { rows } = await query(`SELECT id, code FROM type WHERE code = $1 LIMIT 1`, [c]);
+  if (!rows[0]?.id) throw new Error(`No existe type '${c}' en tabla type`);
 
-  if (error) throw new Error(error.message);
-  if (!data?.id) throw new Error(`No existe type '${c}' en tabla type`);
-
-  typeCache.set(c, data.id);
-  return data.id;
+  typeCache.set(c, rows[0].id);
+  return rows[0].id;
 }
 
 /**
@@ -80,35 +122,26 @@ async function getTypeIdByCode(code) {
 async function syncMonitorCourse(userId, idCourse, isMonitor) {
   if (isMonitor) {
     // Quitar rol M al monitor anterior de este curso (si era otro)
-    const { data: courseRow } = await supabaseAdmin
-      .from("course")
-      .select("id_monitor")
-      .eq("id", idCourse)
-      .maybeSingle();
+    const { rows: courseRows } = await query(
+      `SELECT id_monitor FROM course WHERE id = $1 LIMIT 1`,
+      [idCourse]
+    );
+    const prevMonitorId = courseRows[0]?.id_monitor;
 
-    const prevMonitorId = courseRow?.id_monitor;
     if (prevMonitorId && prevMonitorId !== userId) {
-      const { data: typeM } = await supabaseAdmin
-        .from("type").select("id").eq("code", "M").maybeSingle();
-      if (typeM?.id) {
-        await supabaseAdmin
-          .from("user_type")
-          .delete()
-          .eq("id_user", prevMonitorId)
-          .eq("id_type", typeM.id);
+      const { rows: typeMRows } = await query(`SELECT id FROM type WHERE code = $1 LIMIT 1`, ["M"]);
+      if (typeMRows[0]?.id) {
+        await query(
+          `DELETE FROM user_type WHERE id_user = $1 AND id_type = $2`,
+          [prevMonitorId, typeMRows[0].id]
+        );
       }
     }
 
-    await supabaseAdmin
-      .from("course")
-      .update({ id_monitor: userId })
-      .eq("id", idCourse);
+    await query(`UPDATE course SET id_monitor = $1 WHERE id = $2`, [userId, idCourse]);
   } else {
     // Limpiar course.id_monitor si este usuario era el monitor
-    await supabaseAdmin
-      .from("course")
-      .update({ id_monitor: null })
-      .eq("id_monitor", userId);
+    await query(`UPDATE course SET id_monitor = NULL WHERE id_monitor = $1`, [userId]);
   }
 }
 
@@ -122,47 +155,33 @@ async function replaceUserRoles(id_user, roleCodes) {
   const desiredTypeIds = [];
   for (const c of codes) desiredTypeIds.push(await getTypeIdByCode(c));
 
-  const { data: current, error: curErr } = await supabaseAdmin
-    .from("user_type")
-    .select("id_type")
-    .eq("id_user", id_user);
+  const { rows: current } = await query(`SELECT id_type FROM user_type WHERE id_user = $1`, [id_user]);
 
-  if (curErr) throw new Error(curErr.message);
-
-  const curSet = new Set((current || []).map((r) => r.id_type));
+  const curSet = new Set(current.map((r) => r.id_type));
   const desSet = new Set(desiredTypeIds);
 
   const toDelete = [...curSet].filter((x) => !desSet.has(x));
   if (toDelete.length > 0) {
-    const { error: delErr } = await supabaseAdmin
-      .from("user_type")
-      .delete()
-      .eq("id_user", id_user)
-      .in("id_type", toDelete);
-
-    if (delErr) throw new Error(delErr.message);
+    await query(
+      `DELETE FROM user_type WHERE id_user = $1 AND id_type = ANY($2::smallint[])`,
+      [id_user, toDelete]
+    );
   }
 
   for (const id_type of desiredTypeIds) {
-    const { error: upErr } = await supabaseAdmin
-      .from("user_type")
-      .upsert({ id_user, id_type }, { onConflict: "id_user,id_type" });
-
-    if (upErr) throw new Error(upErr.message);
+    await query(
+      `INSERT INTO user_type (id_user, id_type) VALUES ($1, $2)
+       ON CONFLICT (id_user, id_type) DO NOTHING`,
+      [id_user, id_type]
+    );
   }
 }
 
 
 async function getStudentTypeId() {
-  const { data, error } = await supabaseAdmin
-    .from("type")
-    .select("id")
-    .eq("code", "S")
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-  if (!data?.id) throw new Error("No existe type 'S'");
-  return data.id;
+  const { rows } = await query(`SELECT id FROM type WHERE code = $1 LIMIT 1`, ["S"]);
+  if (!rows[0]?.id) throw new Error("No existe type 'S'");
+  return rows[0].id;
 }
 
 async function getStudentsByCourseIds(courseIds) {
@@ -172,37 +191,28 @@ async function getStudentsByCourseIds(courseIds) {
 
   if (ids.length === 0) return [];
 
-  const { data: users, error: uErr } = await supabaseAdmin
-    .from("users")
-    .select("id,name,cedula,id_course")
-    .in("id_course", ids)
-    .order("name", { ascending: true });
-
-  if (uErr) throw new Error(uErr.message);
-  if (!users?.length) return [];
+  const { rows: users } = await query(
+    `SELECT id, name, cedula, id_course FROM users WHERE id_course = ANY($1::bigint[]) ORDER BY name ASC`,
+    [ids]
+  );
+  if (!users.length) return [];
 
   const studentTypeId = await getStudentTypeId();
 
-  const { data: roleRows, error: rErr } = await supabaseAdmin
-    .from("user_type")
-    .select("id_user")
-    .eq("id_type", studentTypeId)
-    .in("id_user", users.map((u) => u.id));
+  const { rows: roleRows } = await query(
+    `SELECT id_user FROM user_type WHERE id_type = $1 AND id_user = ANY($2::uuid[])`,
+    [studentTypeId, users.map((u) => u.id)]
+  );
 
-  if (rErr) throw new Error(rErr.message);
-
-  const studentSet = new Set((roleRows || []).map((r) => r.id_user));
-  return (users || []).filter((u) => studentSet.has(u.id));
+  const studentSet = new Set(roleRows.map((r) => r.id_user));
+  return users.filter((u) => studentSet.has(u.id));
 }
 
 // Devuelve todos los IDs de evaluation_type con un nombre dado (todos los años).
 // Usar en operaciones de lectura que necesitan filtrar por tipo sin importar el año.
 async function getEvaluationTypeIdsByName(typeName) {
-  const { data } = await supabaseAdmin
-    .from("evaluation_type")
-    .select("id")
-    .eq("type", typeName);
-  return (data || []).map((r) => r.id);
+  const { rows } = await query(`SELECT id FROM evaluation_type WHERE type = $1`, [typeName]);
+  return rows.map((r) => r.id);
 }
 
 // Para escrituras: busca o crea el tipo en el año especificado.
@@ -215,24 +225,21 @@ async function resolveEvaluationTypeId(id_type, type_text, year) {
   if (!raw) throw new Error("Selecciona un tipo o escribe type_text");
 
   // Buscar por (type, year)
-  let q = supabaseAdmin.from("evaluation_type").select("id,type").eq("type", raw);
-  if (year) q = q.eq("year", year);
-  const { data: existing, error: exErr } = await q.maybeSingle();
-
-  if (exErr) throw new Error(exErr.message);
-  if (existing?.id) return existing.id;
+  let sql = `SELECT id, type FROM evaluation_type WHERE type = $1`;
+  const params = [raw];
+  if (year) { params.push(year); sql += ` AND year = $${params.length}`; }
+  sql += ` LIMIT 1`;
+  const { rows: existingRows } = await query(sql, params);
+  if (existingRows[0]?.id) return existingRows[0].id;
 
   // Crear con year
-  const insertPayload = { type: raw };
-  if (year) insertPayload.year = year;
-  const { data: created, error: crErr } = await supabaseAdmin
-    .from("evaluation_type")
-    .insert(insertPayload)
-    .select("id,type")
-    .maybeSingle();
-
-  if (crErr) throw new Error(crErr.message);
-  return created.id;
+  const { rows: createdRows } = await query(
+    year
+      ? `INSERT INTO evaluation_type (type, year) VALUES ($1, $2) RETURNING id, type`
+      : `INSERT INTO evaluation_type (type) VALUES ($1) RETURNING id, type`,
+    year ? [raw, year] : [raw]
+  );
+  return createdRows[0].id;
 }
 
 // ============================================================================
@@ -240,38 +247,29 @@ async function resolveEvaluationTypeId(id_type, type_text, year) {
 // ============================================================================
 adminRouter.get("/levels", requireAuth, requireAdminOrSecretary, async (req, res) => {
   const year = toInt(req.query.year) || (await getAnioLectivoVigente());
-  const { data, error } = await supabaseAdmin
-    .from("level")
-    .select("id,name,year")
-    .eq("year", year)
-    .order("id", { ascending: true });
-
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ items: data || [] });
+  const { rows } = await query(
+    `SELECT id, name, year FROM level WHERE year = $1 ORDER BY id ASC`,
+    [year]
+  );
+  return res.json({ items: rows });
 });
 
 adminRouter.get("/modules", requireAuth, requireAdminOrSecretary, async (req, res) => {
   const year = toInt(req.query.year) || (await getAnioLectivoVigente());
-  const { data, error } = await supabaseAdmin
-    .from("module")
-    .select("id,name,year")
-    .eq("year", year)
-    .order("name", { ascending: true });
-
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ items: data || [] });
+  const { rows } = await query(
+    `SELECT id, name, year FROM module WHERE year = $1 ORDER BY name ASC`,
+    [year]
+  );
+  return res.json({ items: rows });
 });
 
 adminRouter.get("/groups", requireAuth, requireAdminOrSecretary, async (req, res) => {
   const year = toInt(req.query.year) || (await getAnioLectivoVigente());
-  const { data, error } = await supabaseAdmin
-    .from("group")
-    .select("id,name,id_module,year")
-    .eq("year", year)
-    .order("name", { ascending: true });
-
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ items: data || [] });
+  const { rows } = await query(
+    `SELECT id, name, id_module, year FROM "group" WHERE year = $1 ORDER BY name ASC`,
+    [year]
+  );
+  return res.json({ items: rows });
 });
 
 // ============================================================================
@@ -279,38 +277,29 @@ adminRouter.get("/groups", requireAuth, requireAdminOrSecretary, async (req, res
 // ============================================================================
 adminRouter.get("/courses", requireAuth, requireAdminOrSecretary, async (req, res) => {
   const yearFilter = toInt(req.query.year) || (await getAnioLectivoVigente());
-  const { data, error } = await supabaseAdmin
-    .from("course")
-    .select("id,name,year,level,id_monitor")
-    .eq("year", yearFilter)
-    .order("level", { ascending: true })
-    .order("name", { ascending: true });
+  const { rows: data } = await query(
+    `SELECT id, name, year, level, id_monitor FROM course WHERE year = $1 ORDER BY level ASC, name ASC`,
+    [yearFilter]
+  );
 
-  if (error) return res.status(500).json({ error: error.message });
-
-  const courseIds = (data || []).map((c) => c.id);
-  const { data: usedRows, error: usedErr } = courseIds.length > 0
-    ? await supabaseAdmin
-        .from("users")
-        .select("id_course")
-        .in("id_course", courseIds)
-    : { data: [], error: null };
-
-  if (usedErr) return res.status(500).json({ error: usedErr.message });
+  const courseIds = data.map((c) => c.id);
+  const { rows: usedRows } = courseIds.length > 0
+    ? await query(`SELECT id_course FROM users WHERE id_course = ANY($1::bigint[])`, [courseIds])
+    : { rows: [] };
 
   // Cargar nombres de monitores asignados
-  const monitorIds = [...new Set((data || []).map((c) => c.id_monitor).filter(Boolean))];
+  const monitorIds = [...new Set(data.map((c) => c.id_monitor).filter(Boolean))];
   let monitorMap = new Map();
   if (monitorIds.length > 0) {
-    const { data: monitorRows } = await supabaseAdmin
-      .from("users")
-      .select("id,name")
-      .in("id", monitorIds);
-    monitorMap = new Map((monitorRows || []).map((u) => [u.id, u.name]));
+    const { rows: monitorRows } = await query(
+      `SELECT id, name FROM users WHERE id = ANY($1::uuid[])`,
+      [monitorIds]
+    );
+    monitorMap = new Map(monitorRows.map((u) => [u.id, u.name]));
   }
 
-  const usedSet = new Set((usedRows || []).map((r) => String(r.id_course)));
-  const items = (data || []).map((c) => ({
+  const usedSet = new Set(usedRows.map((r) => String(r.id_course)));
+  const items = data.map((c) => ({
     id:           c.id,
     name:         c.name,
     year:         c.year,
@@ -329,16 +318,11 @@ adminRouter.delete("/courses/:id", requireAuth, requireAdmin, async (req, res) =
   try { await requireAnioVigenteForRecord("course", id); }
   catch (err) { return handleYearError(res, err); }
 
-  const { count, error: checkErr } = await supabaseAdmin
-    .from("users")
-    .select("id", { count: "exact", head: true })
-    .eq("id_course", id);
-
-  if (checkErr) return res.status(500).json({ error: checkErr.message });
+  const { rows: countRows } = await query(`SELECT count(*) FROM users WHERE id_course = $1`, [id]);
+  const count = Number(countRows[0]?.count ?? 0);
   if (count > 0) return res.status(409).json({ error: "El curso tiene estudiantes asignados y no puede eliminarse." });
 
-  const { error } = await supabaseAdmin.from("course").delete().eq("id", id);
-  if (error) return res.status(500).json({ error: error.message });
+  await query(`DELETE FROM course WHERE id = $1`, [id]);
   return res.json({ ok: true });
 });
 
@@ -354,14 +338,11 @@ adminRouter.post("/courses", requireAuth, requireAdmin, async (req, res) => {
     return res.status(403).json({ error: `Solo se pueden crear cursos para el año lectivo vigente (${vigente})` });
   }
 
-  const { data, error } = await supabaseAdmin
-    .from("course")
-    .insert({ name, level, year })
-    .select("id,name,year,level")
-    .maybeSingle();
-
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ item: data });
+  const { rows } = await query(
+    `INSERT INTO course (name, level, year) VALUES ($1, $2, $3) RETURNING id, name, year, level`,
+    [name, level, year]
+  );
+  return res.json({ item: rows[0] });
 });
 
 // ============================================================================
@@ -373,32 +354,21 @@ adminRouter.get("/courses/:id/students", requireAuth, requireAdmin, async (req, 
   if (!courseId) return res.status(400).json({ error: "id inválido" });
 
   try {
-    const { data: typeRow } = await supabaseAdmin
-      .from("type")
-      .select("id")
-      .eq("code", "S")
-      .maybeSingle();
+    const { rows: typeRows } = await query(`SELECT id FROM type WHERE code = $1 LIMIT 1`, ["S"]);
+    if (!typeRows[0]?.id) return res.status(500).json({ error: "Tipo S no encontrado" });
 
-    if (!typeRow?.id) return res.status(500).json({ error: "Tipo S no encontrado" });
+    const { rows: users } = await query(
+      `SELECT id, name, cedula FROM users WHERE id_course = $1 ORDER BY name ASC`,
+      [courseId]
+    );
+    if (!users.length) return res.json({ items: [] });
 
-    const { data: users, error: uErr } = await supabaseAdmin
-      .from("users")
-      .select("id,name,cedula")
-      .eq("id_course", courseId)
-      .order("name", { ascending: true });
+    const { rows: roleRows } = await query(
+      `SELECT id_user FROM user_type WHERE id_type = $1 AND id_user = ANY($2::uuid[])`,
+      [typeRows[0].id, users.map((u) => u.id)]
+    );
 
-    if (uErr) return res.status(500).json({ error: uErr.message });
-    if (!users?.length) return res.json({ items: [] });
-
-    const { data: roleRows, error: rErr } = await supabaseAdmin
-      .from("user_type")
-      .select("id_user")
-      .eq("id_type", typeRow.id)
-      .in("id_user", users.map((u) => u.id));
-
-    if (rErr) return res.status(500).json({ error: rErr.message });
-
-    const studentSet = new Set((roleRows || []).map((r) => r.id_user));
+    const studentSet = new Set(roleRows.map((r) => r.id_user));
     return res.json({ items: users.filter((u) => studentSet.has(u.id)) });
   } catch (e) {
     return res.status(500).json({ error: e.message });
@@ -423,80 +393,62 @@ adminRouter.put("/courses/:id/monitor", requireAuth, requireAdmin, async (req, r
 
     if (id_monitor !== null) {
       // Verificar que el usuario existe y pertenece al curso
-      const { data: userRow, error: uErr } = await supabaseAdmin
-        .from("users")
-        .select("id,id_course")
-        .eq("id", id_monitor)
-        .maybeSingle();
-
-      if (uErr) return res.status(500).json({ error: uErr.message });
+      const { rows: userRows } = await query(
+        `SELECT id, id_course FROM users WHERE id = $1 LIMIT 1`,
+        [id_monitor]
+      );
+      const userRow = userRows[0];
       if (!userRow) return res.status(404).json({ error: "Usuario no encontrado" });
       if (Number(userRow.id_course) !== courseId) {
         return res.status(400).json({ error: "El usuario no pertenece a este curso" });
       }
 
       // Verificar que no sea ya monitor de otro curso en el mismo año
-      const { data: courseRow } = await supabaseAdmin
-        .from("course")
-        .select("year")
-        .eq("id", courseId)
-        .maybeSingle();
+      const { rows: courseRows } = await query(`SELECT year FROM course WHERE id = $1 LIMIT 1`, [courseId]);
+      const courseRow = courseRows[0];
 
-      const { data: otherMonitor } = await supabaseAdmin
-        .from("course")
-        .select("id")
-        .eq("id_monitor", id_monitor)
-        .eq("year", courseRow.year)
-        .neq("id", courseId)
-        .maybeSingle();
+      const { rows: otherMonitorRows } = await query(
+        `SELECT id FROM course WHERE id_monitor = $1 AND year = $2 AND id != $3 LIMIT 1`,
+        [id_monitor, courseRow.year, courseId]
+      );
 
-      if (otherMonitor) {
+      if (otherMonitorRows[0]) {
         return res.status(409).json({ error: "Este estudiante ya es monitor de otro curso en el mismo año lectivo" });
       }
 
       // Asignar rol M si no lo tiene
-      const { data: typeM } = await supabaseAdmin
-        .from("type").select("id").eq("code", "M").maybeSingle();
-
-      if (typeM?.id) {
-        await supabaseAdmin
-          .from("user_type")
-          .upsert({ id_user: id_monitor, id_type: typeM.id }, { onConflict: "id_user,id_type" });
+      const { rows: typeMRows } = await query(`SELECT id FROM type WHERE code = $1 LIMIT 1`, ["M"]);
+      if (typeMRows[0]?.id) {
+        await query(
+          `INSERT INTO user_type (id_user, id_type) VALUES ($1, $2) ON CONFLICT (id_user, id_type) DO NOTHING`,
+          [id_monitor, typeMRows[0].id]
+        );
       }
     }
 
     // Si se desasigna monitor (id_monitor = null), quitar rol M del monitor anterior
     if (id_monitor === null) {
-      const { data: currentCourse } = await supabaseAdmin
-        .from("course")
-        .select("id_monitor")
-        .eq("id", courseId)
-        .maybeSingle();
+      const { rows: currentCourseRows } = await query(`SELECT id_monitor FROM course WHERE id = $1 LIMIT 1`, [courseId]);
+      const currentCourse = currentCourseRows[0];
 
       if (currentCourse?.id_monitor) {
-        const { data: typeM } = await supabaseAdmin
-          .from("type").select("id").eq("code", "M").maybeSingle();
-
-        if (typeM?.id) {
-          await supabaseAdmin
-            .from("user_type")
-            .delete()
-            .eq("id_user", currentCourse.id_monitor)
-            .eq("id_type", typeM.id);
+        const { rows: typeMRows } = await query(`SELECT id FROM type WHERE code = $1 LIMIT 1`, ["M"]);
+        if (typeMRows[0]?.id) {
+          await query(
+            `DELETE FROM user_type WHERE id_user = $1 AND id_type = $2`,
+            [currentCourse.id_monitor, typeMRows[0].id]
+          );
         }
       }
     }
 
     // Actualizar course.id_monitor
-    const { data: updated, error: upErr } = await supabaseAdmin
-      .from("course")
-      .update({ id_monitor })
-      .eq("id", courseId)
-      .select("id,name,id_monitor")
-      .maybeSingle();
+    const { rows: updatedRows } = await query(
+      `UPDATE course SET id_monitor = $1 WHERE id = $2 RETURNING id, name, id_monitor`,
+      [id_monitor, courseId]
+    );
 
-    if (upErr) return res.status(500).json({ error: upErr.message });
-    return res.json({ ok: true, item: updated });
+    return res.json({ ok: true, item: updatedRows[0] });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
@@ -507,33 +459,26 @@ adminRouter.put("/courses/:id/monitor", requireAuth, requireAdmin, async (req, r
 // ============================================================================
 adminRouter.get("/classes", requireAuth, requireAdminOrSecretary, async (req, res) => {
   const year = toInt(req.query.year) || (await getAnioLectivoVigente());
-  const [
-    { data: classData, error: classErr },
-    { data: grpData,   error: grpErr },
-  ] = await Promise.all([
-    supabaseAdmin
-      .from("class")
-      .select("id,name,level,id_module,id_group,year,created_at,module:module(id,name)")
-      .eq("year", year)
-      .order("level", { ascending: true })
-      .order("name",  { ascending: true }),
-    supabaseAdmin
-      .from("group")
-      .select("id,name")
-      .eq("year", year),
+  const [{ rows: classData }, { rows: grpData }] = await Promise.all([
+    query(
+      `SELECT c.id, c.name, c.level, c.id_module, c.id_group, c.year, c.created_at, m.id AS module_id, m.name AS module_name
+       FROM class c
+       LEFT JOIN module m ON m.id = c.id_module
+       WHERE c.year = $1
+       ORDER BY c.level ASC, c.name ASC`,
+      [year]
+    ),
+    query(`SELECT id, name FROM "group" WHERE year = $1`, [year]),
   ]);
 
-  if (classErr) return res.status(500).json({ error: classErr.message });
-  if (grpErr)   return res.status(500).json({ error: grpErr.message });
+  const grpMap = new Map(grpData.map((g) => [g.id, g.name]));
 
-  const grpMap = new Map((grpData || []).map((g) => [g.id, g.name]));
-
-  const items = (classData || []).map((c) => ({
+  const items = classData.map((c) => ({
     id: c.id,
     name: c.name,
     level: c.level,
     id_module: c.id_module,
-    module_name: c.module?.name || null,
+    module_name: c.module_name || null,
     created_at: c.created_at,
     groups: c.id_group ? [{ id: c.id_group, name: grpMap.get(c.id_group) || "" }] : [],
   }));
@@ -566,14 +511,8 @@ adminRouter.post("/classes", requireAuth, requireAdmin, async (req, res) => {
       const mod = await getOrCreateModuleByName(new_module_name, vigente);
       id_module = mod.id;
     } else if (id_module) {
-      const { data: mod, error: modErr } = await supabaseAdmin
-        .from("module")
-        .select("id,name")
-        .eq("id", id_module)
-        .maybeSingle();
-
-      if (modErr) return res.status(500).json({ error: modErr.message });
-      if (!mod?.id) return res.status(404).json({ error: "Módulo no existe" });
+      const { rows: modRows } = await query(`SELECT id, name FROM module WHERE id = $1 LIMIT 1`, [id_module]);
+      if (!modRows[0]?.id) return res.status(404).json({ error: "Módulo no existe" });
     }
 
     // grupo existente o nuevo (opcional)
@@ -581,31 +520,18 @@ adminRouter.post("/classes", requireAuth, requireAdmin, async (req, res) => {
       const grp = await getOrCreateGroupByName(new_group_name, vigente);
       id_group = grp.id;
     } else if (id_group) {
-      const { data: grp, error: grpErr } = await supabaseAdmin
-        .from("group")
-        .select("id,name")
-        .eq("id", id_group)
-        .maybeSingle();
-
-      if (grpErr) return res.status(500).json({ error: grpErr.message });
-      if (!grp?.id) return res.status(404).json({ error: "Grupo no existe" });
+      const { rows: grpRows } = await query(`SELECT id, name FROM "group" WHERE id = $1 LIMIT 1`, [id_group]);
+      if (!grpRows[0]?.id) return res.status(404).json({ error: "Grupo no existe" });
     }
 
-    const { data: createdClass, error: classErr } = await supabaseAdmin
-      .from("class")
-      .insert({
-        name,
-        level,
-        id_module,
-        year: vigente,
-        ...(id_group ? { id_group } : {}),
-      })
-      .select("id,name,level,id_module,id_group,year,created_at")
-      .maybeSingle();
+    const { rows: createdRows } = await query(
+      `INSERT INTO class (name, level, id_module, year, id_group)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, name, level, id_module, id_group, year, created_at`,
+      [name, level, id_module, vigente, id_group || null]
+    );
 
-    if (classErr) return res.status(500).json({ error: classErr.message });
-
-    return res.json({ item: createdClass });
+    return res.json({ item: createdRows[0] });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando materia" });
   }
@@ -617,26 +543,22 @@ adminRouter.post("/classes", requireAuth, requireAdmin, async (req, res) => {
 adminRouter.get("/evaluation-types", requireAuth, requireAdmin, async (req, res) => {
   const year = toInt(req.query.year) || (await getAnioLectivoVigente());
 
-  const { data, error } = await supabaseAdmin
-    .from("evaluation_type")
-    .select("id,type,year,created_at")
-    .eq("year", year)
-    .order("id", { ascending: true });
+  const { rows: data } = await query(
+    `SELECT id, type, year, created_at FROM evaluation_type WHERE year = $1 ORDER BY id ASC`,
+    [year]
+  );
 
-  if (error) return res.status(500).json({ error: error.message });
-
-  const typeIds = (data || []).map((t) => t.id);
+  const typeIds = data.map((t) => t.id);
   let usedSet = new Set();
   if (typeIds.length > 0) {
-    const { data: usedRows, error: usedErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id_type")
-      .in("id_type", typeIds);
-    if (usedErr) return res.status(500).json({ error: usedErr.message });
-    usedSet = new Set((usedRows || []).map((r) => String(r.id_type)));
+    const { rows: usedRows } = await query(
+      `SELECT id_type FROM evaluation WHERE id_type = ANY($1::bigint[])`,
+      [typeIds]
+    );
+    usedSet = new Set(usedRows.map((r) => String(r.id_type)));
   }
 
-  const items = (data || []).map((t) => ({ ...t, eval_count: usedSet.has(String(t.id)) ? 1 : 0 }));
+  const items = data.map((t) => ({ ...t, eval_count: usedSet.has(String(t.id)) ? 1 : 0 }));
   return res.json({ items });
 });
 
@@ -647,16 +569,11 @@ adminRouter.delete("/evaluation-types/:id", requireAuth, requireAdmin, async (re
   try { await requireAnioVigenteForRecord("evaluation_type", id); }
   catch (err) { return handleYearError(res, err); }
 
-  const { count, error: checkErr } = await supabaseAdmin
-    .from("evaluation")
-    .select("id", { count: "exact", head: true })
-    .eq("id_type", id);
-
-  if (checkErr) return res.status(500).json({ error: checkErr.message });
+  const { rows: countRows } = await query(`SELECT count(*) FROM evaluation WHERE id_type = $1`, [id]);
+  const count = Number(countRows[0]?.count ?? 0);
   if (count > 0) return res.status(409).json({ error: "El tipo tiene evaluaciones asociadas y no puede eliminarse." });
 
-  const { error } = await supabaseAdmin.from("evaluation_type").delete().eq("id", id);
-  if (error) return res.status(500).json({ error: error.message });
+  await query(`DELETE FROM evaluation_type WHERE id = $1`, [id]);
   return res.json({ ok: true });
 });
 
@@ -666,24 +583,17 @@ adminRouter.post("/evaluation-types", requireAuth, requireAdmin, async (req, res
 
   const vigente = await getAnioLectivoVigente();
 
-  const { data: ex, error: exErr } = await supabaseAdmin
-    .from("evaluation_type")
-    .select("id,type,year")
-    .eq("type", type)
-    .eq("year", vigente)
-    .maybeSingle();
+  const { rows: exRows } = await query(
+    `SELECT id, type, year FROM evaluation_type WHERE type = $1 AND year = $2 LIMIT 1`,
+    [type, vigente]
+  );
+  if (exRows[0]?.id) return res.json({ item: exRows[0] });
 
-  if (exErr) return res.status(500).json({ error: exErr.message });
-  if (ex?.id) return res.json({ item: ex });
-
-  const { data, error } = await supabaseAdmin
-    .from("evaluation_type")
-    .insert({ type, year: vigente })
-    .select("id,type,year,created_at")
-    .maybeSingle();
-
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ item: data });
+  const { rows } = await query(
+    `INSERT INTO evaluation_type (type, year) VALUES ($1, $2) RETURNING id, type, year, created_at`,
+    [type, vigente]
+  );
+  return res.json({ item: rows[0] });
 });
 
 // ============================================================================
@@ -696,117 +606,87 @@ adminRouter.get("/teachers", requireAuth, requireAdmin, async (req, res) => {
   const groupId  = toInt(req.query.group_id);
   const classId  = toInt(req.query.class_id);
 
-  const { data: tRow, error: tErr } = await supabaseAdmin
-    .from("type")
-    .select("id")
-    .eq("code", "T")
-    .maybeSingle();
+  const { rows: tRows } = await query(`SELECT id FROM type WHERE code = $1 LIMIT 1`, ["T"]);
+  if (!tRows[0]?.id) return res.status(500).json({ error: "No existe type 'T'" });
 
-  if (tErr) return res.status(500).json({ error: tErr.message });
-  if (!tRow?.id) return res.status(500).json({ error: "No existe type 'T'" });
+  const { rows: utRows } = await query(`SELECT id_user FROM user_type WHERE id_type = $1`, [tRows[0].id]);
 
-  const { data: ut, error: utErr } = await supabaseAdmin
-    .from("user_type")
-    .select("id_user")
-    .eq("id_type", tRow.id);
-
-  if (utErr) return res.status(500).json({ error: utErr.message });
-
-  let ids = (ut || []).map((r) => r.id_user);
+  let ids = utRows.map((r) => r.id_user);
   if (ids.length === 0) return res.json({ items: [] });
 
   // Filtrar por clase específica
   if (classId) {
-    const { data: ctRows, error: ctErr } = await supabaseAdmin
-      .from("class_teacher")
-      .select("id_teacher")
-      .eq("id_class", classId)
-      .in("id_teacher", ids);
-    if (ctErr) return res.status(500).json({ error: ctErr.message });
-    ids = ids.filter((id) => new Set((ctRows || []).map((r) => r.id_teacher)).has(id));
+    const { rows: ctRows } = await query(
+      `SELECT id_teacher FROM class_teacher WHERE id_class = $1 AND id_teacher = ANY($2::uuid[])`,
+      [classId, ids]
+    );
+    const allowed = new Set(ctRows.map((r) => r.id_teacher));
+    ids = ids.filter((id) => allowed.has(id));
     if (ids.length === 0) return res.json({ items: [] });
   } else if (groupId) {
     // Filtrar por grupo: profesores que dictan materias de ese grupo
-    const { data: ctRows, error: ctErr } = await supabaseAdmin
-      .from("class_teacher")
-      .select("id_teacher, class:class(id_group)")
-      .in("id_teacher", ids);
-    if (ctErr) return res.status(500).json({ error: ctErr.message });
-    ids = ids.filter((id) => (ctRows || []).some((r) => r.id_teacher === id && Number(r.class?.id_group) === groupId));
+    const { rows: ctRows } = await query(
+      `SELECT ct.id_teacher, c.id_group FROM class_teacher ct
+       JOIN class c ON c.id = ct.id_class
+       WHERE ct.id_teacher = ANY($1::uuid[])`,
+      [ids]
+    );
+    ids = ids.filter((id) => ctRows.some((r) => r.id_teacher === id && Number(r.id_group) === groupId));
     if (ids.length === 0) return res.json({ items: [] });
   } else if (moduleId) {
     // Filtrar por módulo: profesores que dictan materias de ese módulo
-    const { data: ctRows, error: ctErr } = await supabaseAdmin
-      .from("class_teacher")
-      .select("id_teacher, class:class(id_module)")
-      .in("id_teacher", ids);
-    if (ctErr) return res.status(500).json({ error: ctErr.message });
-    ids = ids.filter((id) => (ctRows || []).some((r) => r.id_teacher === id && Number(r.class?.id_module) === moduleId));
+    const { rows: ctRows } = await query(
+      `SELECT ct.id_teacher, c.id_module FROM class_teacher ct
+       JOIN class c ON c.id = ct.id_class
+       WHERE ct.id_teacher = ANY($1::uuid[])`,
+      [ids]
+    );
+    ids = ids.filter((id) => ctRows.some((r) => r.id_teacher === id && Number(r.id_module) === moduleId));
     if (ids.length === 0) return res.json({ items: [] });
   } else if (courseId) {
-    const { data: ctRows, error: ctErr } = await supabaseAdmin
-      .from("class_teacher")
-      .select("id_teacher")
-      .eq("id_course", courseId)
-      .in("id_teacher", ids);
-    if (ctErr) return res.status(500).json({ error: ctErr.message });
-    ids = ids.filter((id) => new Set((ctRows || []).map((r) => r.id_teacher)).has(id));
+    const { rows: ctRows } = await query(
+      `SELECT id_teacher FROM class_teacher WHERE id_course = $1 AND id_teacher = ANY($2::uuid[])`,
+      [courseId, ids]
+    );
+    const allowed = new Set(ctRows.map((r) => r.id_teacher));
+    ids = ids.filter((id) => allowed.has(id));
     if (ids.length === 0) return res.json({ items: [] });
   } else if (level) {
-    const { data: ctRows, error: ctErr } = await supabaseAdmin
-      .from("class_teacher")
-      .select("id_teacher, class:class(level)")
-      .in("id_teacher", ids);
-    if (ctErr) return res.status(500).json({ error: ctErr.message });
-    ids = ids.filter((id) => (ctRows || []).some((r) => r.id_teacher === id && Number(r.class?.level) === level));
+    const { rows: ctRows } = await query(
+      `SELECT ct.id_teacher, c.level FROM class_teacher ct
+       JOIN class c ON c.id = ct.id_class
+       WHERE ct.id_teacher = ANY($1::uuid[])`,
+      [ids]
+    );
+    ids = ids.filter((id) => ctRows.some((r) => r.id_teacher === id && Number(r.level) === level));
     if (ids.length === 0) return res.json({ items: [] });
   }
 
-  const { data, error } = await supabaseAdmin
-    .from("users")
-    .select("id,name,email,cedula")
-    .in("id", ids)
-    .order("name", { ascending: true });
-
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ items: data || [] });
+  const { rows } = await query(
+    `SELECT id, name, email, cedula FROM users WHERE id = ANY($1::uuid[]) ORDER BY name ASC`,
+    [ids]
+  );
+  return res.json({ items: rows });
 });
 
 adminRouter.get("/students", requireAuth, requireAdmin, async (req, res) => {
   const q = cleanStr(req.query.q || "");
 
-  const { data: sRow, error: sErr } = await supabaseAdmin
-    .from("type")
-    .select("id")
-    .eq("code", "S")
-    .maybeSingle();
+  const { rows: sRows } = await query(`SELECT id FROM type WHERE code = $1 LIMIT 1`, ["S"]);
+  if (!sRows[0]?.id) return res.status(500).json({ error: "No existe type 'S'" });
 
-  if (sErr) return res.status(500).json({ error: sErr.message });
-  if (!sRow?.id) return res.status(500).json({ error: "No existe type 'S'" });
+  const { rows: utRows } = await query(`SELECT id_user FROM user_type WHERE id_type = $1`, [sRows[0].id]);
 
-  const { data: ut, error: utErr } = await supabaseAdmin
-    .from("user_type")
-    .select("id_user")
-    .eq("id_type", sRow.id);
-
-  if (utErr) return res.status(500).json({ error: utErr.message });
-
-  const ids = (ut || []).map((r) => r.id_user);
+  const ids = utRows.map((r) => r.id_user);
   if (ids.length === 0) return res.json({ items: [] });
 
-  let query = supabaseAdmin
-    .from("users")
-    .select("id,name,email,cedula,id_course")
-    .in("id", ids)
-    .order("name", { ascending: true })
-    .limit(200);
+  let sql = `SELECT id, name, email, cedula, id_course FROM users WHERE id = ANY($1::uuid[])`;
+  const params = [ids];
+  if (q) { params.push(`%${q}%`); sql += ` AND name ILIKE $${params.length}`; }
+  sql += ` ORDER BY name ASC LIMIT 200`;
 
-  if (q) query = query.ilike("name", `%${q}%`);
-
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
-
-  return res.json({ items: data || [] });
+  const { rows } = await query(sql, params);
+  return res.json({ items: rows });
 });
 
 // ============================================================================
@@ -824,14 +704,15 @@ adminRouter.post("/assign-teacher", requireAuth, requireAdmin, async (req, res) 
   try { await requireAnioVigenteForCourse(id_course); }
   catch (err) { return handleYearError(res, err); }
 
-  const { data, error } = await supabaseAdmin
-    .from("class_teacher")
-    .upsert({ id_teacher, id_class, id_course }, { onConflict: "id_teacher,id_class,id_course" })
-    .select("id_teacher,id_class,id_course,created_at")
-    .maybeSingle();
+  const { rows } = await query(
+    `INSERT INTO class_teacher (id_teacher, id_class, id_course)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (id_teacher, id_class, id_course) DO UPDATE SET id_teacher = EXCLUDED.id_teacher
+     RETURNING id_teacher, id_class, id_course, created_at`,
+    [id_teacher, id_class, id_course]
+  );
 
-  if (error) return res.status(500).json({ error: error.message });
-  return res.json({ ok: true, item: data });
+  return res.json({ ok: true, item: rows[0] });
 });
 
 
@@ -843,29 +724,58 @@ adminRouter.get("/courses-by-class", requireAuth, requireAdmin, async (req, res)
     const classId = toInt(req.query.class_id);
     if (!classId) return res.status(400).json({ error: "class_id requerido" });
 
-    const { data: cls, error: clsErr } = await supabaseAdmin
-      .from("class")
-      .select("id,name,level")
-      .eq("id", classId)
-      .maybeSingle();
-
-    if (clsErr) return res.status(500).json({ error: clsErr.message });
+    const { rows: clsRows } = await query(`SELECT id, name, level FROM class WHERE id = $1 LIMIT 1`, [classId]);
+    const cls = clsRows[0];
     if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
 
-    const { data: courses, error: cErr } = await supabaseAdmin
-      .from("course")
-      .select("id,name,level,year")
-      .eq("level", cls.level)
-      .order("level", { ascending: true })
-      .order("id", { ascending: true });
+    const { rows: courses } = await query(
+      `SELECT id, name, level, year FROM course WHERE level = $1 ORDER BY level ASC, id ASC`,
+      [cls.level]
+    );
 
-    if (cErr) return res.status(500).json({ error: cErr.message });
-
-    return res.json({ items: courses || [] });
+    return res.json({ items: courses });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error obteniendo cursos" });
   }
 });
+
+const ADMIN_EVAL_SELECT = `
+  ev.id, ev.title, ev.percent, ev.created_at, ev.id_course, ev.id_class, ev.id_type, ev.id_teacher, ev.id_module, ev.id_group,
+  co.id AS course_id, co.name AS course_name, co.level AS course_level, co.year AS course_year,
+  cl.id AS class_id, cl.name AS class_name, cl.level AS class_level, cl.id_module AS class_id_module,
+  et.id AS et_id, et.type AS et_type,
+  te.id AS teacher_id, te.name AS teacher_name,
+  m.id AS mod_id, m.name AS mod_name,
+  g.id AS grp_id, g.name AS grp_name
+  FROM evaluation ev
+  LEFT JOIN course co ON co.id = ev.id_course
+  LEFT JOIN class cl ON cl.id = ev.id_class
+  LEFT JOIN evaluation_type et ON et.id = ev.id_type
+  LEFT JOIN users te ON te.id = ev.id_teacher
+  LEFT JOIN module m ON m.id = ev.id_module
+  LEFT JOIN "group" g ON g.id = ev.id_group
+`;
+
+function mapAdminEvalRow(r) {
+  return {
+    id: r.id,
+    title: r.title,
+    percent: r.percent,
+    created_at: r.created_at,
+    id_course: r.id_course,
+    id_class: r.id_class,
+    id_type: r.id_type,
+    id_teacher: r.id_teacher,
+    id_module: r.id_module,
+    id_group: r.id_group,
+    course: r.course_id ? { id: r.course_id, name: r.course_name, level: r.course_level, year: r.course_year } : null,
+    class: r.class_id ? { id: r.class_id, name: r.class_name, level: r.class_level, id_module: r.class_id_module } : null,
+    evaluation_type: r.et_id ? { id: r.et_id, type: r.et_type } : null,
+    teacher: r.teacher_id ? { id: r.teacher_id, name: r.teacher_name } : null,
+    module: r.mod_id ? { id: r.mod_id, name: r.mod_name } : null,
+    group: r.grp_id ? { id: r.grp_id, name: r.grp_name } : null,
+  };
+}
 
 adminRouter.get("/evaluations", requireAuth, requireAdmin, async (req, res) => {
   res.set("Cache-Control", "no-store");
@@ -877,38 +787,18 @@ adminRouter.get("/evaluations", requireAuth, requireAdmin, async (req, res) => {
     const moduleId = toInt(req.query.module_id);
     const groupId = toInt(req.query.group_id);
 
-    let q = supabaseAdmin
-      .from("evaluation")
-      .select(`
-        id,
-        title,
-        percent,
-        created_at,
-        id_course,
-        id_class,
-        id_type,
-        id_teacher,
-        id_module,
-        id_group,
-        course:course(id,name,level,year),
-        class:class(id,name,level,id_module),
-        evaluation_type:evaluation_type(id,type),
-        teacher:users!id_teacher(id,name),
-        module:module(id,name),
-        group:group(id,name)
-      `)
-      .order("created_at", { ascending: false });
+    let sql = `SELECT ${ADMIN_EVAL_SELECT} WHERE 1=1`;
+    const params = [];
+    if (classId)   { params.push(classId);   sql += ` AND ev.id_class = $${params.length}`; }
+    if (courseId)  { params.push(courseId);  sql += ` AND ev.id_course = $${params.length}`; }
+    if (teacherId) { params.push(teacherId); sql += ` AND ev.id_teacher = $${params.length}`; }
+    if (moduleId)  { params.push(moduleId);  sql += ` AND ev.id_module = $${params.length}`; }
+    if (groupId)   { params.push(groupId);   sql += ` AND ev.id_group = $${params.length}`; }
+    sql += ` ORDER BY ev.created_at DESC`;
 
-    if (classId) q = q.eq("id_class", classId);
-    if (courseId) q = q.eq("id_course", courseId);
-    if (teacherId) q = q.eq("id_teacher", teacherId);
-    if (moduleId) q = q.eq("id_module", moduleId);
-    if (groupId) q = q.eq("id_group", groupId);
+    const { rows } = await query(sql, params);
+    let items = rows.map(mapAdminEvalRow);
 
-    const { data, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
-
-    let items = data || [];
     if (level) {
       items = items.filter((it) => {
         if (it?.class?.level) return Number(it.class.level) === level;
@@ -931,41 +821,18 @@ adminRouter.get("/class-grade-grid", requireAuth, requireAdminOrSecretary, async
 
     if (!classId) return res.status(400).json({ error: "class_id requerido" });
 
-    const { data: cls, error: clsErr } = await supabaseAdmin
-      .from("class")
-      .select("id,name,level")
-      .eq("id", classId)
-      .maybeSingle();
-
-    if (clsErr) return res.status(500).json({ error: clsErr.message });
+    const { rows: clsRows } = await query(`SELECT id, name, level FROM class WHERE id = $1 LIMIT 1`, [classId]);
+    const cls = clsRows[0];
     if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
 
-    let evQuery = supabaseAdmin
-      .from("evaluation")
-      .select(`
-        id,
-        title,
-        percent,
-        created_at,
-        id_course,
-        id_class,
-        id_type,
-        id_teacher,
-        course:course(id,name,level,year),
-        class:class(id,name,level),
-        evaluation_type:evaluation_type(id,type)
-      `)
-      .eq("id_class", classId)
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true });
+    let sql = `SELECT ${ADMIN_EVAL_SELECT} WHERE ev.id_class = $1`;
+    const params = [classId];
+    if (teacherId) { params.push(teacherId); sql += ` AND ev.id_teacher = $${params.length}`; }
+    if (courseId)  { params.push(courseId);  sql += ` AND ev.id_course = $${params.length}`; }
+    sql += ` ORDER BY ev.created_at ASC, ev.id ASC`;
 
-    if (teacherId) evQuery = evQuery.eq("id_teacher", teacherId);
-    if (courseId) evQuery = evQuery.eq("id_course", courseId);
-
-    const { data: evaluations, error: evErr } = await evQuery;
-    if (evErr) return res.status(500).json({ error: evErr.message });
-
-    const evals = evaluations || [];
+    const { rows: evalRows } = await query(sql, params);
+    const evals = evalRows.map(mapAdminEvalRow);
 
     const courseIds = courseId
       ? [courseId]
@@ -973,18 +840,13 @@ adminRouter.get("/class-grade-grid", requireAuth, requireAdminOrSecretary, async
 
     const studentsRaw = await getStudentsByCourseIds(courseIds);
 
-    const { data: courses, error: cErr } = courseIds.length
-      ? await supabaseAdmin
-          .from("course")
-          .select("id,name")
-          .in("id", courseIds)
-      : { data: [], error: null };
+    const { rows: courses } = courseIds.length
+      ? await query(`SELECT id, name FROM course WHERE id = ANY($1::bigint[])`, [courseIds])
+      : { rows: [] };
 
-    if (cErr) return res.status(500).json({ error: cErr.message });
+    const courseNameMap = new Map(courses.map((c) => [Number(c.id), c.name]));
 
-    const courseNameMap = new Map((courses || []).map((c) => [Number(c.id), c.name]));
-
-    const students = (studentsRaw || []).map((u) => ({
+    const students = studentsRaw.map((u) => ({
       id: u.id,
       name: u.name,
       cedula: u.cedula,
@@ -998,14 +860,12 @@ adminRouter.get("/class-grade-grid", requireAuth, requireAdminOrSecretary, async
     let grades = [];
     if (examIds.length > 0 && studentIds.length > 0) {
       await closeExpiredExams({ courseIds, evaluationIds: examIds });
-      const { data: gRows, error: gErr } = await supabaseAdmin
-        .from("grades")
-        .select("id_student,id_exam,grade,finished_at,attempts,created_at,updated_at")
-        .in("id_exam", examIds)
-        .in("id_student", studentIds);
-
-      if (gErr) return res.status(500).json({ error: gErr.message });
-      grades = gRows || [];
+      const { rows: gRows } = await query(
+        `SELECT id_student, id_exam, grade, finished_at, attempts, created_at, updated_at FROM grades
+         WHERE id_exam = ANY($1::bigint[]) AND id_student = ANY($2::uuid[])`,
+        [examIds, studentIds]
+      );
+      grades = gRows;
     }
 
     return res.json({
@@ -1025,23 +885,13 @@ adminRouter.get("/group-grade-grid", requireAuth, requireAdminOrSecretary, async
     const courseId = toInt(req.query.course_id);
     if (!groupId) return res.status(400).json({ error: "group_id requerido" });
 
-    let evQuery = supabaseAdmin
-      .from("evaluation")
-      .select(`id,title,percent,created_at,id_course,id_class,id_group,id_module,id_type,
-        course:course(id,name,level,year),
-        class:class(id,name,level),
-        evaluation_type:evaluation_type(id,type),
-        module:module(id,name),
-        group:group(id,name)`)
-      .eq("id_group", groupId)
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true });
-    if (courseId) evQuery = evQuery.eq("id_course", courseId);
+    let sql = `SELECT ${ADMIN_EVAL_SELECT} WHERE ev.id_group = $1`;
+    const params = [groupId];
+    if (courseId) { params.push(courseId); sql += ` AND ev.id_course = $${params.length}`; }
+    sql += ` ORDER BY ev.created_at ASC, ev.id ASC`;
 
-    const { data: evRows, error: evErr } = await evQuery;
-
-    if (evErr) return res.status(500).json({ error: evErr.message });
-    const evals = evRows || [];
+    const { rows: evRows } = await query(sql, params);
+    const evals = evRows.map(mapAdminEvalRow);
 
     const group = evals[0]?.group ?? { id: groupId, name: `Grupo ${groupId}` };
     const courseIds = [...new Set(evals.map((e) => Number(e.id_course)).filter(Boolean))];
@@ -1049,11 +899,11 @@ adminRouter.get("/group-grade-grid", requireAuth, requireAdminOrSecretary, async
 
     let courseNameMap = new Map();
     if (courseIds.length > 0) {
-      const { data: cRows } = await supabaseAdmin.from("course").select("id,name").in("id", courseIds);
-      courseNameMap = new Map((cRows || []).map((c) => [Number(c.id), c.name]));
+      const { rows: cRows } = await query(`SELECT id, name FROM course WHERE id = ANY($1::bigint[])`, [courseIds]);
+      courseNameMap = new Map(cRows.map((c) => [Number(c.id), c.name]));
     }
 
-    const students = (studentsRaw || []).map((u) => ({
+    const students = studentsRaw.map((u) => ({
       id: u.id, name: u.name, cedula: u.cedula,
       id_course: u.id_course,
       course_name: courseNameMap.get(Number(u.id_course)) || null,
@@ -1064,13 +914,12 @@ adminRouter.get("/group-grade-grid", requireAuth, requireAdminOrSecretary, async
     let grades = [];
     if (examIds.length > 0 && studentIds.length > 0) {
       await closeExpiredExams({ courseIds, evaluationIds: examIds });
-      const { data: gRows, error: gErr } = await supabaseAdmin
-        .from("grades")
-        .select("id_student,id_exam,grade,finished_at,attempts")
-        .in("id_exam", examIds)
-        .in("id_student", studentIds);
-      if (gErr) return res.status(500).json({ error: gErr.message });
-      grades = gRows || [];
+      const { rows: gRows } = await query(
+        `SELECT id_student, id_exam, grade, finished_at, attempts FROM grades
+         WHERE id_exam = ANY($1::bigint[]) AND id_student = ANY($2::uuid[])`,
+        [examIds, studentIds]
+      );
+      grades = gRows;
     }
 
     return res.json({ class: null, group, evaluations: evals, students, grades });
@@ -1089,65 +938,43 @@ adminRouter.get("/grade-grid", requireAuth, requireAdminOrSecretary, async (req,
     const level    = toInt(req.query.level); // 0 or omit = all levels
 
     // 1. Resolve which classes/modules to include
-    let classQuery = supabaseAdmin.from("class").select("id,name,level,id_module");
+    let classSql = `SELECT id, name, level, id_module FROM class WHERE 1=1`;
+    const classParams = [];
     if (classId) {
-      classQuery = classQuery.eq("id", classId);
+      classParams.push(classId); classSql += ` AND id = $${classParams.length}`;
     } else {
-      if (level && level > 0) classQuery = classQuery.eq("level", level);
-      if (moduleId)           classQuery = classQuery.eq("id_module", moduleId);
+      if (level && level > 0) { classParams.push(level); classSql += ` AND level = $${classParams.length}`; }
+      if (moduleId)           { classParams.push(moduleId); classSql += ` AND id_module = $${classParams.length}`; }
     }
-    classQuery = classQuery.order("level").order("name");
+    classSql += ` ORDER BY level, name`;
 
-    const { data: classRows, error: clsErr } = await classQuery;
-    if (clsErr) return res.status(500).json({ error: clsErr.message });
-    const classIds = (classRows || []).map((c) => c.id);
+    const { rows: classRows } = await query(classSql, classParams);
+    const classIds = classRows.map((c) => c.id);
     if (classIds.length === 0)
       return res.json({ classes: [], evaluations: [], students: [], grades: [] });
 
     const includeGroupEvaluations = !classId;
     const moduleIds = includeGroupEvaluations
-      ? [...new Set((classRows || []).map((c) => Number(c.id_module)).filter(Boolean))]
+      ? [...new Set(classRows.map((c) => Number(c.id_module)).filter(Boolean))]
       : [];
 
     // 2. Get evaluations for those classes plus grouped evaluations in the same scope
-    let classEvQuery = supabaseAdmin
-      .from("evaluation")
-      .select(`id,title,percent,created_at,id_course,id_class,id_group,id_module,id_type,id_teacher,
-        course:course(id,name,level,year),
-        class:class(id,name,level),
-        module:module(id,name),
-        group:group(id,name),
-        evaluation_type:evaluation_type(id,type)`)
-      .in("id_class", classIds)
-      .order("id_class", { ascending: true })
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true });
-    if (courseId) classEvQuery = classEvQuery.eq("id_course", courseId);
+    let classEvSql = `SELECT ${ADMIN_EVAL_SELECT} WHERE ev.id_class = ANY($1::bigint[])`;
+    const classEvParams = [classIds];
+    if (courseId) { classEvParams.push(courseId); classEvSql += ` AND ev.id_course = $${classEvParams.length}`; }
+    classEvSql += ` ORDER BY ev.id_class ASC, ev.created_at ASC, ev.id ASC`;
 
-    let groupEvQuery = supabaseAdmin
-      .from("evaluation")
-      .select(`id,title,percent,created_at,id_course,id_class,id_group,id_module,id_type,id_teacher,
-        course:course(id,name,level,year),
-        class:class(id,name,level),
-        module:module(id,name),
-        group:group(id,name),
-        evaluation_type:evaluation_type(id,type)`)
-      .in("id_module", moduleIds)
-      .not("id_group", "is", null)
-      .order("id_group", { ascending: true })
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true });
-    if (courseId) groupEvQuery = groupEvQuery.eq("id_course", courseId);
+    let groupEvSql = `SELECT ${ADMIN_EVAL_SELECT} WHERE ev.id_module = ANY($1::bigint[]) AND ev.id_group IS NOT NULL`;
+    const groupEvParams = [moduleIds];
+    if (courseId) { groupEvParams.push(courseId); groupEvSql += ` AND ev.id_course = $${groupEvParams.length}`; }
+    groupEvSql += ` ORDER BY ev.id_group ASC, ev.created_at ASC, ev.id ASC`;
 
-    const [
-      { data: classEvaluations, error: classEvErr },
-      { data: groupEvaluations, error: groupEvErr },
-    ] = await Promise.all([classEvQuery, moduleIds.length ? groupEvQuery : Promise.resolve({ data: [], error: null })]);
+    const [{ rows: classEvaluations }, { rows: groupEvaluations }] = await Promise.all([
+      query(classEvSql, classEvParams),
+      moduleIds.length ? query(groupEvSql, groupEvParams) : Promise.resolve({ rows: [] }),
+    ]);
 
-    if (classEvErr) return res.status(500).json({ error: classEvErr.message });
-    if (groupEvErr) return res.status(500).json({ error: groupEvErr.message });
-
-    const evals = [...(classEvaluations || []), ...(groupEvaluations || [])];
+    const evals = [...classEvaluations.map(mapAdminEvalRow), ...groupEvaluations.map(mapAdminEvalRow)];
 
     // 3. Resolve course IDs for student lookup
     let courseIds = courseId
@@ -1156,20 +983,21 @@ adminRouter.get("/grade-grid", requireAuth, requireAdminOrSecretary, async (req,
 
     // If still empty (no evals yet), fall back to courses of the level
     if (courseIds.length === 0) {
-      let cq = supabaseAdmin.from("course").select("id");
-      if (courseId)            cq = cq.eq("id", courseId);
-      else if (level && level > 0) cq = cq.eq("level", level);
-      const { data: cRows } = await cq;
-      courseIds = (cRows || []).map((c) => Number(c.id));
+      let cSql = `SELECT id FROM course WHERE 1=1`;
+      const cParams = [];
+      if (courseId) { cParams.push(courseId); cSql += ` AND id = $${cParams.length}`; }
+      else if (level && level > 0) { cParams.push(level); cSql += ` AND level = $${cParams.length}`; }
+      const { rows: cRows } = await query(cSql, cParams);
+      courseIds = cRows.map((c) => Number(c.id));
     }
 
     // 4. Students
     const studentsRaw = await getStudentsByCourseIds(courseIds);
-    let { data: coursesInfo } = courseIds.length
-      ? await supabaseAdmin.from("course").select("id,name").in("id", courseIds)
-      : { data: [] };
-    const courseNameMap = new Map((coursesInfo || []).map((c) => [Number(c.id), c.name]));
-    const students = (studentsRaw || []).map((u) => ({
+    const { rows: coursesInfo } = courseIds.length
+      ? await query(`SELECT id, name FROM course WHERE id = ANY($1::bigint[])`, [courseIds])
+      : { rows: [] };
+    const courseNameMap = new Map(coursesInfo.map((c) => [Number(c.id), c.name]));
+    const students = studentsRaw.map((u) => ({
       id: u.id, name: u.name, cedula: u.cedula, id_course: u.id_course,
       course_name: courseNameMap.get(Number(u.id_course)) || null,
     }));
@@ -1180,13 +1008,12 @@ adminRouter.get("/grade-grid", requireAuth, requireAdminOrSecretary, async (req,
     let grades = [];
     if (examIds.length > 0 && studentIds.length > 0) {
       await closeExpiredExams({ courseIds, evaluationIds: examIds });
-      const { data: gRows, error: gErr } = await supabaseAdmin
-        .from("grades")
-        .select("id_student,id_exam,grade,finished_at,attempts,created_at,updated_at")
-        .in("id_exam", examIds)
-        .in("id_student", studentIds);
-      if (gErr) return res.status(500).json({ error: gErr.message });
-      grades = gRows || [];
+      const { rows: gRows } = await query(
+        `SELECT id_student, id_exam, grade, finished_at, attempts, created_at, updated_at FROM grades
+         WHERE id_exam = ANY($1::bigint[]) AND id_student = ANY($2::uuid[])`,
+        [examIds, studentIds]
+      );
+      grades = gRows;
     }
 
     return res.json({
@@ -1206,25 +1033,17 @@ adminRouter.get("/exam-grades", requireAuth, requireAdmin, async (req, res) => {
     const examId = toInt(req.query.exam_id);
     if (!examId) return res.status(400).json({ error: "exam_id requerido" });
 
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id")
-      .eq("id", examId)
-      .maybeSingle();
-
-    if (evErr) return res.status(500).json({ error: evErr.message });
-    if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
+    const { rows: evRows } = await query(`SELECT id FROM evaluation WHERE id = $1 LIMIT 1`, [examId]);
+    if (!evRows[0]?.id) return res.status(404).json({ error: "Evaluación no existe" });
 
     await closeExpiredExams({ evaluationIds: [examId] });
 
-    const { data, error } = await supabaseAdmin
-      .from("grades")
-      .select("id_student,grade,finished_at,attempts,created_at,updated_at")
-      .eq("id_exam", examId);
+    const { rows } = await query(
+      `SELECT id_student, grade, finished_at, attempts, created_at, updated_at FROM grades WHERE id_exam = $1`,
+      [examId]
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-
-    return res.json({ items: data || [] });
+    return res.json({ items: rows });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error obteniendo notas" });
   }
@@ -1253,25 +1072,21 @@ adminRouter.post("/evaluations", requireAuth, requireAdmin, async (req, res) => 
       return res.status(400).json({ error: "title requerido" });
     }
 
-    const { data: cls, error: clsErr } = await supabaseAdmin
-      .from("class")
-      .select("id,name,level,id_module,id_group")
-      .eq("id", id_class)
-      .maybeSingle();
-
-    if (clsErr) return res.status(500).json({ error: clsErr.message });
+    const { rows: clsRows } = await query(
+      `SELECT id, name, level, id_module, id_group FROM class WHERE id = $1 LIMIT 1`,
+      [id_class]
+    );
+    const cls = clsRows[0];
     if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
     if (cls.id_group) return res.status(400).json({
       error: "Esta materia pertenece a un grupo de evaluación. Las evaluaciones deben crearse a nivel de grupo.",
     });
 
-    const { data: course, error: cErr } = await supabaseAdmin
-      .from("course")
-      .select("id,name,level,year")
-      .eq("id", id_course)
-      .maybeSingle();
-
-    if (cErr) return res.status(500).json({ error: cErr.message });
+    const { rows: courseRows } = await query(
+      `SELECT id, name, level, year FROM course WHERE id = $1 LIMIT 1`,
+      [id_course]
+    );
+    const course = courseRows[0];
     if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
 
     if (Number(course.level) !== Number(cls.level)) {
@@ -1285,22 +1100,14 @@ adminRouter.post("/evaluations", requireAuth, requireAdmin, async (req, res) => 
 
     const typeId = await resolveEvaluationTypeId(id_type, type_text, course.year);
 
-    const { data, error } = await supabaseAdmin
-      .from("evaluation")
-      .insert({
-        id_course,
-        id_teacher,
-        id_type: typeId,
-        percent,
-        title,
-        id_module: cls.id_module || null,
-        id_class,
-      })
-      .select("id,title,percent,created_at,id_course,id_class,id_type,id_teacher")
-      .maybeSingle();
+    const { rows } = await query(
+      `INSERT INTO evaluation (id_course, id_teacher, id_type, percent, title, id_module, id_class)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, title, percent, created_at, id_course, id_class, id_type, id_teacher`,
+      [id_course, id_teacher, typeId, percent, title, cls.id_module || null, id_class]
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ item: data });
+    return res.json({ item: rows[0] });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando evaluación" });
   }
@@ -1319,24 +1126,18 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "grade inválida (0..100)" });
     }
 
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id,id_course,evaluation_type:evaluation_type(type)")
-      .eq("id", examId)
-      .maybeSingle();
-
-    if (evErr) return res.status(500).json({ error: evErr.message });
+    const { rows: evRows } = await query(`SELECT id, id_course FROM evaluation WHERE id = $1 LIMIT 1`, [examId]);
+    const ev = evRows[0];
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
 
-    let stQuery = supabaseAdmin.from("users").select("id,cedula,name,email,id_course");
-    if (ced) {
-      stQuery = stQuery.eq("cedula", ced);
-    } else {
-      stQuery = stQuery.eq("id", stId);
-    }
-    const { data: st, error: stErr } = await stQuery.maybeSingle();
+    const { rows: stRows } = await query(
+      ced
+        ? `SELECT id, cedula, name, email, id_course FROM users WHERE cedula = $1 LIMIT 1`
+        : `SELECT id, cedula, name, email, id_course FROM users WHERE id = $1 LIMIT 1`,
+      [ced || stId]
+    );
+    const st = stRows[0];
 
-    if (stErr) return res.status(500).json({ error: stErr.message });
     if (!st?.id) return res.status(404).json({ error: ced ? "No existe estudiante con esa cédula" : "No existe estudiante con ese id" });
 
     if (Number(st.id_course) !== Number(ev.id_course)) {
@@ -1346,35 +1147,27 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
     try { await requireAnioVigenteForCourse(ev.id_course); }
     catch (err) { return handleYearError(res, err); }
 
-    const { data: existingGrade, error: existingGradeErr } = await supabaseAdmin
-      .from("grades")
-      .select("attempts")
-      .eq("id_exam", examId)
-      .eq("id_student", st.id)
-      .maybeSingle();
+    const { rows: existingGradeRows } = await query(
+      `SELECT attempts FROM grades WHERE id_exam = $1 AND id_student = $2 LIMIT 1`,
+      [examId, st.id]
+    );
 
-    if (existingGradeErr) return res.status(500).json({ error: existingGradeErr.message });
+    const finishedAt = new Date().toISOString();
+    const attempts = Number(existingGradeRows[0]?.attempts ?? 0) + 1;
 
-    const payload = {
-      id_exam: examId,
-      id_student: st.id,
-      grade,
-      finished_at: new Date().toISOString(),
-      attempts: Number(existingGrade?.attempts ?? 0) + 1,
-    };
-
-    const { data, error } = await supabaseAdmin
-      .from("grades")
-      .upsert(payload, { onConflict: "id_exam,id_student" })
-      .select("id_exam,id_student,grade,finished_at")
-      .maybeSingle();
-
-    if (error) return res.status(500).json({ error: error.message });
+    const { rows: gradeRows } = await query(
+      `INSERT INTO grades (id_exam, id_student, grade, finished_at, attempts)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (id_exam, id_student)
+       DO UPDATE SET grade = EXCLUDED.grade, finished_at = EXCLUDED.finished_at, attempts = EXCLUDED.attempts
+       RETURNING id_exam, id_student, grade, finished_at`,
+      [examId, st.id, grade, finishedAt, attempts]
+    );
 
     return res.json({
       ok: true,
       student: { id: st.id, cedula: st.cedula, name: st.name },
-      grade: data,
+      grade: gradeRows[0],
     });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error subiendo nota" });
@@ -1386,13 +1179,11 @@ adminRouter.patch("/evaluations/:id", requireAuth, requireAdmin, async (req, res
     const id = toInt(req.params.id);
     if (!id) return res.status(400).json({ error: "ID inválido" });
 
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id,id_class,id_course,id_teacher,id_type,title,percent")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (evErr) return res.status(500).json({ error: evErr.message });
+    const { rows: evRows } = await query(
+      `SELECT id, id_class, id_course, id_teacher, id_type, title, percent FROM evaluation WHERE id = $1 LIMIT 1`,
+      [id]
+    );
+    const ev = evRows[0];
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
 
     if (ev.id_course) {
@@ -1400,24 +1191,26 @@ adminRouter.patch("/evaluations/:id", requireAuth, requireAdmin, async (req, res
       catch (err) { return handleYearError(res, err); }
     }
 
-    const payload = {};
+    const fields = [];
+    const params = [];
 
     if (req.body?.percent !== undefined) {
       const percent = Number(req.body.percent);
       if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
         return res.status(400).json({ error: "Percent inválido (1..100)" });
       }
-      payload.percent = percent;
+      params.push(percent); fields.push(`percent = $${params.length}`);
     }
 
     if (req.body?.title !== undefined) {
       const title = cleanStr(req.body.title);
       if (!title) return res.status(400).json({ error: "title inválido" });
-      payload.title = title;
+      params.push(title); fields.push(`title = $${params.length}`);
     }
 
     if (req.body?.id_type !== undefined || req.body?.type_text !== undefined) {
-      payload.id_type = await resolveEvaluationTypeId(req.body?.id_type, req.body?.type_text);
+      const idType = await resolveEvaluationTypeId(req.body?.id_type, req.body?.type_text);
+      params.push(idType); fields.push(`id_type = $${params.length}`);
     }
 
     if (req.body?.id_teacher !== undefined) {
@@ -1426,42 +1219,28 @@ adminRouter.patch("/evaluations/:id", requireAuth, requireAdmin, async (req, res
 
       // Solo validar class_teacher para evaluaciones de nivel materia
       if (ev.id_class) {
-        const { data: link, error: linkErr } = await supabaseAdmin
-          .from("class_teacher")
-          .select("id_teacher,id_class")
-          .eq("id_teacher", id_teacher)
-          .eq("id_class", ev.id_class)
-          .maybeSingle();
-
-        if (linkErr) return res.status(500).json({ error: linkErr.message });
-        if (!link?.id_teacher) {
+        const { rows: linkRows } = await query(
+          `SELECT id_teacher, id_class FROM class_teacher WHERE id_teacher = $1 AND id_class = $2 LIMIT 1`,
+          [id_teacher, ev.id_class]
+        );
+        if (!linkRows[0]?.id_teacher) {
           return res.status(400).json({ error: "Ese profesor no está asignado a esa materia" });
         }
       }
 
-      payload.id_teacher = id_teacher;
+      params.push(id_teacher); fields.push(`id_teacher = $${params.length}`);
     }
 
     if (req.body?.id_course !== undefined) {
       const id_course = toInt(req.body.id_course);
       if (!id_course) return res.status(400).json({ error: "id_course inválido" });
 
-      const { data: cls, error: clsErr } = await supabaseAdmin
-        .from("class")
-        .select("id,level")
-        .eq("id", ev.id_class)
-        .maybeSingle();
-
-      if (clsErr) return res.status(500).json({ error: clsErr.message });
+      const { rows: clsRows } = await query(`SELECT id, level FROM class WHERE id = $1 LIMIT 1`, [ev.id_class]);
+      const cls = clsRows[0];
       if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
 
-      const { data: course, error: cErr } = await supabaseAdmin
-        .from("course")
-        .select("id,level")
-        .eq("id", id_course)
-        .maybeSingle();
-
-      if (cErr) return res.status(500).json({ error: cErr.message });
+      const { rows: courseRows } = await query(`SELECT id, level FROM course WHERE id = $1 LIMIT 1`, [id_course]);
+      const course = courseRows[0];
       if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
 
       if (Number(course.level) !== Number(cls.level)) {
@@ -1470,23 +1249,21 @@ adminRouter.patch("/evaluations/:id", requireAuth, requireAdmin, async (req, res
         });
       }
 
-      payload.id_course = id_course;
+      params.push(id_course); fields.push(`id_course = $${params.length}`);
     }
 
-    if (Object.keys(payload).length === 0) {
+    if (fields.length === 0) {
       return res.status(400).json({ error: "No hay campos para actualizar" });
     }
 
-    const { data, error } = await supabaseAdmin
-      .from("evaluation")
-      .update(payload)
-      .eq("id", id)
-      .select("id,title,percent,id_type,id_teacher,id_course,id_class,created_at")
-      .maybeSingle();
+    params.push(id);
+    const { rows } = await query(
+      `UPDATE evaluation SET ${fields.join(", ")} WHERE id = $${params.length}
+       RETURNING id, title, percent, id_type, id_teacher, id_course, id_class, created_at`,
+      params
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-
-    return res.json({ item: data });
+    return res.json({ item: rows[0] });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error actualizando evaluación" });
   }
@@ -1498,13 +1275,8 @@ adminRouter.delete("/evaluations/:id", requireAuth, requireAdmin, async (req, re
     const id = toInt(req.params.id);
     if (!id) return res.status(400).json({ error: "ID inválido" });
 
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id,id_course")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (evErr) return res.status(500).json({ error: evErr.message });
+    const { rows: evRows } = await query(`SELECT id, id_course FROM evaluation WHERE id = $1 LIMIT 1`, [id]);
+    const ev = evRows[0];
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
 
     if (ev.id_course) {
@@ -1512,12 +1284,7 @@ adminRouter.delete("/evaluations/:id", requireAuth, requireAdmin, async (req, re
       catch (err) { return handleYearError(res, err); }
     }
 
-    const { error } = await supabaseAdmin
-      .from("evaluation")
-      .delete()
-      .eq("id", id);
-
-    if (error) return res.status(500).json({ error: error.message });
+    await query(`DELETE FROM evaluation WHERE id = $1`, [id]);
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error eliminando evaluación" });
@@ -1547,36 +1314,21 @@ adminRouter.post("/evaluations/bulk", requireAuth, requireAdmin, async (req, res
       catch (err) { return handleYearError(res, err); }
     }
 
-    const { data: grp, error: grpErr } = await supabaseAdmin
-      .from("group")
-      .select("id,id_module")
-      .eq("id", id_group)
-      .maybeSingle();
-
-    if (grpErr) return res.status(500).json({ error: grpErr.message });
+    const { rows: grpRows } = await query(`SELECT id, id_module FROM "group" WHERE id = $1 LIMIT 1`, [id_group]);
+    const grp = grpRows[0];
     if (!grp?.id) return res.status(404).json({ error: "Grupo no existe" });
 
     const vigente = await getAnioLectivoVigente();
     const typeId = await resolveEvaluationTypeId(id_type, type_text, vigente);
 
-    const row = {
-      id_course: id_course || null,
-      id_teacher,
-      id_type: typeId,
-      percent,
-      title,
-      id_group,
-      id_module: grp.id_module,
-    };
+    const { rows } = await query(
+      `INSERT INTO evaluation (id_course, id_teacher, id_type, percent, title, id_group, id_module)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, title, percent, id_course, id_class, id_type, id_teacher, id_module, id_group, created_at`,
+      [id_course || null, id_teacher, typeId, percent, title, id_group, grp.id_module]
+    );
 
-    const { data, error } = await supabaseAdmin
-      .from("evaluation")
-      .insert(row)
-      .select("id,title,percent,id_course,id_class,id_type,id_teacher,id_module,id_group,created_at")
-      .maybeSingle();
-
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ item: data });
+    return res.json({ item: rows[0] });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error en creación masiva de evaluaciones" });
   }
@@ -1595,12 +1347,9 @@ adminRouter.get("/download-template", requireAuth, requireAdmin, async (req, res
     ];
 
     // Traer cursos de la BD
-    const { data: courses } = await supabaseAdmin
-      .from("course")
-      .select("id, name")
-      .order("name");
+    const { rows: courses } = await query(`SELECT id, name FROM course ORDER BY name`);
 
-    const courseNames = (courses || []).map((c) => c.name);
+    const courseNames = courses.map((c) => c.name);
     const typeRows    = TYPE_COMBOS.length;
     const courseRows  = courseNames.length;
 
@@ -1730,22 +1479,20 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
       let id_course = null;
       if (courseNameRaw) {
         // Intentar primero por nombre, luego por id numérico (compatibilidad)
-        const { data: courseMatch } = await supabaseAdmin
-          .from("course")
-          .select("id, year")
-          .eq("name", courseNameRaw)
-          .maybeSingle();
-        if (courseMatch) {
-          id_course = courseMatch.id;
+        const { rows: courseMatchRows } = await query(
+          `SELECT id, year FROM course WHERE name = $1 LIMIT 1`,
+          [courseNameRaw]
+        );
+        if (courseMatchRows[0]) {
+          id_course = courseMatchRows[0].id;
         } else {
           const asInt = toInt(courseNameRaw);
           if (asInt) {
-            const { data: courseById } = await supabaseAdmin
-              .from("course")
-              .select("id, year")
-              .eq("id", asInt)
-              .maybeSingle();
-            if (courseById) id_course = courseById.id;
+            const { rows: courseByIdRows } = await query(
+              `SELECT id, year FROM course WHERE id = $1 LIMIT 1`,
+              [asInt]
+            );
+            if (courseByIdRows[0]) id_course = courseByIdRows[0].id;
           }
         }
         // Solo se puede asignar a cursos del año lectivo vigente
@@ -1785,11 +1532,11 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         continue;
       }
       // Validar duplicado de cédula en BD
-      const { data: cedulaDup } = await supabaseAdmin
-        .from("users")
-        .select("id,email")
-        .eq("cedula", cedula)
-        .maybeSingle();
+      const { rows: cedulaDupRows } = await query(
+        `SELECT id, email FROM users WHERE cedula = $1 LIMIT 1`,
+        [cedula]
+      );
+      const cedulaDup = cedulaDupRows[0];
       if (cedulaDup && cedulaDup.email !== email) {
         results.errors.push({ row: rowNum, error: `cedula ${cedula} ya está registrada para otro usuario (${cedulaDup.email})` });
         results.skipped++;
@@ -1815,28 +1562,23 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
       }
 
       let authUserId = null;
+      let createError = null;
 
-      const createRes = await supabaseAdmin.auth.admin.createUser({
-        email,
-        password: DEFAULT_PASSWORD,
-        email_confirm: true,
-        user_metadata: { name, roles: typeList },
-      });
+      try {
+        const created = await createAuthUser({ email, password: DEFAULT_PASSWORD, name, roles: typeList });
+        authUserId = created.id;
+      } catch (e) {
+        createError = e;
+      }
 
-      if (createRes?.error) {
-        const msg = createRes.error.message || "Error creando auth user";
+      if (createError) {
+        const msg = createError.message || "Error creando auth user";
 
-        const { data: existing, error: exErr } = await supabaseAdmin
-          .from("users")
-          .select("id,email")
-          .eq("email", email)
-          .maybeSingle();
-
-        if (exErr) {
-          results.errors.push({ row: rowNum, error: msg });
-          results.skipped++;
-          continue;
-        }
+        const { rows: existingRows } = await query(
+          `SELECT id, email FROM users WHERE email = $1 LIMIT 1`,
+          [email]
+        );
+        const existing = existingRows[0];
 
         if (!existing?.id) {
           results.errors.push({
@@ -1848,8 +1590,6 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         }
 
         authUserId = existing.id;
-      } else {
-        authUserId = createRes.data.user.id;
       }
 
       const payload = {
@@ -1861,14 +1601,20 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         id_course,
       };
 
-      const { data: up, error: upDbErr } = await supabaseAdmin
-        .from("users")
-        .upsert(payload, { onConflict: "id" })
-        .select("id,email,name,cedula,code_jiliu,id_course")
-        .maybeSingle();
-
-      if (upDbErr) {
-        results.errors.push({ row: rowNum, error: upDbErr.message });
+      let up;
+      try {
+        const { rows: upRows } = await query(
+          `INSERT INTO users (id, email, name, cedula, code_jiliu, id_course)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (id) DO UPDATE SET
+             email = EXCLUDED.email, name = EXCLUDED.name, cedula = EXCLUDED.cedula,
+             code_jiliu = EXCLUDED.code_jiliu, id_course = EXCLUDED.id_course
+           RETURNING id, email, name, cedula, code_jiliu, id_course`,
+          [payload.id, payload.email, payload.name, payload.cedula, payload.code_jiliu, payload.id_course]
+        );
+        up = upRows[0];
+      } catch (e) {
+        results.errors.push({ row: rowNum, error: e.message });
         results.skipped++;
         continue;
       }
@@ -1879,25 +1625,27 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
         results.errors.push({ row: rowNum, error: `roles: ${e?.message || "error reemplazando roles"}` });
       }
 
-      if (createRes?.error) {
-        const updAuth = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
-          user_metadata: { name, roles: typeList },
-        });
-        if (updAuth?.error) {
-          results.errors.push({ row: rowNum, error: `auth metadata: ${updAuth.error.message}` });
+      if (createError) {
+        try {
+          await updateAuthUser(authUserId, { name, roles: typeList });
+        } catch (e) {
+          results.errors.push({ row: rowNum, error: `auth metadata: ${e.message}` });
         }
       }
 
       if (!(payload.id_course == null)) {
-        const { error: histErr } = await supabaseAdmin
-          .from("user_history")
-          .upsert({ id_student: authUserId, id_course }, { onConflict: "id_student,id_course" });
-        if (histErr) {
-          results.errors.push({ row: rowNum, error: `history: ${histErr.message}` });
+        try {
+          await query(
+            `INSERT INTO user_history (id_student, id_course) VALUES ($1, $2)
+             ON CONFLICT (id_student, id_course) DO NOTHING`,
+            [authUserId, id_course]
+          );
+        } catch (e) {
+          results.errors.push({ row: rowNum, error: `history: ${e.message}` });
         }
       }
 
-      if (createRes?.error) results.updated++;
+      if (createError) results.updated++;
       else results.created++;
 
       results.items.push(up);
@@ -1919,22 +1667,23 @@ adminRouter.get("/users/search", requireAuth, requireAdmin, async (req, res) => 
 
     const pattern = `%${q}%`;
 
-    const { data, error } = await supabaseAdmin
-      .from("users")
-      .select("id, name, email, cedula, code_jiliu, id_course, course:course!users_id_course_fkey(id, name)")
-      .or(`cedula.ilike.${pattern},name.ilike.${pattern},email.ilike.${pattern},code_jiliu.ilike.${pattern}`)
-      .limit(30);
+    const { rows: data } = await query(
+      `SELECT u.id, u.name, u.email, u.cedula, u.code_jiliu, u.id_course, c.id AS course_id, c.name AS course_name
+       FROM users u
+       LEFT JOIN course c ON c.id = u.id_course
+       WHERE u.cedula ILIKE $1 OR u.name ILIKE $1 OR u.email ILIKE $1 OR u.code_jiliu ILIKE $1
+       LIMIT 30`,
+      [pattern]
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-
-    const items = await Promise.all((data || []).map(async (u) => {
-      const { data: ut } = await supabaseAdmin
-        .from("user_type")
-        .select("type(code)")
-        .eq("id_user", u.id);
-      const roles = (ut || []).map((r) => r.type?.code).filter(Boolean);
-      const { course, ...rest } = u;
-      return { ...rest, roles, course_name: course?.name || null };
+    const items = await Promise.all(data.map(async (u) => {
+      const { rows: ut } = await query(
+        `SELECT t.code FROM user_type ut JOIN type t ON t.id = ut.id_type WHERE ut.id_user = $1`,
+        [u.id]
+      );
+      const roles = ut.map((r) => r.code).filter(Boolean);
+      const { course_id, course_name, ...rest } = u;
+      return { ...rest, roles, course_name: course_name || null };
     }));
 
     return res.json({ items });
@@ -1948,21 +1697,19 @@ adminRouter.get("/user-by-cedula", requireAuth, requireAdmin, async (req, res) =
     const cedula = cleanStr(req.query?.cedula || "");
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
 
-    const { data: u, error: uErr } = await supabaseAdmin
-      .from("users")
-      .select("id, name, email, cedula, code_jiliu, id_course")
-      .eq("cedula", cedula)
-      .maybeSingle();
-
-    if (uErr) return res.status(500).json({ error: uErr.message });
+    const { rows: uRows } = await query(
+      `SELECT id, name, email, cedula, code_jiliu, id_course FROM users WHERE cedula = $1 LIMIT 1`,
+      [cedula]
+    );
+    const u = uRows[0];
     if (!u) return res.status(404).json({ error: "No encontrado" });
 
-    const { data: ut } = await supabaseAdmin
-      .from("user_type")
-      .select("id_type, type(code)")
-      .eq("id_user", u.id);
+    const { rows: ut } = await query(
+      `SELECT ut.id_type, t.code FROM user_type ut JOIN type t ON t.id = ut.id_type WHERE ut.id_user = $1`,
+      [u.id]
+    );
 
-    const roles = (ut || []).map((r) => r.type?.code).filter(Boolean);
+    const roles = ut.map((r) => r.code).filter(Boolean);
 
     return res.json({ ok: true, user: { ...u, roles } });
   } catch (e) {
@@ -1986,12 +1733,8 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
     if (!name) return res.status(400).json({ error: "name requerido" });
 
     // Verificar que el email no esté ya registrado
-    const { data: emailExists } = await supabaseAdmin
-      .from("users")
-      .select("id")
-      .eq("email", email)
-      .maybeSingle();
-    if (emailExists?.id) {
+    const { rows: emailExistsRows } = await query(`SELECT id FROM users WHERE email = $1 LIMIT 1`, [email]);
+    if (emailExistsRows[0]?.id) {
       return res.status(409).json({ error: `El email '${email}' ya está registrado en el sistema.` });
     }
 
@@ -2018,39 +1761,31 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
     const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || "password";
 
     let authUserId = null;
+    let createError = null;
 
-    const createRes = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password: DEFAULT_PASSWORD,
-      email_confirm: true,
-      user_metadata: { name, roles: roleList },
-    });
+    try {
+      const created = await createAuthUser({ email, password: DEFAULT_PASSWORD, name, roles: roleList });
+      authUserId = created.id;
+    } catch (e) {
+      createError = e;
+    }
 
-    if (createRes?.error) {
-      const { data: existing, error: exErr } = await supabaseAdmin
-        .from("users")
-        .select("id,email")
-        .eq("email", email)
-        .maybeSingle();
-
-      if (exErr) return res.status(500).json({ error: exErr.message });
+    if (createError) {
+      const { rows: existingRows } = await query(`SELECT id, email FROM users WHERE email = $1 LIMIT 1`, [email]);
+      const existing = existingRows[0];
       if (!existing?.id) {
         return res.status(400).json({
-          error: (createRes.error.message || "No se pudo crear") + " (y no existe en public.users)",
+          error: (createError.message || "No se pudo crear") + " (y no existe en public.users)",
         });
       }
 
       authUserId = existing.id;
 
-      const updAuth = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
-        email,
-        user_metadata: { name, roles: roleList },
-      });
-      if (updAuth?.error) {
-        console.warn("[create-user] WARN auth update:", updAuth.error.message);
+      try {
+        await updateAuthUser(authUserId, { email, name, roles: roleList });
+      } catch (e) {
+        console.warn("[create-user] WARN auth update:", e.message);
       }
-    } else {
-      authUserId = createRes.data.user.id;
     }
 
     const payload = {
@@ -2062,29 +1797,39 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
       id_course,
     };
 
-    const { data: up, error: upDbErr } = await supabaseAdmin
-      .from("users")
-      .upsert(payload, { onConflict: "id" })
-      .select("id,email,name,cedula,code_jiliu,id_course")
-      .maybeSingle();
-
-    if (upDbErr) return res.status(500).json({ error: upDbErr.message });
+    let up;
+    try {
+      const { rows: upRows } = await query(
+        `INSERT INTO users (id, email, name, cedula, code_jiliu, id_course)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (id) DO UPDATE SET
+           email = EXCLUDED.email, name = EXCLUDED.name, cedula = EXCLUDED.cedula,
+           code_jiliu = EXCLUDED.code_jiliu, id_course = EXCLUDED.id_course
+         RETURNING id, email, name, cedula, code_jiliu, id_course`,
+        [payload.id, payload.email, payload.name, payload.cedula, payload.code_jiliu, payload.id_course]
+      );
+      up = upRows[0];
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
 
     await replaceUserRoles(authUserId, roleList);
 
     if (!(payload.id_course == null)) {
-      const { error: histErr } = await supabaseAdmin
-        .from("user_history")
-        .upsert({ id_student: authUserId, id_course }, { onConflict: "id_student,id_course" });
-
-      if (histErr) {
-        return res.json({ ok: true, item: up, warn: `history: ${histErr.message}`, created: !createRes?.error });
+      try {
+        await query(
+          `INSERT INTO user_history (id_student, id_course) VALUES ($1, $2)
+           ON CONFLICT (id_student, id_course) DO NOTHING`,
+          [authUserId, id_course]
+        );
+      } catch (e) {
+        return res.json({ ok: true, item: up, warn: `history: ${e.message}`, created: !createError });
       }
     }
 
     await syncMonitorCourse(authUserId, id_course, roleList.includes("M"));
 
-    return res.json({ ok: true, item: up, created: !createRes?.error });
+    return res.json({ ok: true, item: up, created: !createError });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando usuario" });
   }
@@ -2126,81 +1871,70 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
       code_jiliu = null;
     }
 
-    const { data: u, error: uErr } = await supabaseAdmin
-      .from("users")
-      .select("id,cedula,email")
-      .eq("cedula", cedula)
-      .maybeSingle();
-
-    if (uErr) return res.status(500).json({ error: uErr.message });
+    const { rows: uRows } = await query(
+      `SELECT id, cedula, email FROM users WHERE cedula = $1 LIMIT 1`,
+      [cedula]
+    );
+    const u = uRows[0];
     if (!u?.id) return res.status(404).json({ error: "Usuario no encontrado con esa cédula" });
 
     const userId = u.id;
     const oldEmail = (u.email || "").toLowerCase();
 
-    const { data: codeDup, error: codeDupErr } = await supabaseAdmin
-      .from("users")
-      .select("id")
-      .eq("code_jiliu", code_jiliu)
-      .neq("id", userId)
-      .limit(1);
-
-    if (codeDupErr) return res.status(500).json({ error: codeDupErr.message });
-    if (Array.isArray(codeDup) && codeDup.length > 0) {
+    const { rows: codeDupRows } = await query(
+      `SELECT id FROM users WHERE code_jiliu = $1 AND id != $2 LIMIT 1`,
+      [code_jiliu, userId]
+    );
+    if (codeDupRows.length > 0) {
       return res.status(409).json({ error: "Ese code_jiliu ya está en uso por otro usuario." });
     }
 
-    const { data: emailDup, error: emailDupErr } = await supabaseAdmin
-      .from("users")
-      .select("id")
-      .eq("email", email)
-      .neq("id", userId)
-      .limit(1);
-
-    if (emailDupErr) return res.status(500).json({ error: emailDupErr.message });
-    if (Array.isArray(emailDup) && emailDup.length > 0) {
+    const { rows: emailDupRows } = await query(
+      `SELECT id FROM users WHERE email = $1 AND id != $2 LIMIT 1`,
+      [email, userId]
+    );
+    if (emailDupRows.length > 0) {
       return res.status(409).json({ error: "Ese email ya está en uso por otro usuario." });
     }
 
     let warn = null;
 
-    const authPayload = {
-      user_metadata: { name, roles: roleList },
-    };
-
-    if (email !== oldEmail) {
-      authPayload.email = email;
-      authPayload.email_confirm = true;
+    try {
+      await updateAuthUser(userId, {
+        name,
+        roles: roleList,
+        ...(email !== oldEmail ? { email } : {}),
+      });
+    } catch (e) {
+      return res.status(400).json({ error: `Auth: ${e.message}` });
     }
 
-    const authUpd = await supabaseAdmin.auth.admin.updateUserById(userId, authPayload);
-
-    if (authUpd?.error) {
-      const msg = authUpd.error.message || "No se pudo actualizar el email en Auth";
-      return res.status(400).json({ error: `Auth: ${msg}` });
-    }
-
-    const { data: up, error: upErr } = await supabaseAdmin
-      .from("users")
-      .update({ email, name, code_jiliu, id_course })
-      .eq("id", userId)
-      .select("id,email,name,cedula,code_jiliu,id_course")
-      .maybeSingle();
-
-    if (upErr) {
-      if (isUniqueViolation(upErr)) {
+    let up;
+    try {
+      const { rows: upRows } = await query(
+        `UPDATE users SET email = $1, name = $2, code_jiliu = $3, id_course = $4 WHERE id = $5
+         RETURNING id, email, name, cedula, code_jiliu, id_course`,
+        [email, name, code_jiliu, id_course, userId]
+      );
+      up = upRows[0];
+    } catch (e) {
+      if (isUniqueViolation(e)) {
         return res.status(409).json({ error: "Conflicto: email o code_jiliu ya existen." });
       }
-      return res.status(500).json({ error: upErr.message });
+      return res.status(500).json({ error: e.message });
     }
 
     await replaceUserRoles(userId, roleList);
 
-    const { error: histErr } = await supabaseAdmin
-      .from("user_history")
-      .upsert({ id_student: userId, id_course }, { onConflict: "id_student,id_course" });
-
-    if (histErr) warn = `history: ${histErr.message}`;
+    try {
+      await query(
+        `INSERT INTO user_history (id_student, id_course) VALUES ($1, $2)
+         ON CONFLICT (id_student, id_course) DO NOTHING`,
+        [userId, id_course]
+      );
+    } catch (e) {
+      warn = `history: ${e.message}`;
+    }
 
     await syncMonitorCourse(userId, id_course, roleList.includes("M"));
 
@@ -2218,23 +1952,19 @@ adminRouter.get("/user-by-cedula", requireAuth, requireAdmin, async (req, res) =
     const cedula = cleanStr(req.query?.cedula);
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
 
-    const { data: u, error: uErr } = await supabaseAdmin
-      .from("users")
-      .select("id,email,name,cedula,code_jiliu,id_course")
-      .eq("cedula", cedula)
-      .maybeSingle();
-
-    if (uErr) return res.status(500).json({ error: uErr.message });
+    const { rows: uRows } = await query(
+      `SELECT id, email, name, cedula, code_jiliu, id_course FROM users WHERE cedula = $1 LIMIT 1`,
+      [cedula]
+    );
+    const u = uRows[0];
     if (!u?.id) return res.status(404).json({ error: "Usuario no encontrado" });
 
-    const { data: roleRows, error: rErr } = await supabaseAdmin
-      .from("user_type")
-      .select("id_type, type: type(id,code)")
-      .eq("id_user", u.id);
+    const { rows: roleRows } = await query(
+      `SELECT ut.id_type, t.id AS type_id, t.code FROM user_type ut JOIN type t ON t.id = ut.id_type WHERE ut.id_user = $1`,
+      [u.id]
+    );
 
-    if (rErr) return res.status(500).json({ error: rErr.message });
-
-    const roles = (roleRows || []).map((r) => r?.type?.code).filter(Boolean);
+    const roles = roleRows.map((r) => r.code).filter(Boolean);
 
     return res.json({ ok: true, item: { ...u, roles } });
   } catch (e) {
@@ -2247,24 +1977,17 @@ async function getOrCreateModuleByName(name, year) {
   if (!cleanName) throw new Error("Nombre de módulo requerido");
   if (!year) throw new Error("year requerido en getOrCreateModuleByName");
 
-  const { data: existing, error: exErr } = await supabaseAdmin
-    .from("module")
-    .select("id,name")
-    .ilike("name", cleanName)
-    .eq("year", year)
-    .maybeSingle();
+  const { rows: existingRows } = await query(
+    `SELECT id, name FROM module WHERE name ILIKE $1 AND year = $2 LIMIT 1`,
+    [cleanName, year]
+  );
+  if (existingRows[0]?.id) return existingRows[0];
 
-  if (exErr) throw new Error(exErr.message);
-  if (existing?.id) return existing;
-
-  const { data: created, error: crErr } = await supabaseAdmin
-    .from("module")
-    .insert({ name: cleanName, year })
-    .select("id,name")
-    .maybeSingle();
-
-  if (crErr) throw new Error(crErr.message);
-  return created;
+  const { rows: createdRows } = await query(
+    `INSERT INTO module (name, year) VALUES ($1, $2) RETURNING id, name`,
+    [cleanName, year]
+  );
+  return createdRows[0];
 }
 
 async function getOrCreateGroupByName(name, year) {
@@ -2272,24 +1995,17 @@ async function getOrCreateGroupByName(name, year) {
   if (!cleanName) throw new Error("Nombre de grupo requerido");
   if (!year) throw new Error("year requerido en getOrCreateGroupByName");
 
-  const { data: existing, error: exErr } = await supabaseAdmin
-    .from("group")
-    .select("id,name")
-    .ilike("name", cleanName)
-    .eq("year", year)
-    .maybeSingle();
+  const { rows: existingRows } = await query(
+    `SELECT id, name FROM "group" WHERE name ILIKE $1 AND year = $2 LIMIT 1`,
+    [cleanName, year]
+  );
+  if (existingRows[0]?.id) return existingRows[0];
 
-  if (exErr) throw new Error(exErr.message);
-  if (existing?.id) return existing;
-
-  const { data: created, error: crErr } = await supabaseAdmin
-    .from("group")
-    .insert({ name: cleanName, year })
-    .select("id,name")
-    .maybeSingle();
-
-  if (crErr) throw new Error(crErr.message);
-  return created;
+  const { rows: createdRows } = await query(
+    `INSERT INTO "group" (name, year) VALUES ($1, $2) RETURNING id, name`,
+    [cleanName, year]
+  );
+  return createdRows[0];
 }
 // ============================================================================
 // 6) DESASIGNAR TEACHER DE CLASS
@@ -2307,16 +2023,10 @@ adminRouter.post("/unassign-teacher", requireAuth, requireAdmin, async (req, res
     try { await requireAnioVigenteForCourse(id_course); }
     catch (err) { return handleYearError(res, err); }
 
-    let q = supabaseAdmin
-      .from("class_teacher")
-      .delete()
-      .eq("id_teacher", id_teacher)
-      .eq("id_class", id_class)
-      .eq("id_course", id_course);
-
-    const { error } = await q;
-
-    if (error) return res.status(500).json({ error: error.message });
+    await query(
+      `DELETE FROM class_teacher WHERE id_teacher = $1 AND id_class = $2 AND id_course = $3`,
+      [id_teacher, id_class, id_course]
+    );
 
     return res.json({ ok: true });
   } catch (e) {
@@ -2332,18 +2042,16 @@ adminRouter.delete("/delete-user", requireAuth, requireAdmin, async (req, res) =
     const cedula = cleanStr(req.body?.cedula || req.query?.cedula || "");
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
 
-    const { data: u, error: uErr } = await supabaseAdmin
-      .from("users")
-      .select("id, email")
-      .eq("cedula", cedula)
-      .maybeSingle();
-
-    if (uErr) return res.status(500).json({ error: uErr.message });
+    const { rows: uRows } = await query(`SELECT id, email FROM users WHERE cedula = $1 LIMIT 1`, [cedula]);
+    const u = uRows[0];
     if (!u?.id) return res.status(404).json({ error: "Usuario no encontrado con esa cédula" });
 
-    // Eliminar de Supabase Auth (también elimina sesiones activas)
-    const { error: authErr } = await supabaseAdmin.auth.admin.deleteUser(u.id);
-    if (authErr) return res.status(500).json({ error: authErr.message });
+    // Eliminar de auth.users (también elimina sesiones activas)
+    try {
+      await deleteAuthUser(u.id);
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
 
     // La tabla users y relacionadas se limpian por CASCADE en la BD
     return res.json({ ok: true });
@@ -2361,55 +2069,51 @@ adminRouter.get("/assignment-grid", requireAuth, requireAdmin, async (req, res) 
     const id_level  = toInt(req.query.id_level);
 
     // 1) Determine courses scope
-    let coursesQuery = supabaseAdmin.from("course").select("id,name,level").order("level").order("name");
-    if (id_course) coursesQuery = coursesQuery.eq("id", id_course);
-    else if (id_level) coursesQuery = coursesQuery.eq("level", id_level);
+    let coursesSql = `SELECT id, name, level FROM course WHERE 1=1`;
+    const coursesParams = [];
+    if (id_course) { coursesParams.push(id_course); coursesSql += ` AND id = $${coursesParams.length}`; }
+    else if (id_level) { coursesParams.push(id_level); coursesSql += ` AND level = $${coursesParams.length}`; }
+    coursesSql += ` ORDER BY level, name`;
 
-    const { data: coursesData, error: cErr } = await coursesQuery;
-    if (cErr) return res.status(500).json({ error: cErr.message });
-    const coursesList = coursesData || [];
+    const { rows: coursesList } = await query(coursesSql, coursesParams);
     if (coursesList.length === 0) return res.json({ rows: [] });
 
     // 2) Determine classes scope (union of all levels from selected courses)
     const levelSet = [...new Set(coursesList.map((c) => c.level))];
-    let classQuery = supabaseAdmin.from("class").select("id,name,level,id_module,id_group").order("name");
-    if (levelSet.length === 1) classQuery = classQuery.eq("level", levelSet[0]);
-    else classQuery = classQuery.in("level", levelSet);
+    const { rows: classData } = await query(
+      `SELECT id, name, level, id_module, id_group FROM class WHERE level = ANY($1::int[]) ORDER BY name`,
+      [levelSet]
+    );
 
     const courseIds = coursesList.map((c) => c.id);
-    let ctQuery = supabaseAdmin.from("class_teacher").select("id_class,id_teacher,id_course");
-    if (courseIds.length === 1) ctQuery = ctQuery.eq("id_course", courseIds[0]);
-    else ctQuery = ctQuery.in("id_course", courseIds);
-
-    const [{ data: classData, error: clsErr }, { data: ctData, error: ctErr }] =
-      await Promise.all([classQuery, ctQuery]);
-
-    if (clsErr) return res.status(500).json({ error: clsErr.message });
-    if (ctErr)  return res.status(500).json({ error: ctErr.message });
+    const { rows: ctData } = await query(
+      `SELECT id_class, id_teacher, id_course FROM class_teacher WHERE id_course = ANY($1::bigint[])`,
+      [courseIds]
+    );
 
     // 3) Build module and group maps
-    const moduleIds = [...new Set((classData || []).map((c) => c.id_module).filter(Boolean))];
+    const moduleIds = [...new Set(classData.map((c) => c.id_module).filter(Boolean))];
     const moduleMap = new Map();
     if (moduleIds.length > 0) {
-      const { data: modData } = await supabaseAdmin.from("module").select("id,name").in("id", moduleIds);
-      for (const m of modData || []) moduleMap.set(m.id, m.name);
+      const { rows: modData } = await query(`SELECT id, name FROM module WHERE id = ANY($1::bigint[])`, [moduleIds]);
+      for (const m of modData) moduleMap.set(m.id, m.name);
     }
 
-    const groupIds = [...new Set((classData || []).map((c) => c.id_group).filter(Boolean))];
+    const groupIds = [...new Set(classData.map((c) => c.id_group).filter(Boolean))];
     const groupMap = new Map();
     if (groupIds.length > 0) {
-      const { data: grpData } = await supabaseAdmin.from("group").select("id,name").in("id", groupIds);
-      for (const g of grpData || []) groupMap.set(g.id, g.name);
+      const { rows: grpData } = await query(`SELECT id, name FROM "group" WHERE id = ANY($1::bigint[])`, [groupIds]);
+      for (const g of grpData) groupMap.set(g.id, g.name);
     }
 
     // 4) Build key map: "id_class_id_course" -> id_teacher
     const ctMap = new Map();
-    for (const r of ctData || []) ctMap.set(`${r.id_class}_${r.id_course}`, r.id_teacher);
+    for (const r of ctData) ctMap.set(`${r.id_class}_${r.id_course}`, r.id_teacher);
 
     // 5) One row per (course × class) with matching level
     const rows = [];
     for (const course of coursesList) {
-      for (const cls of classData || []) {
+      for (const cls of classData) {
         if (cls.level !== course.level) continue;
         rows.push({
           id_class:    cls.id,
@@ -2455,19 +2159,24 @@ adminRouter.post("/save-assignment-grid", requireAuth, requireAdmin, async (req,
         const classIds = courseRows.map((r) => r.id_class);
 
         // 1 DELETE bulk para todas las clases cambiadas de este curso
-        await supabaseAdmin
-          .from("class_teacher")
-          .delete()
-          .eq("id_course", id_course)
-          .in("id_class", classIds);
+        await query(
+          `DELETE FROM class_teacher WHERE id_course = $1 AND id_class = ANY($2::bigint[])`,
+          [id_course, classIds]
+        );
 
         // 1 INSERT bulk para las que tienen profesor asignado
-        const toInsert = courseRows
-          .filter((r) => r.id_teacher)
-          .map((r) => ({ id_teacher: r.id_teacher, id_class: r.id_class, id_course }));
-
+        const toInsert = courseRows.filter((r) => r.id_teacher);
         if (toInsert.length > 0) {
-          await supabaseAdmin.from("class_teacher").insert(toInsert);
+          const values = [];
+          const placeholders = toInsert.map((r, idx) => {
+            const base = idx * 3;
+            values.push(r.id_teacher, r.id_class, id_course);
+            return `($${base + 1}, $${base + 2}, $${base + 3})`;
+          });
+          await query(
+            `INSERT INTO class_teacher (id_teacher, id_class, id_course) VALUES ${placeholders.join(", ")}`,
+            values
+          );
         }
       })
     );
@@ -2543,23 +2252,21 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
     let courseYear         = null;
 
     if (id_class) {
-      const { data: cls, error: clsErr } = await supabaseAdmin
-        .from("class")
-        .select("id,name,level,id_module,id_group")
-        .eq("id", id_class)
-        .maybeSingle();
-      if (clsErr) return res.status(500).json({ error: clsErr.message });
+      const { rows: clsRows } = await query(
+        `SELECT id, name, level, id_module, id_group FROM class WHERE id = $1 LIMIT 1`,
+        [id_class]
+      );
+      const cls = clsRows[0];
       if (!cls?.id) return res.status(404).json({ error: "Materia no existe" });
       if (cls.id_group) return res.status(400).json({
         error: "Esta materia pertenece a un grupo de evaluación. Los exámenes deben crearse a nivel de grupo.",
       });
 
-      const { data: course, error: cErr } = await supabaseAdmin
-        .from("course")
-        .select("id,name,level,year")
-        .eq("id", id_course)
-        .maybeSingle();
-      if (cErr) return res.status(500).json({ error: cErr.message });
+      const { rows: courseRows } = await query(
+        `SELECT id, name, level, year FROM course WHERE id = $1 LIMIT 1`,
+        [id_course]
+      );
+      const course = courseRows[0];
       if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
       if (Number(course.level) !== Number(cls.level))
         return res.status(400).json({ error: "El curso no corresponde al nivel de la materia" });
@@ -2568,20 +2275,15 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
       id_module_resolved = cls.id_module || null;
       courseYear         = course.year;
     } else {
-      const { data: grp, error: grpErr } = await supabaseAdmin
-        .from("group")
-        .select("id,id_module")
-        .eq("id", id_group)
-        .maybeSingle();
-      if (grpErr) return res.status(500).json({ error: grpErr.message });
+      const { rows: grpRows } = await query(`SELECT id, id_module FROM "group" WHERE id = $1 LIMIT 1`, [id_group]);
+      const grp = grpRows[0];
       if (!grp?.id) return res.status(404).json({ error: "Grupo no existe" });
 
-      const { data: course, error: cErr } = await supabaseAdmin
-        .from("course")
-        .select("id,name,level,year")
-        .eq("id", id_course)
-        .maybeSingle();
-      if (cErr) return res.status(500).json({ error: cErr.message });
+      const { rows: courseRows } = await query(
+        `SELECT id, name, level, year FROM course WHERE id = $1 LIMIT 1`,
+        [id_course]
+      );
+      const course = courseRows[0];
       if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
 
       id_group_resolved  = id_group;
@@ -2594,42 +2296,39 @@ adminRouter.post("/exams", requireAuth, requireAdmin, async (req, res) => {
 
     const examenTypeId = await resolveEvaluationTypeId(null, "Examen", courseYear);
 
-    const { data: evalData, error: evalErr } = await supabaseAdmin
-      .from("evaluation")
-      .insert({
-        id_course,
-        id_class:  id_class_resolved,
-        id_group:  id_group_resolved,
-        id_teacher,
-        id_type: examenTypeId,
-        percent,
-        title,
-        id_module: id_module_resolved,
-        tiempo_minutos,
-      })
-      .select("id,title,percent,tiempo_minutos,created_at")
-      .maybeSingle();
-
-    if (evalErr) return res.status(500).json({ error: evalErr.message });
+    const { rows: evalRows } = await query(
+      `INSERT INTO evaluation (id_course, id_class, id_group, id_teacher, id_type, percent, title, id_module, tiempo_minutos)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, title, percent, tiempo_minutos, created_at`,
+      [id_course, id_class_resolved, id_group_resolved, id_teacher, examenTypeId, percent, title, id_module_resolved, tiempo_minutos]
+    );
+    const evalData = evalRows[0];
 
     // Insertar preguntas en examen_detalle
-    const detalleRows = preguntas.map((p, idx) => ({
-      id_evaluation:     evalData.id,
-      orden:             idx + 1,
-      tipo:              p.tipo,
-      enunciado:         cleanStr(p.enunciado),
-      puntos:            Number(p.puntos),
-      opciones:          p.opciones,
-      respuesta_correcta: p.respuesta_correcta,
-    }));
+    const values = [];
+    const placeholders = preguntas.map((p, idx) => {
+      const base = idx * 7;
+      values.push(
+        evalData.id,
+        idx + 1,
+        p.tipo,
+        cleanStr(p.enunciado),
+        Number(p.puntos),
+        JSON.stringify(p.opciones),
+        JSON.stringify(p.respuesta_correcta)
+      );
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`;
+    });
 
-    const { error: detErr } = await supabaseAdmin
-      .from("examen_detalle")
-      .insert(detalleRows);
-
-    if (detErr) {
+    try {
+      await query(
+        `INSERT INTO examen_detalle (id_evaluation, orden, tipo, enunciado, puntos, opciones, respuesta_correcta)
+         VALUES ${placeholders.join(", ")}`,
+        values
+      );
+    } catch (detErr) {
       // Rollback: eliminar el evaluation recién creado
-      await supabaseAdmin.from("evaluation").delete().eq("id", evalData.id);
+      await query(`DELETE FROM evaluation WHERE id = $1`, [evalData.id]);
       return res.status(500).json({ error: `Error guardando preguntas: ${detErr.message}` });
     }
 
@@ -2649,43 +2348,52 @@ adminRouter.get("/exams", requireAuth, requireAdmin, async (req, res) => {
     const examenTypeIds = await getEvaluationTypeIdsByName("Examen");
     if (!examenTypeIds.length) return res.json({ items: [] });
 
-    let q = supabaseAdmin
-      .from("evaluation")
-      .select(`
-        id, title, percent, tiempo_minutos, created_at, id_teacher,
-        id_course, id_class, id_module, id_group,
-        course:course(id,name,year,level),
-        class:class(id,name,level,id_module),
-        module:module(id,name),
-        group:group(id,name),
-        teacher:users!id_teacher(id,name)
-      `)
-      .in("id_type", examenTypeIds)
-      .order("created_at", { ascending: false });
+    let sql = `
+      SELECT ev.id, ev.title, ev.percent, ev.tiempo_minutos, ev.created_at, ev.id_teacher,
+             ev.id_course, ev.id_class, ev.id_module, ev.id_group,
+             co.id AS course_id, co.name AS course_name, co.year AS course_year, co.level AS course_level,
+             cl.id AS class_id, cl.name AS class_name, cl.level AS class_level, cl.id_module AS class_id_module,
+             m.id AS mod_id, m.name AS mod_name,
+             g.id AS grp_id, g.name AS grp_name,
+             te.id AS teacher_id, te.name AS teacher_name
+      FROM evaluation ev
+      LEFT JOIN course co ON co.id = ev.id_course
+      LEFT JOIN class cl ON cl.id = ev.id_class
+      LEFT JOIN module m ON m.id = ev.id_module
+      LEFT JOIN "group" g ON g.id = ev.id_group
+      LEFT JOIN users te ON te.id = ev.id_teacher
+      WHERE ev.id_type = ANY($1::bigint[])
+    `;
+    const params = [examenTypeIds];
+    if (req.query.id_course) { params.push(toInt(req.query.id_course)); sql += ` AND ev.id_course = $${params.length}`; }
+    if (req.query.id_class)  { params.push(toInt(req.query.id_class));  sql += ` AND ev.id_class = $${params.length}`; }
+    if (req.query.id_module) { params.push(toInt(req.query.id_module)); sql += ` AND ev.id_module = $${params.length}`; }
+    if (req.query.id_group)  { params.push(toInt(req.query.id_group));  sql += ` AND ev.id_group = $${params.length}`; }
+    sql += ` ORDER BY ev.created_at DESC`;
 
-    if (req.query.id_course) q = q.eq("id_course", toInt(req.query.id_course));
-    if (req.query.id_class)  q = q.eq("id_class",  toInt(req.query.id_class));
-    if (req.query.id_module) q = q.eq("id_module", toInt(req.query.id_module));
-    if (req.query.id_group)  q = q.eq("id_group",  toInt(req.query.id_group));
+    const { rows: evalRows } = await query(sql, params);
+    if (!evalRows.length) return res.json({ items: [] });
 
-    const { data: evals, error: evErr } = await q;
-    if (evErr) return res.status(500).json({ error: evErr.message });
-
-    if (!evals?.length) return res.json({ items: [] });
+    const evals = evalRows.map((r) => ({
+      id: r.id, title: r.title, percent: r.percent, tiempo_minutos: r.tiempo_minutos, created_at: r.created_at,
+      id_teacher: r.id_teacher, id_course: r.id_course, id_class: r.id_class, id_module: r.id_module, id_group: r.id_group,
+      course: r.course_id ? { id: r.course_id, name: r.course_name, year: r.course_year, level: r.course_level } : null,
+      class: r.class_id ? { id: r.class_id, name: r.class_name, level: r.class_level, id_module: r.class_id_module } : null,
+      module: r.mod_id ? { id: r.mod_id, name: r.mod_name } : null,
+      group: r.grp_id ? { id: r.grp_id, name: r.grp_name } : null,
+      teacher: r.teacher_id ? { id: r.teacher_id, name: r.teacher_name } : null,
+    }));
 
     // Traer preguntas (sin respuesta_correcta para listado — solo metadatos)
     const evalIds = evals.map((e) => e.id);
-    const { data: detalle, error: detErr } = await supabaseAdmin
-      .from("examen_detalle")
-      .select("id, id_evaluation, orden, tipo, enunciado, puntos, opciones, respuesta_correcta")
-      .in("id_evaluation", evalIds)
-      .order("id_evaluation")
-      .order("orden");
-
-    if (detErr) return res.status(500).json({ error: detErr.message });
+    const { rows: detalle } = await query(
+      `SELECT id, id_evaluation, orden, tipo, enunciado, puntos, opciones, respuesta_correcta FROM examen_detalle
+       WHERE id_evaluation = ANY($1::bigint[]) ORDER BY id_evaluation, orden`,
+      [evalIds]
+    );
 
     const detalleMap = new Map();
-    for (const d of detalle || []) {
+    for (const d of detalle) {
       if (!detalleMap.has(d.id_evaluation)) detalleMap.set(d.id_evaluation, []);
       detalleMap.get(d.id_evaluation).push(d);
     }
@@ -2711,13 +2419,8 @@ adminRouter.delete("/exams/:id", requireAuth, requireAdmin, async (req, res) => 
     if (!id) return res.status(400).json({ error: "ID inválido" });
 
     const examenTypeIds = await getEvaluationTypeIdsByName("Examen");
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id, id_type, id_course")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (evErr) return res.status(500).json({ error: evErr.message });
+    const { rows: evRows } = await query(`SELECT id, id_type, id_course FROM evaluation WHERE id = $1 LIMIT 1`, [id]);
+    const ev = evRows[0];
     if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
     if (!examenTypeIds.includes(ev.id_type))
       return res.status(400).json({ error: "Esta evaluación no es de tipo Examen" });
@@ -2727,8 +2430,7 @@ adminRouter.delete("/exams/:id", requireAuth, requireAdmin, async (req, res) => 
       catch (err) { return handleYearError(res, err); }
     }
 
-    const { error } = await supabaseAdmin.from("evaluation").delete().eq("id", id);
-    if (error) return res.status(500).json({ error: error.message });
+    await query(`DELETE FROM evaluation WHERE id = $1`, [id]);
 
     return res.json({ ok: true });
   } catch (e) {
@@ -2746,33 +2448,44 @@ adminRouter.get("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
     if (!id) return res.status(400).json({ error: "ID inválido" });
 
     const examenTypeIds = await getEvaluationTypeIdsByName("Examen");
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select(`
-        id, title, percent, tiempo_minutos, created_at, id_teacher,
-        id_course, id_class, id_module, id_group,
-        course:course(id,name,year,level),
-        class:class(id,name,level),
-        module:module(id,name),
-        group:group(id,name),
-        teacher:users!id_teacher(id,name)
-      `)
-      .eq("id", id)
-      .in("id_type", examenTypeIds)
-      .maybeSingle();
+    const { rows: evRows } = await query(
+      `SELECT ev.id, ev.title, ev.percent, ev.tiempo_minutos, ev.created_at, ev.id_teacher,
+              ev.id_course, ev.id_class, ev.id_module, ev.id_group,
+              co.id AS course_id, co.name AS course_name, co.year AS course_year, co.level AS course_level,
+              cl.id AS class_id, cl.name AS class_name, cl.level AS class_level,
+              m.id AS mod_id, m.name AS mod_name,
+              g.id AS grp_id, g.name AS grp_name,
+              te.id AS teacher_id, te.name AS teacher_name
+       FROM evaluation ev
+       LEFT JOIN course co ON co.id = ev.id_course
+       LEFT JOIN class cl ON cl.id = ev.id_class
+       LEFT JOIN module m ON m.id = ev.id_module
+       LEFT JOIN "group" g ON g.id = ev.id_group
+       LEFT JOIN users te ON te.id = ev.id_teacher
+       WHERE ev.id = $1 AND ev.id_type = ANY($2::bigint[])
+       LIMIT 1`,
+      [id, examenTypeIds]
+    );
+    const r = evRows[0];
+    if (!r?.id) return res.status(404).json({ error: "Examen no existe" });
 
-    if (evErr) return res.status(500).json({ error: evErr.message });
-    if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
+    const ev = {
+      id: r.id, title: r.title, percent: r.percent, tiempo_minutos: r.tiempo_minutos, created_at: r.created_at,
+      id_teacher: r.id_teacher, id_course: r.id_course, id_class: r.id_class, id_module: r.id_module, id_group: r.id_group,
+      course: r.course_id ? { id: r.course_id, name: r.course_name, year: r.course_year, level: r.course_level } : null,
+      class: r.class_id ? { id: r.class_id, name: r.class_name, level: r.class_level } : null,
+      module: r.mod_id ? { id: r.mod_id, name: r.mod_name } : null,
+      group: r.grp_id ? { id: r.grp_id, name: r.grp_name } : null,
+      teacher: r.teacher_id ? { id: r.teacher_id, name: r.teacher_name } : null,
+    };
 
-    const { data: preguntas, error: detErr } = await supabaseAdmin
-      .from("examen_detalle")
-      .select("id, orden, tipo, enunciado, puntos, opciones, respuesta_correcta")
-      .eq("id_evaluation", id)
-      .order("orden");
+    const { rows: preguntas } = await query(
+      `SELECT id, orden, tipo, enunciado, puntos, opciones, respuesta_correcta FROM examen_detalle
+       WHERE id_evaluation = $1 ORDER BY orden`,
+      [id]
+    );
 
-    if (detErr) return res.status(500).json({ error: detErr.message });
-
-    return res.json({ item: { ...ev, preguntas: preguntas || [] } });
+    return res.json({ item: { ...ev, preguntas } });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error cargando examen" });
   }
@@ -2832,12 +2545,8 @@ adminRouter.put("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
 
     // Verificar que sea tipo Examen y que pertenezca al año vigente
     const examenTypeIds = await getEvaluationTypeIdsByName("Examen");
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id, id_type, id_course")
-      .eq("id", id)
-      .maybeSingle();
-    if (evErr) return res.status(500).json({ error: evErr.message });
+    const { rows: evRows } = await query(`SELECT id, id_type, id_course FROM evaluation WHERE id = $1 LIMIT 1`, [id]);
+    const ev = evRows[0];
     if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
     if (!examenTypeIds.includes(ev.id_type))
       return res.status(400).json({ error: "Esta evaluación no es de tipo Examen" });
@@ -2848,33 +2557,38 @@ adminRouter.put("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
     }
 
     // Actualizar datos del examen en evaluation, incluyendo el profesor asignado
-    const { error: updErr } = await supabaseAdmin
-      .from("evaluation")
-      .update({ tiempo_minutos, percent, id_teacher, title })
-      .eq("id", id);
-    if (updErr) return res.status(500).json({ error: updErr.message });
+    await query(
+      `UPDATE evaluation SET tiempo_minutos = $1, percent = $2, id_teacher = $3, title = $4 WHERE id = $5`,
+      [tiempo_minutos, percent, id_teacher, title, id]
+    );
 
     // Reemplazar preguntas: delete + insert
-    const { error: delErr } = await supabaseAdmin
-      .from("examen_detalle")
-      .delete()
-      .eq("id_evaluation", id);
-    if (delErr) return res.status(500).json({ error: delErr.message });
+    await query(`DELETE FROM examen_detalle WHERE id_evaluation = $1`, [id]);
 
-    const detalleRows = preguntas.map((p, idx) => ({
-      id_evaluation:      id,
-      orden:              idx + 1,
-      tipo:               p.tipo,
-      enunciado:          cleanStr(p.enunciado),
-      puntos:             Number(p.puntos),
-      opciones:           p.opciones,
-      respuesta_correcta: p.respuesta_correcta,
-    }));
+    const values = [];
+    const placeholders = preguntas.map((p, idx) => {
+      const base = idx * 7;
+      values.push(
+        id,
+        idx + 1,
+        p.tipo,
+        cleanStr(p.enunciado),
+        Number(p.puntos),
+        JSON.stringify(p.opciones),
+        JSON.stringify(p.respuesta_correcta)
+      );
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`;
+    });
 
-    const { error: insErr } = await supabaseAdmin
-      .from("examen_detalle")
-      .insert(detalleRows);
-    if (insErr) return res.status(500).json({ error: `Error actualizando preguntas: ${insErr.message}` });
+    try {
+      await query(
+        `INSERT INTO examen_detalle (id_evaluation, orden, tipo, enunciado, puntos, opciones, respuesta_correcta)
+         VALUES ${placeholders.join(", ")}`,
+        values
+      );
+    } catch (insErr) {
+      return res.status(500).json({ error: `Error actualizando preguntas: ${insErr.message}` });
+    }
 
     return res.json({ ok: true });
   } catch (e) {
@@ -2888,31 +2602,48 @@ adminRouter.put("/exams/:id", requireAuth, requireAdmin, async (req, res) => {
 // ============================================================================
 adminRouter.get("/exam-schedules", requireAuth, requireAdmin, async (req, res) => {
   try {
-    let q = supabaseAdmin
-      .from("examen_programacion")
-      .select(`
-        id, year, fecha_ini, fecha_fin, fecha_limite_ver, habilitado, created_at,
-        id_evaluation, id_course,
-        evaluation:evaluation(
-          id, title, percent, tiempo_minutos,
-          id_module, id_group, id_class,
-          module:module(id,name),
-          group:group(id,name),
-          class:class(id,name)
-        ),
-        course:course(id,name,year,level)
-      `)
-      .order("created_at", { ascending: false });
+    let sql = `
+      SELECT ep.id, ep.year, ep.fecha_ini, ep.fecha_fin, ep.fecha_limite_ver, ep.habilitado, ep.created_at,
+             ep.id_evaluation, ep.id_course,
+             ev.id AS ev_id, ev.title AS ev_title, ev.percent AS ev_percent, ev.tiempo_minutos AS ev_tiempo_minutos,
+             ev.id_module AS ev_id_module, ev.id_group AS ev_id_group, ev.id_class AS ev_id_class,
+             m.id AS mod_id, m.name AS mod_name,
+             g.id AS grp_id, g.name AS grp_name,
+             cl.id AS class_id, cl.name AS class_name,
+             co.id AS course_id, co.name AS course_name, co.year AS course_year, co.level AS course_level
+      FROM examen_programacion ep
+      LEFT JOIN evaluation ev ON ev.id = ep.id_evaluation
+      LEFT JOIN module m ON m.id = ev.id_module
+      LEFT JOIN "group" g ON g.id = ev.id_group
+      LEFT JOIN class cl ON cl.id = ev.id_class
+      LEFT JOIN course co ON co.id = ep.id_course
+      WHERE 1=1
+    `;
+    const params = [];
+    if (req.query.id_evaluation) { params.push(toInt(req.query.id_evaluation)); sql += ` AND ep.id_evaluation = $${params.length}`; }
+    if (req.query.id_course)     { params.push(toInt(req.query.id_course));     sql += ` AND ep.id_course = $${params.length}`; }
+    if (req.query.habilitado !== undefined) {
+      params.push(req.query.habilitado === "true"); sql += ` AND ep.habilitado = $${params.length}`;
+    }
+    sql += ` ORDER BY ep.created_at DESC`;
 
-    if (req.query.id_evaluation) q = q.eq("id_evaluation", toInt(req.query.id_evaluation));
-    if (req.query.id_course)     q = q.eq("id_course",     toInt(req.query.id_course));
-    if (req.query.habilitado !== undefined)
-      q = q.eq("habilitado", req.query.habilitado === "true");
+    const { rows } = await query(sql, params);
 
-    const { data, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
+    const items = rows.map((r) => ({
+      id: r.id, year: r.year, fecha_ini: r.fecha_ini, fecha_fin: r.fecha_fin,
+      fecha_limite_ver: r.fecha_limite_ver, habilitado: r.habilitado, created_at: r.created_at,
+      id_evaluation: r.id_evaluation, id_course: r.id_course,
+      evaluation: r.ev_id ? {
+        id: r.ev_id, title: r.ev_title, percent: r.ev_percent, tiempo_minutos: r.ev_tiempo_minutos,
+        id_module: r.ev_id_module, id_group: r.ev_id_group, id_class: r.ev_id_class,
+        module: r.mod_id ? { id: r.mod_id, name: r.mod_name } : null,
+        group: r.grp_id ? { id: r.grp_id, name: r.grp_name } : null,
+        class: r.class_id ? { id: r.class_id, name: r.class_name } : null,
+      } : null,
+      course: r.course_id ? { id: r.course_id, name: r.course_name, year: r.course_year, level: r.course_level } : null,
+    }));
 
-    return res.json({ items: data || [] });
+    return res.json({ items });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error listando programaciones" });
   }
@@ -2940,38 +2671,27 @@ adminRouter.post("/exam-schedules", requireAuth, requireAdmin, async (req, res) 
 
     // Verificar que el examen exista y sea de tipo Examen
     const examenTypeId = await resolveEvaluationTypeId(null, "Examen");
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id, id_type")
-      .eq("id", id_evaluation)
-      .maybeSingle();
-
-    if (evErr) return res.status(500).json({ error: evErr.message });
+    const { rows: evRows } = await query(`SELECT id, id_type FROM evaluation WHERE id = $1 LIMIT 1`, [id_evaluation]);
+    const ev = evRows[0];
     if (!ev?.id) return res.status(404).json({ error: "Examen no existe" });
     if (ev.id_type !== examenTypeId)
       return res.status(400).json({ error: "La evaluación no es de tipo Examen" });
 
     // Verificar que el curso exista
-    const { data: course, error: cErr } = await supabaseAdmin
-      .from("course")
-      .select("id")
-      .eq("id", id_course)
-      .maybeSingle();
-    if (cErr) return res.status(500).json({ error: cErr.message });
-    if (!course?.id) return res.status(404).json({ error: "Curso no existe" });
+    const { rows: courseRows } = await query(`SELECT id FROM course WHERE id = $1 LIMIT 1`, [id_course]);
+    if (!courseRows[0]?.id) return res.status(404).json({ error: "Curso no existe" });
 
     try { await requireAnioVigenteForCourse(id_course); }
     catch (err) { return handleYearError(res, err); }
 
-    const { data, error } = await supabaseAdmin
-      .from("examen_programacion")
-      .insert({ id_evaluation, id_course, year, fecha_ini, fecha_fin, fecha_limite_ver, habilitado })
-      .select("id, id_evaluation, id_course, year, fecha_ini, fecha_fin, fecha_limite_ver, habilitado, created_at")
-      .maybeSingle();
+    const { rows } = await query(
+      `INSERT INTO examen_programacion (id_evaluation, id_course, year, fecha_ini, fecha_fin, fecha_limite_ver, habilitado)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, id_evaluation, id_course, year, fecha_ini, fecha_fin, fecha_limite_ver, habilitado, created_at`,
+      [id_evaluation, id_course, year, fecha_ini, fecha_fin, fecha_limite_ver, habilitado]
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-
-    return res.status(201).json({ ok: true, item: data });
+    return res.status(201).json({ ok: true, item: rows[0] });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando programación" });
   }
@@ -2986,13 +2706,8 @@ adminRouter.patch("/exam-schedules/:id", requireAuth, requireAdmin, async (req, 
     const id = toInt(req.params.id);
     if (!id) return res.status(400).json({ error: "ID inválido" });
 
-    const { data: prog, error: pErr } = await supabaseAdmin
-      .from("examen_programacion")
-      .select("id, id_course")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (pErr) return res.status(500).json({ error: pErr.message });
+    const { rows: progRows } = await query(`SELECT id, id_course FROM examen_programacion WHERE id = $1 LIMIT 1`, [id]);
+    const prog = progRows[0];
     if (!prog?.id) return res.status(404).json({ error: "Programación no existe" });
 
     if (prog.id_course) {
@@ -3000,25 +2715,24 @@ adminRouter.patch("/exam-schedules/:id", requireAuth, requireAdmin, async (req, 
       catch (err) { return handleYearError(res, err); }
     }
 
-    const payload = {};
-    if (req.body?.fecha_ini !== undefined) payload.fecha_ini = req.body.fecha_ini || null;
-    if (req.body?.fecha_fin !== undefined) payload.fecha_fin = req.body.fecha_fin || null;
-    if (req.body?.fecha_limite_ver !== undefined) payload.fecha_limite_ver = req.body.fecha_limite_ver || null;
-    if (req.body?.habilitado !== undefined) payload.habilitado = Boolean(req.body.habilitado);
+    const fields = [];
+    const params = [];
+    if (req.body?.fecha_ini !== undefined) { params.push(req.body.fecha_ini || null); fields.push(`fecha_ini = $${params.length}`); }
+    if (req.body?.fecha_fin !== undefined) { params.push(req.body.fecha_fin || null); fields.push(`fecha_fin = $${params.length}`); }
+    if (req.body?.fecha_limite_ver !== undefined) { params.push(req.body.fecha_limite_ver || null); fields.push(`fecha_limite_ver = $${params.length}`); }
+    if (req.body?.habilitado !== undefined) { params.push(Boolean(req.body.habilitado)); fields.push(`habilitado = $${params.length}`); }
 
-    if (Object.keys(payload).length === 0)
+    if (fields.length === 0)
       return res.status(400).json({ error: "No hay campos para actualizar" });
 
-    const { data, error } = await supabaseAdmin
-      .from("examen_programacion")
-      .update(payload)
-      .eq("id", id)
-      .select("id, id_evaluation, id_course, year, fecha_ini, fecha_fin, fecha_limite_ver, habilitado")
-      .maybeSingle();
+    params.push(id);
+    const { rows } = await query(
+      `UPDATE examen_programacion SET ${fields.join(", ")} WHERE id = $${params.length}
+       RETURNING id, id_evaluation, id_course, year, fecha_ini, fecha_fin, fecha_limite_ver, habilitado`,
+      params
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-
-    return res.json({ ok: true, item: data });
+    return res.json({ ok: true, item: rows[0] });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error actualizando programación" });
   }
@@ -3030,13 +2744,8 @@ adminRouter.delete("/exam-schedules/:id", requireAuth, requireAdmin, async (req,
     const id = toInt(req.params.id);
     if (!id) return res.status(400).json({ error: "ID inválido" });
 
-    const { data: prog, error: progErr } = await supabaseAdmin
-      .from("examen_programacion")
-      .select("id_course")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (progErr) return res.status(500).json({ error: progErr.message });
+    const { rows: progRows } = await query(`SELECT id_course FROM examen_programacion WHERE id = $1 LIMIT 1`, [id]);
+    const prog = progRows[0];
     if (!prog) return res.status(404).json({ error: "Programación no existe" });
 
     if (prog.id_course) {
@@ -3045,17 +2754,9 @@ adminRouter.delete("/exam-schedules/:id", requireAuth, requireAdmin, async (req,
     }
 
     // Desreferenciar rta_examen antes de eliminar
-    await supabaseAdmin
-      .from("rta_examen")
-      .update({ id_programacion: null })
-      .eq("id_programacion", id);
+    await query(`UPDATE rta_examen SET id_programacion = NULL WHERE id_programacion = $1`, [id]);
 
-    const { error } = await supabaseAdmin
-      .from("examen_programacion")
-      .delete()
-      .eq("id", id);
-
-    if (error) return res.status(500).json({ error: error.message });
+    await query(`DELETE FROM examen_programacion WHERE id = $1`, [id]);
 
     return res.json({ ok: true });
   } catch (e) {
@@ -3074,33 +2775,25 @@ adminRouter.get("/exam-attempts", requireAuth, requireAdmin, async (req, res) =>
     if (!id_evaluation || !id_course)
       return res.status(400).json({ error: "id_evaluation e id_course requeridos" });
 
-    const [{ data: rtas, error: rtaErr }, { data: gradesRows, error: gradeErr }, { data: users, error: usersErr }] =
-      await Promise.all([
-        supabaseAdmin
-          .from("rta_examen")
-          .select("id_student, calificacion, finalizado_at")
-          .eq("id_evaluation", id_evaluation)
-          .not("finalizado_at", "is", null),
-        supabaseAdmin
-          .from("grades")
-          .select("id_student, grade, attempts, finished_at")
-          .eq("id_exam", id_evaluation)
-          .not("finished_at", "is", null),
-        supabaseAdmin
-          .from("users")
-          .select("id, name, cedula")
-          .eq("id_course", id_course),
-      ]);
+    const [{ rows: rtas }, { rows: gradesRows }, { rows: users }] = await Promise.all([
+      query(
+        `SELECT id_student, calificacion, finalizado_at FROM rta_examen
+         WHERE id_evaluation = $1 AND finalizado_at IS NOT NULL`,
+        [id_evaluation]
+      ),
+      query(
+        `SELECT id_student, grade, attempts, finished_at FROM grades
+         WHERE id_exam = $1 AND finished_at IS NOT NULL`,
+        [id_evaluation]
+      ),
+      query(`SELECT id, name, cedula FROM users WHERE id_course = $1`, [id_course]),
+    ]);
 
-    if (rtaErr) return res.status(500).json({ error: rtaErr.message });
-    if (gradeErr) return res.status(500).json({ error: gradeErr.message });
-    if (usersErr) return res.status(500).json({ error: usersErr.message });
-
-    const userMap = new Map((users || []).map((u) => [u.id, u]));
+    const userMap = new Map(users.map((u) => [u.id, u]));
 
     const itemsMap = new Map();
 
-    for (const r of (rtas || [])) {
+    for (const r of rtas) {
       if (!userMap.has(r.id_student)) continue;
       itemsMap.set(r.id_student, {
         id_student: r.id_student,
@@ -3112,7 +2805,7 @@ adminRouter.get("/exam-attempts", requireAuth, requireAdmin, async (req, res) =>
       });
     }
 
-    for (const g of (gradesRows || [])) {
+    for (const g of gradesRows) {
       if (!userMap.has(g.id_student)) continue;
       if (itemsMap.has(g.id_student)) continue;
       itemsMap.set(g.id_student, {
@@ -3146,33 +2839,15 @@ adminRouter.delete("/exam-attempts", requireAuth, requireAdmin, async (req, res)
     if (!id_student || !id_evaluation)
       return res.status(400).json({ error: "id_student e id_evaluation requeridos" });
 
-    const { data: ev, error: evErr } = await supabaseAdmin
-      .from("evaluation")
-      .select("id_course")
-      .eq("id", id_evaluation)
-      .maybeSingle();
-
-    if (evErr) return res.status(500).json({ error: evErr.message });
+    const { rows: evRows } = await query(`SELECT id_course FROM evaluation WHERE id = $1 LIMIT 1`, [id_evaluation]);
+    const ev = evRows[0];
     if (!ev) return res.status(404).json({ error: "Evaluación no encontrada" });
 
     try { await requireAnioVigenteForCourse(ev.id_course); }
     catch (err) { return handleYearError(res, err); }
 
-    const { error: rtaErr } = await supabaseAdmin
-      .from("rta_examen")
-      .delete()
-      .eq("id_student", id_student)
-      .eq("id_evaluation", id_evaluation);
-
-    if (rtaErr) return res.status(500).json({ error: rtaErr.message });
-
-    const { error: gradeErr } = await supabaseAdmin
-      .from("grades")
-      .delete()
-      .eq("id_student", id_student)
-      .eq("id_exam", id_evaluation);
-
-    if (gradeErr) return res.status(500).json({ error: gradeErr.message });
+    await query(`DELETE FROM rta_examen WHERE id_student = $1 AND id_evaluation = $2`, [id_student, id_evaluation]);
+    await query(`DELETE FROM grades WHERE id_student = $1 AND id_exam = $2`, [id_student, id_evaluation]);
 
     return res.json({ ok: true });
   } catch (e) {
@@ -3187,13 +2862,10 @@ adminRouter.delete("/exam-attempts", requireAuth, requireAdmin, async (req, res)
 // GET /api/admin/anio-lectivo — lista todos los años con su estado activo
 adminRouter.get("/anio-lectivo", requireAuth, requireAdminOrSecretary, async (req, res) => {
   try {
-    const { data, error } = await supabaseAdmin
-      .from("anio_lectivo")
-      .select("year, nombre, activo, created_at")
-      .order("year", { ascending: false });
-
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ items: data || [] });
+    const { rows } = await query(
+      `SELECT year, nombre, activo, created_at FROM anio_lectivo ORDER BY year DESC`
+    );
+    return res.json({ items: rows });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error obteniendo años lectivos" });
   }
@@ -3210,19 +2882,17 @@ adminRouter.post("/anio-lectivo", requireAuth, requireAdmin, async (req, res) =>
     if (!nombre)
       return res.status(400).json({ error: "nombre requerido" });
 
-    const { data, error } = await supabaseAdmin
-      .from("anio_lectivo")
-      .insert({ year, nombre, activo: false })
-      .select("year, nombre, activo")
-      .maybeSingle();
-
-    if (error) {
+    try {
+      const { rows } = await query(
+        `INSERT INTO anio_lectivo (year, nombre, activo) VALUES ($1, $2, false) RETURNING year, nombre, activo`,
+        [year, nombre]
+      );
+      return res.status(201).json({ ok: true, item: rows[0] });
+    } catch (error) {
       if (isUniqueViolation(error))
         return res.status(409).json({ error: `El año ${year} ya existe` });
       return res.status(500).json({ error: error.message });
     }
-
-    return res.status(201).json({ ok: true, item: data });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error creando año lectivo" });
   }
@@ -3235,37 +2905,22 @@ adminRouter.put("/anio-lectivo/activo", requireAuth, requireAdmin, async (req, r
     if (!year) return res.status(400).json({ error: "year requerido" });
 
     // Verificar que el año existe
-    const { data: exists, error: exErr } = await supabaseAdmin
-      .from("anio_lectivo")
-      .select("year")
-      .eq("year", year)
-      .maybeSingle();
-
-    if (exErr) return res.status(500).json({ error: exErr.message });
-    if (!exists) return res.status(404).json({ error: `Año ${year} no encontrado` });
+    const { rows: existsRows } = await query(`SELECT year FROM anio_lectivo WHERE year = $1 LIMIT 1`, [year]);
+    if (!existsRows[0]) return res.status(404).json({ error: `Año ${year} no encontrado` });
 
     // Desactivar todos los años
-    const { error: deactivateErr } = await supabaseAdmin
-      .from("anio_lectivo")
-      .update({ activo: false })
-      .neq("year", year);
-
-    if (deactivateErr) return res.status(500).json({ error: deactivateErr.message });
+    await query(`UPDATE anio_lectivo SET activo = false WHERE year != $1`, [year]);
 
     // Activar el año solicitado
-    const { data, error: activateErr } = await supabaseAdmin
-      .from("anio_lectivo")
-      .update({ activo: true })
-      .eq("year", year)
-      .select("year, nombre, activo")
-      .maybeSingle();
-
-    if (activateErr) return res.status(500).json({ error: activateErr.message });
+    const { rows } = await query(
+      `UPDATE anio_lectivo SET activo = true WHERE year = $1 RETURNING year, nombre, activo`,
+      [year]
+    );
 
     // Invalidar caché para que el siguiente request use el año nuevo
     invalidarCacheAnioLectivo();
 
-    return res.json({ ok: true, item: data });
+    return res.json({ ok: true, item: rows[0] });
   } catch (e) {
     return res.status(500).json({ error: e?.message || "Error activando año lectivo" });
   }
@@ -3274,23 +2929,25 @@ adminRouter.put("/anio-lectivo/activo", requireAuth, requireAdmin, async (req, r
 // ============================================================================
 // DELETE /api/admin/delete-user?cedula=XXX
 // Elimina usuario de auth (cascada a public.users y todas las tablas relacionadas)
+//
+// NOTA DE MIGRACIÓN: duplicado del handler `/delete-user` de más arriba (Express
+// solo llega a usar el primero registrado; este queda inalcanzable, igual que en
+// el original). Se deja igual para no alterar comportamiento existente.
 // ============================================================================
 adminRouter.delete("/delete-user", requireAuth, requireAdmin, async (req, res) => {
   try {
     const cedula = cleanStr(req.query?.cedula);
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
 
-    const { data: u, error: uErr } = await supabaseAdmin
-      .from("users")
-      .select("id, name, email")
-      .eq("cedula", cedula)
-      .maybeSingle();
-
-    if (uErr) return res.status(500).json({ error: uErr.message });
+    const { rows: uRows } = await query(`SELECT id, name, email FROM users WHERE cedula = $1 LIMIT 1`, [cedula]);
+    const u = uRows[0];
     if (!u?.id) return res.status(404).json({ error: "Usuario no encontrado" });
 
-    const { error: authErr } = await supabaseAdmin.auth.admin.deleteUser(u.id);
-    if (authErr) return res.status(500).json({ error: authErr.message });
+    try {
+      await deleteAuthUser(u.id);
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
 
     return res.json({ ok: true });
   } catch (e) {

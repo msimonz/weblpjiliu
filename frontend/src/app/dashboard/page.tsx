@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSession, signOut } from "@/lib/auth";
 import { apiFetch, setImpersonateToken } from "@/lib/api";
 import { roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
@@ -159,8 +159,7 @@ export default function DashboardPage() {
   const [absFilterMateria,setAbsFilterMateria]= useState("all");
 
   useEffect(() => {
-    const { data: logoData } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
-    setLogoUrl(logoData.publicUrl);
+    setLogoUrl("/logo.png");
   }, []);
 
   useEffect(() => {
@@ -175,8 +174,7 @@ export default function DashboardPage() {
           const info = await apiFetch("/api/auth/me");
           setMe(info);
         } else {
-          const { data } = await supabase.auth.getSession();
-          if (!data.session) return router.replace("/login");
+          if (!getSession()) return router.replace("/login");
           const info = await apiFetch("/api/auth/me");
           setMe(info);
 
@@ -343,7 +341,7 @@ export default function DashboardPage() {
   }
 
   async function handleLogout() {
-    await supabase.auth.signOut();
+    signOut();
     router.replace("/login");
   }
 

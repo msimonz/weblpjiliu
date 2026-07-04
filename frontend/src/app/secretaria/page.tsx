@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSession, signOut } from "@/lib/auth";
 import { apiFetch, setImpersonateToken } from "@/lib/api";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
 import Footer from "@/components/Footer";
@@ -131,8 +131,7 @@ export default function SecretariaPage() {
   const [gridClassInfo,  setGridClassInfo]  = useState<GridClassInfo>(null);
 
   useEffect(() => {
-    const { data } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
-    setLogoUrl(data.publicUrl);
+    setLogoUrl("/logo.png");
   }, []);
 
   // ── Auth ────────────────────────────────────────────────────────────────────
@@ -148,8 +147,7 @@ export default function SecretariaPage() {
           const info = await apiFetch("/api/auth/me");
           setMe(info);
         } else {
-          const { data } = await supabase.auth.getSession();
-          if (!data.session) return router.replace("/login");
+          if (!getSession()) return router.replace("/login");
           const info = await apiFetch("/api/auth/me");
           setMe(info);
           const active = getActiveRole(info);
@@ -442,7 +440,7 @@ export default function SecretariaPage() {
   }
 
   async function handleLogout() {
-    await supabase.auth.signOut();
+    signOut();
     router.replace("/login");
   }
 

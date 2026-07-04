@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabaseClient";
+import { getSession, signOut } from "@/lib/auth";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
 
@@ -19,35 +19,12 @@ function redirectToLogin() {
   window.location.href = `/login?next=${encodeURIComponent(next)}`;
 }
 
-async function getFreshAccessToken(): Promise<string | null> {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
-
-  const session = data?.session ?? null;
-  if (!session) return null;
-
-  const expiresAt = session.expires_at ?? 0;
-  const now = Math.floor(Date.now() / 1000);
-
-  if (expiresAt && expiresAt - now <= 60) {
-    const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
-    if (refreshError) return null;
-    return refreshed.session?.access_token ?? null;
-  }
-
-  return session.access_token ?? null;
+function getFreshAccessToken(): string | null {
+  return getSession()?.token ?? null;
 }
 
-async function refreshAccessToken(): Promise<string | null> {
-  const { data, error } = await supabase.auth.refreshSession();
-  if (error) return null;
-  return data.session?.access_token ?? null;
-}
-
-async function signOutAndRedirect(skipAuthRedirect?: boolean) {
-  try {
-    await supabase.auth.signOut();
-  } catch {}
+function signOutAndRedirect(skipAuthRedirect?: boolean) {
+  signOut();
   if (!skipAuthRedirect) redirectToLogin();
 }
 
@@ -99,10 +76,10 @@ export async function apiFetch<T = any>(path: string, init: ApiFetchOptions = {}
   if (isImpersonating) {
     token = _impersonateToken;
   } else if (requireAuth) {
-    token = await getFreshAccessToken();
+    token = getFreshAccessToken();
 
     if (!token) {
-      await signOutAndRedirect(skipAuthRedirect);
+      signOutAndRedirect(skipAuthRedirect);
       throw new Error("Tu sesión expiró. Inicia sesión nuevamente.");
     }
   }
@@ -123,23 +100,10 @@ export async function apiFetch<T = any>(path: string, init: ApiFetchOptions = {}
     throw new Error((e as { message?: string })?.message || "No se pudo conectar con el servidor");
   }
 
-  if (!isImpersonating && requireAuth && res.status === 401) {
-    const refreshed = await refreshAccessToken();
-
-    if (refreshed) {
-      token = refreshed;
-      try {
-        res = await doRequest(token);
-      } catch (e) {
-        throw new Error((e as { message?: string })?.message || "No se pudo conectar con el servidor");
-      }
-    }
-  }
-
   const { text, json } = await parseResponse(res);
 
   if (!isImpersonating && requireAuth && res.status === 401) {
-    await signOutAndRedirect(skipAuthRedirect);
+    signOutAndRedirect(skipAuthRedirect);
     throw new Error("Tu sesión expiró. Inicia sesión nuevamente.");
   }
 

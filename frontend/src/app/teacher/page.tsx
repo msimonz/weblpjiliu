@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { getSession, signOut } from "@/lib/auth";
 import { apiFetch, setImpersonateToken } from "@/lib/api";
 import { roleLabelFromRole } from "@/lib/roles";
 import { getActiveRole, roleToRoute } from "@/lib/activeRole";
@@ -405,8 +405,7 @@ export default function TeacherPage() {
   }
 
   useEffect(() => {
-    const { data } = supabase.storage.from("assets").getPublicUrl("brand/logo.png");
-    setLogoUrl(data.publicUrl);
+    setLogoUrl("/logo.png");
   }, []);
 
   // auth guard
@@ -422,8 +421,7 @@ export default function TeacherPage() {
           const info = await apiFetch("/api/auth/me");
           setMe(info);
         } else {
-          const { data } = await supabase.auth.getSession();
-          if (!data.session) return router.replace("/login");
+          if (!getSession()) return router.replace("/login");
 
           const info = await apiFetch("/api/auth/me");
           setMe(info);
@@ -1843,7 +1841,7 @@ export default function TeacherPage() {
   }
 
   async function handleLogout() {
-    await supabase.auth.signOut();
+    signOut();
     router.replace("/login");
   }
 

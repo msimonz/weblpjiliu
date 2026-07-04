@@ -1,11 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { apiFetch } from "@/lib/api";
 
 type Props = {
   email?: string | null;
-  redirectPath?: string; // default: "/update-password"
   className?: string;    // default: "btn"
   fullWidth?: boolean;   // default: true
   label?: string;        // default: "Cambiar contraseña"
@@ -13,7 +12,6 @@ type Props = {
 
 export default function ChangePasswordButton({
   email,
-  redirectPath = "/update-password",
   className = "btn",
   fullWidth = true,
   label = "Cambiar contraseña",
@@ -38,10 +36,12 @@ export default function ChangePasswordButton({
 
     setSending(true);
     try {
-      const redirectTo = `${window.location.origin}${redirectPath}`;
-
-      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-      if (error) throw error;
+      await apiFetch("/api/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+        requireAuth: false,
+        skipAuthRedirect: true,
+      });
 
       showToast("✅ Te envié un correo para cambiar la contraseña", "ok");
     } catch (e) {
