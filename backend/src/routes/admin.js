@@ -1653,7 +1653,7 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
            ON CONFLICT (id) DO UPDATE SET
              email = EXCLUDED.email, name = EXCLUDED.name, cedula = EXCLUDED.cedula,
              code_jiliu = EXCLUDED.code_jiliu, id_course = EXCLUDED.id_course
-           RETURNING id, email, name, cedula, code_jiliu, id_course`,
+           RETURNING id, email, name, cedula, code_jiliu, id_course, estado`,
           [payload.id, payload.email, payload.name, payload.cedula, payload.code_jiliu, payload.id_course]
         );
         up = upRows[0];
@@ -1712,7 +1712,7 @@ adminRouter.get("/users/search", requireAuth, requireAdmin, async (req, res) => 
     const pattern = `%${q}%`;
 
     const { rows: data } = await query(
-      `SELECT u.id, u.name, u.email, u.cedula, u.code_jiliu, u.id_course, c.id AS course_id, c.name AS course_name
+      `SELECT u.id, u.name, u.email, u.cedula, u.code_jiliu, u.id_course, u.estado, c.id AS course_id, c.name AS course_name
        FROM users u
        LEFT JOIN course c ON c.id = u.id_course
        WHERE u.cedula ILIKE $1 OR u.name ILIKE $1 OR u.email ILIKE $1 OR u.code_jiliu ILIKE $1
@@ -1742,7 +1742,7 @@ adminRouter.get("/user-by-cedula", requireAuth, requireAdmin, async (req, res) =
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
 
     const { rows: uRows } = await query(
-      `SELECT id, name, email, cedula, code_jiliu, id_course FROM users WHERE cedula = $1 LIMIT 1`,
+      `SELECT id, name, email, cedula, code_jiliu, id_course, estado FROM users WHERE cedula = $1 LIMIT 1`,
       [cedula]
     );
     const u = uRows[0];
@@ -1772,6 +1772,8 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
     const cedula = cleanStr(req.body?.cedula);
     let code_jiliu = cleanStr(req.body?.code_jiliu);
     let id_course = toInt(req.body?.id_course);
+    const estadoRaw = cleanStr(req.body?.estado);
+    const estado = ["Activo", "Retirado"].includes(estadoRaw) ? estadoRaw : "Activo";
 
     if (!email || !email.includes("@")) return res.status(400).json({ error: "email inválido" });
     if (!name) return res.status(400).json({ error: "name requerido" });
@@ -1839,18 +1841,19 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
       cedula,
       code_jiliu,
       id_course,
+      estado,
     };
 
     let up;
     try {
       const { rows: upRows } = await query(
-        `INSERT INTO users (id, email, name, cedula, code_jiliu, id_course)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO users (id, email, name, cedula, code_jiliu, id_course, estado)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (id) DO UPDATE SET
            email = EXCLUDED.email, name = EXCLUDED.name, cedula = EXCLUDED.cedula,
-           code_jiliu = EXCLUDED.code_jiliu, id_course = EXCLUDED.id_course
-         RETURNING id, email, name, cedula, code_jiliu, id_course`,
-        [payload.id, payload.email, payload.name, payload.cedula, payload.code_jiliu, payload.id_course]
+           code_jiliu = EXCLUDED.code_jiliu, id_course = EXCLUDED.id_course, estado = EXCLUDED.estado
+         RETURNING id, email, name, cedula, code_jiliu, id_course, estado`,
+        [payload.id, payload.email, payload.name, payload.cedula, payload.code_jiliu, payload.id_course, payload.estado]
       );
       up = upRows[0];
     } catch (e) {
@@ -1890,6 +1893,7 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
     let code_jiliu = cleanStr(req.body?.code_jiliu);
     let id_course = toInt(req.body?.id_course);
     const roles = Array.isArray(req.body?.roles) ? req.body.roles : [];
+    const estadoRaw = cleanStr(req.body?.estado);
 
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
     if (!email || !email.includes("@")) return res.status(400).json({ error: "email inválido" });
@@ -1916,7 +1920,7 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
     }
 
     const { rows: uRows } = await query(
-      `SELECT id, cedula, email FROM users WHERE cedula = $1 LIMIT 1`,
+      `SELECT id, cedula, email, estado FROM users WHERE cedula = $1 LIMIT 1`,
       [cedula]
     );
     const u = uRows[0];
@@ -1924,6 +1928,7 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
 
     const userId = u.id;
     const oldEmail = (u.email || "").toLowerCase();
+    const estado = ["Activo", "Retirado"].includes(estadoRaw) ? estadoRaw : u.estado;
 
     const { rows: codeDupRows } = await query(
       `SELECT id FROM users WHERE code_jiliu = $1 AND id != $2 LIMIT 1`,
@@ -1956,9 +1961,9 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
     let up;
     try {
       const { rows: upRows } = await query(
-        `UPDATE users SET email = $1, name = $2, code_jiliu = $3, id_course = $4 WHERE id = $5
-         RETURNING id, email, name, cedula, code_jiliu, id_course`,
-        [email, name, code_jiliu, id_course, userId]
+        `UPDATE users SET email = $1, name = $2, code_jiliu = $3, id_course = $4, estado = $5 WHERE id = $6
+         RETURNING id, email, name, cedula, code_jiliu, id_course, estado`,
+        [email, name, code_jiliu, id_course, estado, userId]
       );
       up = upRows[0];
     } catch (e) {
@@ -1997,7 +2002,7 @@ adminRouter.get("/user-by-cedula", requireAuth, requireAdmin, async (req, res) =
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
 
     const { rows: uRows } = await query(
-      `SELECT id, email, name, cedula, code_jiliu, id_course FROM users WHERE cedula = $1 LIMIT 1`,
+      `SELECT id, email, name, cedula, code_jiliu, id_course, estado FROM users WHERE cedula = $1 LIMIT 1`,
       [cedula]
     );
     const u = uRows[0];

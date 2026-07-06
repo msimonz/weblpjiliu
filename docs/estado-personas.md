@@ -31,7 +31,7 @@ Categorizadas para decidir si llevan el filtro `estado = 'Activo'`:
 | Fase 1 — Base de datos | ✅ Completa |
 | Fase 2 — Backend: helper + bloqueo de login | ✅ Completa |
 | Fase 3 — Backend: filtrar listados (Categoría A + B1) | Pendiente |
-| Fase 4 — Backend: Crear/Actualizar persona (alta/edición de estado) | Pendiente |
+| Fase 4 — Backend: Crear/Actualizar persona (alta/edición de estado) | ✅ Completa |
 | Fase 5 — Frontend: UI de Estado + wiring | Pendiente |
 | Fase 6 — Validación end-to-end | Pendiente |
 
@@ -65,11 +65,11 @@ Agregar `AND estado = 'Activo'` (o el JOIN equivalente) en los siguientes archiv
 
 ## Fase 4 — Backend: Crear/Actualizar persona (alta/edición de estado)
 
-- [ ] `POST /admin/create-user`: default `estado = 'Activo'` si no viene en el body (o si viene, validar que sea `'Activo'`/`'Retirado'`).
-- [ ] `POST /admin/update-user-by-cedula`: aceptar y actualizar `estado`.
-- [ ] `GET /admin/user-by-cedula`, `GET /admin/users/search`: devolver el campo `estado` (para que el frontend sepa qué radio marcar) — estos endpoints **no** filtran por estado (ya es la Categoría D).
-- [ ] `POST /admin/upload-users` (carga masiva por Excel): default `estado = 'Activo'` para altas nuevas (la plantilla de Excel no gestiona retiros masivos, queda fuera de alcance).
-- [ ] Verificar en vivo: crear persona sin mandar estado → queda Activo; editar y cambiar a Retirado → se guarda; volver a Activo → se guarda.
+- [x] `POST /admin/create-user`: acepta `estado` en el body; si no viene o no es `'Activo'`/`'Retirado'`, default `'Activo'`. Se agregó la columna al INSERT (y a `ON CONFLICT DO UPDATE`).
+- [x] `POST /admin/update-user-by-cedula`: acepta y actualiza `estado`; si no viene en el body (o el valor no es válido), **mantiene el estado actual** del usuario en vez de sobreescribirlo — así una edición que no toca el campo Estado no reactiva/retira a nadie por accidente.
+- [x] `GET /admin/user-by-cedula` (ambos handlers registrados bajo esa ruta — el segundo es código muerto por duplicado de ruta, ya señalado como tal en un comentario previo de la migración, pero se actualizó igual por consistencia), `GET /admin/users/search`: ahora devuelven el campo `estado`. Ninguno filtra por estado (Categoría D, sin cambios de alcance).
+- [x] `POST /admin/upload-users` (carga masiva por Excel): no requirió cambio de lógica — el INSERT nunca incluyó la columna `estado`, así que el `DEFAULT 'Activo'` de la BD ya aplica a las altas nuevas, y como `ON CONFLICT DO UPDATE` tampoco toca esa columna, una persona ya marcada Retirada **no se reactiva** por una re-carga del Excel. Se agregó `estado` al `RETURNING` para que quede visible en la respuesta.
+- [x] Verificado en vivo con un usuario de prueba real (creado y borrado vía los propios endpoints): crear sin mandar `estado` → queda `Activo`; `user-by-cedula` y `users/search` devuelven el campo; editar mandando `estado: "Retirado"` → se guarda; editar de nuevo **sin** mandar `estado` → se mantiene `Retirado` (no se pisa); editar mandando `estado: "Activo"` → vuelve a `Activo`.
 
 ## Fase 5 — Frontend: UI de Estado + wiring
 
