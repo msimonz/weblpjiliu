@@ -74,7 +74,7 @@ monitorRouter.get("/students", requireAuth, requireMonitor, async (req, res) => 
 
     // Usuarios del curso con rol S
     const { rows: users } = await query(
-      `SELECT id, name, cedula FROM users WHERE id_course = $1 ORDER BY name ASC`,
+      `SELECT id, name, cedula FROM users WHERE id_course = $1 AND estado = 'Activo' ORDER BY name ASC`,
       [course.id]
     );
 
@@ -108,7 +108,7 @@ monitorRouter.get("/teachers", requireAuth, requireMonitor, async (req, res) => 
     if (!teacherIds.length) return res.json({ items: [] });
 
     const { rows: users } = await query(
-      `SELECT id, name FROM users WHERE id = ANY($1::uuid[]) ORDER BY name ASC`,
+      `SELECT id, name FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo' ORDER BY name ASC`,
       [teacherIds]
     );
 
@@ -438,22 +438,23 @@ monitorRouter.get("/attendance/consulta", requireAuth, requireMonitor, async (re
       [sesion.id]
     );
 
-    // Cargar nombres de estudiantes
+    // Cargar nombres de estudiantes (retirados quedan afuera por completo, no solo sin nombre)
     const studentIds = detalleRows.map((d) => d.id_student);
     let userMap = new Map();
     if (studentIds.length > 0) {
       const { rows: usersData } = await query(
-        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[])`,
+        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo'`,
         [studentIds]
       );
       userMap = new Map(usersData.map((u) => [u.id, u]));
     }
 
     const detalle = detalleRows
+      .filter((d) => userMap.has(d.id_student))
       .map((d) => ({
         id_student: d.id_student,
-        name:       userMap.get(d.id_student)?.name   ?? null,
-        cedula:     userMap.get(d.id_student)?.cedula ?? null,
+        name:       userMap.get(d.id_student).name,
+        cedula:     userMap.get(d.id_student).cedula,
         asistio:    d.asistio,
         motivo:     d.motivo,
       }))
@@ -536,7 +537,7 @@ monitorRouter.get("/attendance/consulta-todas", requireAuth, requireMonitor, asy
     let userMap = new Map();
     if (studentIds.length > 0) {
       const { rows: usersData } = await query(
-        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[])`,
+        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo'`,
         [studentIds]
       );
       userMap = new Map(usersData.map((u) => [u.id, u]));
@@ -546,11 +547,12 @@ monitorRouter.get("/attendance/consulta-todas", requireAuth, requireMonitor, asy
     for (const d of detalleRows) {
       const info = sesionInfoMap.get(d.id_sesion);
       if (!info) continue;
+      if (!userMap.has(d.id_student)) continue; // alumno retirado: no aparece ni en histórico
       if (!studentMap.has(d.id_student)) {
         studentMap.set(d.id_student, {
           id_student: d.id_student,
-          name:   userMap.get(d.id_student)?.name   ?? null,
-          cedula: userMap.get(d.id_student)?.cedula ?? null,
+          name:   userMap.get(d.id_student).name,
+          cedula: userMap.get(d.id_student).cedula,
           asistencia: [],
         });
       }
@@ -601,7 +603,7 @@ monitorRouter.get("/attendance/reporte", requireAuth, requireMonitor, async (req
     const typeRow = typeRows[0];
 
     const { rows: users } = await query(
-      `SELECT id, name, cedula FROM users WHERE id_course = $1 ORDER BY name ASC`,
+      `SELECT id, name, cedula FROM users WHERE id_course = $1 AND estado = 'Activo' ORDER BY name ASC`,
       [course.id]
     );
 

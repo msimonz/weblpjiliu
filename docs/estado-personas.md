@@ -54,14 +54,14 @@ Categorizadas para decidir si llevan el filtro `estado = 'Activo'`:
 
 Agregar `AND estado = 'Activo'` (o el JOIN equivalente) en los siguientes archivos/funciones. Alumnos (incluye Monitor) se filtran siempre, incluso en vistas históricas; staff (profesor/admin/secretaría) solo en selectores de asignación nueva, no en resoluciones históricas de nombre.
 
-- [ ] `backend/src/lib/gradesBootstrap.js` — `getCourseStudentIds` (alumnos del curso).
-- [ ] `backend/src/lib/examClosure.js` — `getStudentIdsByCourseIds`, resolución de `id_course` por alumno.
-- [ ] `backend/src/routes/monitor.js` — roster de alumnos, `/teachers` (selector), `/students`. **No tocar**: nombre de profesor en sesión de asistencia (histórico).
-- [ ] `backend/src/routes/secretaria.js` — roster de alumnos, nombres de alumno en detalle de asistencia. **No tocar**: nombre de profesor.
-- [ ] `backend/src/routes/teacher.js` — `getStudentsByCourseIds`, nombres de alumno en asistencia, chequeo de estado al cargar nota manual por cédula (rechazar con mensaje claro si el alumno está retirado). **No tocar**: nombres de profesor.
-- [ ] `backend/src/routes/admin.js` — `getStudentsByCourseIds`, `/teachers`, `/students`, `/courses/:id/students`, conteo de alumnos para bloquear borrado de curso, nombre de monitor en `/courses` (el monitor es alumno → se oculta si retirado), validación de candidato a monitor en `PUT /courses/:id/monitor` (rechazar si el candidato está retirado), chequeo de estado al cargar nota manual por cédula, alumnos en `exam-attempts`. **No tocar**: nombres de profesor en evaluaciones/exámenes.
-- [ ] `backend/src/routes/student.js` — no requiere cambios (el nombre de profesor que se le muestra al alumno es de staff, no se filtra).
-- [ ] Verificar en vivo cada archivo: crear un alumno de prueba activo, confirmar que aparece en roster/selector correspondiente, marcarlo retirado, confirmar que desaparece.
+- [x] `backend/src/lib/gradesBootstrap.js` — `getCourseStudentIds` filtrado.
+- [x] `backend/src/lib/examClosure.js` — `getStudentIdsByCourseIds` filtrado (la segunda consulta que resuelve curso por alumno ya opera sobre una lista previamente filtrada, no necesitó cambio).
+- [x] `backend/src/routes/monitor.js` — roster de alumnos (`/students`, `/attendance/reporte`), `/teachers` filtrados. Detalle de asistencia (`/attendance/session`, `/attendance/consulta-todas`): el alumno retirado ahora se excluye de la fila completa (no solo el nombre en blanco). Nombres de profesor: sin cambios (histórico).
+- [x] `backend/src/routes/secretaria.js` — mismo patrón que monitor.js: roster filtrado, detalle de asistencia excluye la fila del alumno retirado, nombres de profesor sin cambios.
+- [x] `backend/src/routes/teacher.js` — `getStudentsByCourseIds` filtrado, detalle de asistencia excluye fila de alumno retirado, `POST /grades` rechaza con mensaje claro si el alumno está retirado. Nombres de profesor sin cambios.
+- [x] `backend/src/routes/admin.js` — `getStudentsByCourseIds`, `/teachers`, `/students`, `/courses/:id/students`, conteo de alumnos activos para bloquear borrado de curso, nombre de monitor en `/courses` (filtrado, el monitor es alumno), alumnos en `exam-attempts` — todos filtrados. `PUT /courses/:id/monitor` rechaza asignar un candidato retirado. `POST /grades` rechaza cargar nota a un alumno retirado. Nombres de profesor en evaluaciones/exámenes sin cambios.
+- [x] `backend/src/routes/student.js` — sin cambios (solo resuelve nombre de profesor, staff).
+- [x] Verificado en vivo con 3 alumnos de prueba reales (creados y borrados vía API): `admin /students`, `admin /courses/:id/students`, `monitor /students`, `teacher /class-grade-grid` — los 4 muestran al alumno activo, lo excluyen al marcarlo Retirado, y vuelve a aparecer al reactivarlo. `PUT /courses/:id/monitor` y `POST /admin/grades` rechazan correctamente con mensaje claro a un alumno retirado.
 
 ## Fase 4 — Backend: Crear/Actualizar persona (alta/edición de estado)
 

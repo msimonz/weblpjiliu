@@ -16,7 +16,7 @@ async function getCourseStudentIds(id_course) {
   if (!courseId) return [];
 
   const { rows: users } = await query(
-    `SELECT id FROM users WHERE id_course = $1`,
+    `SELECT id FROM users WHERE id_course = $1 AND estado = 'Activo'`,
     [courseId]
   );
 

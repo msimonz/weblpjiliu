@@ -172,17 +172,18 @@ secretariaRouter.get("/attendance/consulta", requireAuth, requireSecretaria, asy
     let userMap = new Map();
     if (studentIds.length > 0) {
       const { rows: usersData } = await query(
-        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[])`,
+        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo'`,
         [studentIds]
       );
       userMap = new Map(usersData.map((u) => [u.id, u]));
     }
 
     const detalle = detalleRows
+      .filter((d) => userMap.has(d.id_student))
       .map((d) => ({
         id_student: d.id_student,
-        name:       userMap.get(d.id_student)?.name   ?? null,
-        cedula:     userMap.get(d.id_student)?.cedula ?? null,
+        name:       userMap.get(d.id_student).name,
+        cedula:     userMap.get(d.id_student).cedula,
         asistio:    d.asistio,
         motivo:     d.motivo,
       }))
@@ -264,7 +265,7 @@ secretariaRouter.get("/attendance/consulta-todas", requireAuth, requireSecretari
     let userMap = new Map();
     if (studentIds.length > 0) {
       const { rows: usersData } = await query(
-        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[])`,
+        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo'`,
         [studentIds]
       );
       userMap = new Map(usersData.map((u) => [u.id, u]));
@@ -274,11 +275,12 @@ secretariaRouter.get("/attendance/consulta-todas", requireAuth, requireSecretari
     for (const d of detalleRows) {
       const info = sesionInfoMap.get(d.id_sesion);
       if (!info) continue;
+      if (!userMap.has(d.id_student)) continue; // alumno retirado: no aparece ni en histórico
       if (!studentMap.has(d.id_student)) {
         studentMap.set(d.id_student, {
           id_student: d.id_student,
-          name:   userMap.get(d.id_student)?.name   ?? null,
-          cedula: userMap.get(d.id_student)?.cedula ?? null,
+          name:   userMap.get(d.id_student).name,
+          cedula: userMap.get(d.id_student).cedula,
           asistencia: [],
         });
       }
@@ -331,7 +333,7 @@ secretariaRouter.get("/attendance/reporte", requireAuth, requireSecretaria, asyn
     const typeRow = typeRows[0];
 
     const { rows: users } = await query(
-      `SELECT id, name, cedula FROM users WHERE id_course = $1 ORDER BY name ASC`,
+      `SELECT id, name, cedula FROM users WHERE id_course = $1 AND estado = 'Activo' ORDER BY name ASC`,
       [courseId]
     );
 

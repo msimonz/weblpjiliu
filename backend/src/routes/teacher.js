@@ -98,7 +98,7 @@ async function getStudentsByCourseIds(courseIds) {
 
   const [{ rows: users }, studentTypeId] = await Promise.all([
     query(
-      `SELECT id, name, cedula, id_course FROM users WHERE id_course = ANY($1::bigint[]) ORDER BY name ASC`,
+      `SELECT id, name, cedula, id_course FROM users WHERE id_course = ANY($1::bigint[]) AND estado = 'Activo' ORDER BY name ASC`,
       [courseIds]
     ),
     getStudentTypeId(),
@@ -716,13 +716,16 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
 
   const { rows: stRows } = await query(
     ced
-      ? `SELECT id, cedula, name, email, id_course FROM users WHERE cedula = $1 LIMIT 1`
-      : `SELECT id, cedula, name, email, id_course FROM users WHERE id = $1 LIMIT 1`,
+      ? `SELECT id, cedula, name, email, id_course, estado FROM users WHERE cedula = $1 LIMIT 1`
+      : `SELECT id, cedula, name, email, id_course, estado FROM users WHERE id = $1 LIMIT 1`,
     [ced || stId]
   );
   const st = stRows[0];
 
   if (!st?.id) return res.status(404).json({ error: ced ? "No existe estudiante con esa cédula" : "No existe estudiante con ese id" });
+  if (st.estado !== "Activo") {
+    return res.status(400).json({ error: "Este estudiante está retirado, no se le puede asignar una nota" });
+  }
 
   if (Number(st.id_course) !== Number(ev.id_course)) {
     return res.status(400).json({ error: "El estudiante no pertenece al curso de esta evaluación" });
@@ -1421,17 +1424,18 @@ teacherRouter.get("/attendance/consulta", requireAuth, requireTeacher, async (re
     let userMap = new Map();
     if (studentIds.length) {
       const { rows: usersData } = await query(
-        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[])`,
+        `SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo'`,
         [studentIds]
       );
       userMap = new Map(usersData.map((u) => [u.id, u]));
     }
 
     const detalle = detalleRows
+      .filter((d) => userMap.has(d.id_student))
       .map((d) => ({
         id_student: d.id_student,
-        name:   userMap.get(d.id_student)?.name   ?? null,
-        cedula: userMap.get(d.id_student)?.cedula ?? null,
+        name:   userMap.get(d.id_student).name,
+        cedula: userMap.get(d.id_student).cedula,
         asistio: d.asistio,
         motivo:  d.motivo,
       }))
@@ -1510,7 +1514,7 @@ teacherRouter.get("/attendance/consulta-todas", requireAuth, requireTeacher, asy
     const studentIds = [...new Set(detalleRows.map((d) => d.id_student))];
     let userMap = new Map();
     if (studentIds.length) {
-      const { rows: ud } = await query(`SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[])`, [studentIds]);
+      const { rows: ud } = await query(`SELECT id, name, cedula FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo'`, [studentIds]);
       userMap = new Map(ud.map((u) => [u.id, u]));
     }
 
@@ -1518,11 +1522,12 @@ teacherRouter.get("/attendance/consulta-todas", requireAuth, requireTeacher, asy
     for (const d of detalleRows) {
       const info = sesionInfoMap.get(d.id_sesion);
       if (!info) continue;
+      if (!userMap.has(d.id_student)) continue; // alumno retirado: no aparece ni en histórico
       if (!studentMap.has(d.id_student)) {
         studentMap.set(d.id_student, {
           id_student: d.id_student,
-          name:   userMap.get(d.id_student)?.name   ?? null,
-          cedula: userMap.get(d.id_student)?.cedula ?? null,
+          name:   userMap.get(d.id_student).name,
+          cedula: userMap.get(d.id_student).cedula,
           asistencia: [],
         });
       }

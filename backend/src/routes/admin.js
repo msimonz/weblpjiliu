@@ -192,7 +192,7 @@ async function getStudentsByCourseIds(courseIds) {
   if (ids.length === 0) return [];
 
   const { rows: users } = await query(
-    `SELECT id, name, cedula, id_course FROM users WHERE id_course = ANY($1::bigint[]) ORDER BY name ASC`,
+    `SELECT id, name, cedula, id_course FROM users WHERE id_course = ANY($1::bigint[]) AND estado = 'Activo' ORDER BY name ASC`,
     [ids]
   );
   if (!users.length) return [];
@@ -306,15 +306,16 @@ adminRouter.get("/courses", requireAuth, requireAdminOrSecretary, async (req, re
 
   const courseIds = data.map((c) => c.id);
   const { rows: usedRows } = courseIds.length > 0
-    ? await query(`SELECT id_course FROM users WHERE id_course = ANY($1::bigint[])`, [courseIds])
+    ? await query(`SELECT id_course FROM users WHERE id_course = ANY($1::bigint[]) AND estado = 'Activo'`, [courseIds])
     : { rows: [] };
 
-  // Cargar nombres de monitores asignados
+  // Cargar nombres de monitores asignados (el monitor siempre es también alumno —
+  // si está retirado, no se muestra como monitor, igual que el resto de alumnos).
   const monitorIds = [...new Set(data.map((c) => c.id_monitor).filter(Boolean))];
   let monitorMap = new Map();
   if (monitorIds.length > 0) {
     const { rows: monitorRows } = await query(
-      `SELECT id, name FROM users WHERE id = ANY($1::uuid[])`,
+      `SELECT id, name FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo'`,
       [monitorIds]
     );
     monitorMap = new Map(monitorRows.map((u) => [u.id, u.name]));
@@ -340,7 +341,7 @@ adminRouter.delete("/courses/:id", requireAuth, requireAdmin, async (req, res) =
   try { await requireAnioVigenteForRecord("course", id); }
   catch (err) { return handleYearError(res, err); }
 
-  const { rows: countRows } = await query(`SELECT count(*) FROM users WHERE id_course = $1`, [id]);
+  const { rows: countRows } = await query(`SELECT count(*) FROM users WHERE id_course = $1 AND estado = 'Activo'`, [id]);
   const count = Number(countRows[0]?.count ?? 0);
   if (count > 0) return res.status(409).json({ error: "El curso tiene estudiantes asignados y no puede eliminarse." });
 
@@ -380,7 +381,7 @@ adminRouter.get("/courses/:id/students", requireAuth, requireAdmin, async (req, 
     if (!typeRows[0]?.id) return res.status(500).json({ error: "Tipo S no encontrado" });
 
     const { rows: users } = await query(
-      `SELECT id, name, cedula FROM users WHERE id_course = $1 ORDER BY name ASC`,
+      `SELECT id, name, cedula FROM users WHERE id_course = $1 AND estado = 'Activo' ORDER BY name ASC`,
       [courseId]
     );
     if (!users.length) return res.json({ items: [] });
@@ -416,11 +417,14 @@ adminRouter.put("/courses/:id/monitor", requireAuth, requireAdmin, async (req, r
     if (id_monitor !== null) {
       // Verificar que el usuario existe y pertenece al curso
       const { rows: userRows } = await query(
-        `SELECT id, id_course FROM users WHERE id = $1 LIMIT 1`,
+        `SELECT id, id_course, estado FROM users WHERE id = $1 LIMIT 1`,
         [id_monitor]
       );
       const userRow = userRows[0];
       if (!userRow) return res.status(404).json({ error: "Usuario no encontrado" });
+      if (userRow.estado !== "Activo") {
+        return res.status(400).json({ error: "Este estudiante está retirado, no puede ser asignado como monitor" });
+      }
       if (Number(userRow.id_course) !== courseId) {
         return res.status(400).json({ error: "El usuario no pertenece a este curso" });
       }
@@ -685,7 +689,7 @@ adminRouter.get("/teachers", requireAuth, requireAdmin, async (req, res) => {
   }
 
   const { rows } = await query(
-    `SELECT id, name, email, cedula FROM users WHERE id = ANY($1::uuid[]) ORDER BY name ASC`,
+    `SELECT id, name, email, cedula FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo' ORDER BY name ASC`,
     [ids]
   );
   return res.json({ items: rows });
@@ -702,7 +706,7 @@ adminRouter.get("/students", requireAuth, requireAdmin, async (req, res) => {
   const ids = utRows.map((r) => r.id_user);
   if (ids.length === 0) return res.json({ items: [] });
 
-  let sql = `SELECT id, name, email, cedula, id_course FROM users WHERE id = ANY($1::uuid[])`;
+  let sql = `SELECT id, name, email, cedula, id_course FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo'`;
   const params = [ids];
   if (q) { params.push(`%${q}%`); sql += ` AND name ILIKE $${params.length}`; }
   sql += ` ORDER BY name ASC LIMIT 200`;
@@ -1160,13 +1164,16 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
 
     const { rows: stRows } = await query(
       ced
-        ? `SELECT id, cedula, name, email, id_course FROM users WHERE cedula = $1 LIMIT 1`
-        : `SELECT id, cedula, name, email, id_course FROM users WHERE id = $1 LIMIT 1`,
+        ? `SELECT id, cedula, name, email, id_course, estado FROM users WHERE cedula = $1 LIMIT 1`
+        : `SELECT id, cedula, name, email, id_course, estado FROM users WHERE id = $1 LIMIT 1`,
       [ced || stId]
     );
     const st = stRows[0];
 
     if (!st?.id) return res.status(404).json({ error: ced ? "No existe estudiante con esa cédula" : "No existe estudiante con ese id" });
+    if (st.estado !== "Activo") {
+      return res.status(400).json({ error: "Este estudiante está retirado, no se le puede asignar una nota" });
+    }
 
     if (Number(st.id_course) !== Number(ev.id_course)) {
       return res.status(400).json({ error: "El estudiante no pertenece al curso de esta evaluación" });
@@ -2823,7 +2830,7 @@ adminRouter.get("/exam-attempts", requireAuth, requireAdmin, async (req, res) =>
          WHERE id_exam = $1 AND finished_at IS NOT NULL`,
         [id_evaluation]
       ),
-      query(`SELECT id, name, cedula FROM users WHERE id_course = $1`, [id_course]),
+      query(`SELECT id, name, cedula FROM users WHERE id_course = $1 AND estado = 'Activo'`, [id_course]),
     ]);
 
     const userMap = new Map(users.map((u) => [u.id, u]));
