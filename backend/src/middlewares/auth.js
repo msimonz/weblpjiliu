@@ -7,7 +7,7 @@ import { verifyImpToken } from "../lib/impToken.js";
 // ===============
 async function loadProfileAndRoles(user) {
   const { rows: profileRows } = await query(
-    `SELECT u.id, u.name, u.email, u.cedula, u.code_jiliu, u.id_course, u.created_at,
+    `SELECT u.id, u.name, u.email, u.cedula, u.code_jiliu, u.id_course, u.created_at, u.estado,
             c.id AS course_id, c.name AS course_name, c.level AS course_level, c.year AS course_year
      FROM users u
      LEFT JOIN course c ON c.id = u.id_course
@@ -30,6 +30,7 @@ async function loadProfileAndRoles(user) {
         code_jiliu: row.code_jiliu,
         id_course: row.id_course,
         created_at: row.created_at,
+        estado: row.estado,
         course,
       }
     : null;
@@ -96,6 +97,12 @@ async function validateTokenAndLoadContext(token) {
   const user = { id: decoded.sub, email: decoded.email };
   const { profile, course, roles, role } = await loadProfileAndRoles(user);
 
+  // Bloquea sesiones de personas retiradas, incluso si su JWT todavía no expiró
+  // (no hay revocación de tokens, así que este chequeo corre en cada request).
+  if (profile && profile.estado !== "Activo") {
+    return { ok: false, error: "Tu cuenta ha sido retirada. Contacta al administrador." };
+  }
+
   return {
     ok: true,
     auth: { user, profile, course, roles, role },
@@ -133,7 +140,7 @@ export async function requireUser(req, res, next) {
 
     const result = await validateTokenAndLoadContext(token);
     if (!result.ok) {
-      return res.status(401).json({ error: "Token inválido o expirado" });
+      return res.status(401).json({ error: result.error || "Token inválido o expirado" });
     }
 
     req.auth = result.auth;
@@ -158,7 +165,7 @@ export async function requireAuth(req, res, next) {
 
     const result = await validateTokenAndLoadContext(token);
     if (!result.ok) {
-      return res.status(401).json({ error: "Token inválido o expirado" });
+      return res.status(401).json({ error: result.error || "Token inválido o expirado" });
     }
 
     if (!result.auth?.profile) {
