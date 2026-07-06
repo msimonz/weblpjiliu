@@ -13,6 +13,10 @@ function getTransporter() {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASSWORD,
     },
+    // Si la red no puede conectar a Gmail, fallar rápido en vez de colgar el request indefinidamente.
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
   });
 
   return transporter;
