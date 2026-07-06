@@ -33,7 +33,7 @@ Categorizadas para decidir si llevan el filtro `estado = 'Activo'`:
 | Fase 3 — Backend: filtrar listados (Categoría A + B1) | Pendiente |
 | Fase 4 — Backend: Crear/Actualizar persona (alta/edición de estado) | ✅ Completa |
 | Fase 5 — Frontend: UI de Estado + wiring | ✅ Completa |
-| Fase 6 — Validación end-to-end | Pendiente |
+| Fase 6 — Validación end-to-end | ✅ Completa |
 
 ---
 
@@ -85,7 +85,7 @@ Agregar `AND estado = 'Activo'` (o el JOIN equivalente) en los siguientes archiv
 - [x] Recorrido manual (script único e2e contra la BD real de OCI, invocando los handlers reales de Express — mismo patrón que las fases anteriores): se crearon 2 alumnos de prueba (Alumno A y un Alumno B de control) y 1 profesor de prueba, más una sesión de asistencia histórica real (tabla `asistencia_sesion`/`asistencia_detalle`) con ambos alumnos presentes y dictada por el profesor de prueba. Con Alumno A y el profesor en estado Activo se confirmó: aparecen en `admin GET /students`, `/courses/:id/students`, `monitor GET /students`, `admin GET /teachers`; el login (`POST /auth/login`) funciona. Al marcar a Alumno A como Retirado: desaparece de las 3 vistas anteriores, su login y `resolve-login` quedan rechazados con 403, y su fila desaparece del histórico de asistencia (`secretaria /attendance/consulta-todas`) — mientras que Alumno B (control, sigue Activo) permanece visible en el mismo histórico, confirmando que el filtro no oculta de más.
 - [x] Profesor retirado: al marcarlo Retirado, desaparece de `admin GET /teachers` (selector de asignación nueva), su login queda rechazado con 403, pero su nombre se mantiene en el histórico de asistencia ya creado (Categoría B2, identidad de staff preservada).
 - [x] Reactivar (Retirado → Activo): se confirmó que Alumno A vuelve a aparecer en `admin GET /students`, su fila reaparece en el histórico de asistencia, y su login vuelve a funcionar; el profesor reactivado vuelve a aparecer en `admin GET /teachers`. Total: 25 verificaciones, todas OK. Limpieza al final: sesión/detalle de asistencia de prueba y los 3 usuarios de prueba eliminados y confirmados en 0 filas restantes.
-- [ ] Mergear a `qa` y repetir el recorrido contra el deploy real (mismo patrón que la migración: usuarios de prueba por API, navegador real, limpieza al final).
+- [x] Mergeado `dev` → `qa` (commit `95b4b5c`) y pusheado. El deploy de Render (servicio compartido dev/qa) ya estaba corriendo el código nuevo pocos minutos después del push — confirmado con una sonda real: un usuario Retirado insertado directamente en la BD fue rechazado con 403 al intentar loguear contra `qa-belapromesaxjiliu.onrender.com`. Se repitió el recorrido completo contra la API real desplegada (HTTP, con un admin de prueba autenticado vía `POST /auth/login` real y un curso real existente): 18 verificaciones — alta de alumnos/profesor de prueba, visibilidad en Activo, ocultamiento y bloqueo de login (403) al marcar Retirado, alumno de control sin afectar, visibilidad preservada en `users/search` (Categoría D) mostrando el estado correcto, reactivación completa — todas OK. Limpieza al final: los 3 usuarios de prueba y el admin temporal eliminados y verificados en 0 filas restantes.
 
 ---
 
@@ -94,3 +94,4 @@ Agregar `AND estado = 'Activo'` (o el JOIN equivalente) en los siguientes archiv
 _(Una entrada breve por sesión, con fecha, qué se hizo y qué quedó pendiente.)_
 
 - **2026-07-05**: Plan creado. Relevados 57 usos de la tabla `users` en 9 archivos del backend, categorizados en 4 grupos. Decisiones confirmadas por Alex: login se bloquea por completo para retirados (incluyendo invalidar JWTs ya emitidos); en registros históricos se mantiene el nombre de staff (profesor/admin/secretaría) pero se oculta el de alumnos (el rol Monitor se trata como alumno, porque siempre implica el rol S).
+- **2026-07-06**: Fases 3 a 6 completadas. Backend filtrado (listados + históricos), alta/edición de estado en Crear/Actualizar persona, UI de Estado en el panel admin, y validación end-to-end tanto local como contra el deploy real de `qa` (18 verificaciones HTTP, todas OK). Feature completa y desplegada en QA. Pendiente: ninguno — a la espera de que Alex/Simón decidan cuándo promoverla a `prod`.
