@@ -24,7 +24,7 @@ async function getStudentIdsByCourseIds(courseIds) {
   if (!ids.length) return [];
 
   const { rows: users } = await query(
-    `SELECT id FROM users WHERE id_course = ANY($1::bigint[])`,
+    `SELECT id FROM users WHERE id_course = ANY($1::bigint[]) AND estado = 'Activo'`,
     [ids]
   );
 

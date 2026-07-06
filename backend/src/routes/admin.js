@@ -192,7 +192,7 @@ async function getStudentsByCourseIds(courseIds) {
   if (ids.length === 0) return [];
 
   const { rows: users } = await query(
-    `SELECT id, name, cedula, id_course FROM users WHERE id_course = ANY($1::bigint[]) ORDER BY name ASC`,
+    `SELECT id, name, cedula, id_course FROM users WHERE id_course = ANY($1::bigint[]) AND estado = 'Activo' ORDER BY name ASC`,
     [ids]
   );
   if (!users.length) return [];
@@ -213,6 +213,28 @@ async function getStudentsByCourseIds(courseIds) {
 async function getEvaluationTypeIdsByName(typeName) {
   const { rows } = await query(`SELECT id FROM evaluation_type WHERE type = $1`, [typeName]);
   return rows.map((r) => r.id);
+}
+
+// Cuando se carga/edita una nota manual para una evaluación de tipo "Examen", refleja el
+// cambio también en rta_examen (finalizado_at + calificacion). Sin esto, el botón "Tomar
+// Examen" del alumno sigue apareciendo (depende solo de rta_examen.finalizado_at) y la
+// vista de resultado del examen sigue mostrando la calificación vieja. Requiere que ya
+// exista la fila en grades (FK compuesta id_student+id_evaluation -> grades).
+async function syncRtaExamenForManualGrade({ studentId, evaluationId, courseId, grade }) {
+  const { rows: progRows } = await query(
+    `SELECT id FROM examen_programacion WHERE id_evaluation = $1 AND id_course = $2 LIMIT 1`,
+    [evaluationId, courseId]
+  );
+  const idProgramacion = progRows[0]?.id ?? null;
+
+  await query(
+    `INSERT INTO rta_examen (id_student, id_evaluation, id_programacion, iniciado_at, finalizado_at, calificacion)
+     VALUES ($1, $2, $3, now(), now(), $4)
+     ON CONFLICT (id_student, id_evaluation) DO UPDATE SET
+       finalizado_at = COALESCE(rta_examen.finalizado_at, EXCLUDED.finalizado_at),
+       calificacion = EXCLUDED.calificacion`,
+    [studentId, evaluationId, idProgramacion, grade]
+  );
 }
 
 // Para escrituras: busca o crea el tipo en el año especificado.
@@ -284,15 +306,16 @@ adminRouter.get("/courses", requireAuth, requireAdminOrSecretary, async (req, re
 
   const courseIds = data.map((c) => c.id);
   const { rows: usedRows } = courseIds.length > 0
-    ? await query(`SELECT id_course FROM users WHERE id_course = ANY($1::bigint[])`, [courseIds])
+    ? await query(`SELECT id_course FROM users WHERE id_course = ANY($1::bigint[]) AND estado = 'Activo'`, [courseIds])
     : { rows: [] };
 
-  // Cargar nombres de monitores asignados
+  // Cargar nombres de monitores asignados (el monitor siempre es también alumno —
+  // si está retirado, no se muestra como monitor, igual que el resto de alumnos).
   const monitorIds = [...new Set(data.map((c) => c.id_monitor).filter(Boolean))];
   let monitorMap = new Map();
   if (monitorIds.length > 0) {
     const { rows: monitorRows } = await query(
-      `SELECT id, name FROM users WHERE id = ANY($1::uuid[])`,
+      `SELECT id, name FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo'`,
       [monitorIds]
     );
     monitorMap = new Map(monitorRows.map((u) => [u.id, u.name]));
@@ -318,7 +341,7 @@ adminRouter.delete("/courses/:id", requireAuth, requireAdmin, async (req, res) =
   try { await requireAnioVigenteForRecord("course", id); }
   catch (err) { return handleYearError(res, err); }
 
-  const { rows: countRows } = await query(`SELECT count(*) FROM users WHERE id_course = $1`, [id]);
+  const { rows: countRows } = await query(`SELECT count(*) FROM users WHERE id_course = $1 AND estado = 'Activo'`, [id]);
   const count = Number(countRows[0]?.count ?? 0);
   if (count > 0) return res.status(409).json({ error: "El curso tiene estudiantes asignados y no puede eliminarse." });
 
@@ -358,7 +381,7 @@ adminRouter.get("/courses/:id/students", requireAuth, requireAdmin, async (req, 
     if (!typeRows[0]?.id) return res.status(500).json({ error: "Tipo S no encontrado" });
 
     const { rows: users } = await query(
-      `SELECT id, name, cedula FROM users WHERE id_course = $1 ORDER BY name ASC`,
+      `SELECT id, name, cedula FROM users WHERE id_course = $1 AND estado = 'Activo' ORDER BY name ASC`,
       [courseId]
     );
     if (!users.length) return res.json({ items: [] });
@@ -394,11 +417,14 @@ adminRouter.put("/courses/:id/monitor", requireAuth, requireAdmin, async (req, r
     if (id_monitor !== null) {
       // Verificar que el usuario existe y pertenece al curso
       const { rows: userRows } = await query(
-        `SELECT id, id_course FROM users WHERE id = $1 LIMIT 1`,
+        `SELECT id, id_course, estado FROM users WHERE id = $1 LIMIT 1`,
         [id_monitor]
       );
       const userRow = userRows[0];
       if (!userRow) return res.status(404).json({ error: "Usuario no encontrado" });
+      if (userRow.estado !== "Activo") {
+        return res.status(400).json({ error: "Este estudiante está retirado, no puede ser asignado como monitor" });
+      }
       if (Number(userRow.id_course) !== courseId) {
         return res.status(400).json({ error: "El usuario no pertenece a este curso" });
       }
@@ -663,7 +689,7 @@ adminRouter.get("/teachers", requireAuth, requireAdmin, async (req, res) => {
   }
 
   const { rows } = await query(
-    `SELECT id, name, email, cedula FROM users WHERE id = ANY($1::uuid[]) ORDER BY name ASC`,
+    `SELECT id, name, email, cedula FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo' ORDER BY name ASC`,
     [ids]
   );
   return res.json({ items: rows });
@@ -680,7 +706,7 @@ adminRouter.get("/students", requireAuth, requireAdmin, async (req, res) => {
   const ids = utRows.map((r) => r.id_user);
   if (ids.length === 0) return res.json({ items: [] });
 
-  let sql = `SELECT id, name, email, cedula, id_course FROM users WHERE id = ANY($1::uuid[])`;
+  let sql = `SELECT id, name, email, cedula, id_course FROM users WHERE id = ANY($1::uuid[]) AND estado = 'Activo'`;
   const params = [ids];
   if (q) { params.push(`%${q}%`); sql += ` AND name ILIKE $${params.length}`; }
   sql += ` ORDER BY name ASC LIMIT 200`;
@@ -1126,19 +1152,28 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "grade inválida (0..100)" });
     }
 
-    const { rows: evRows } = await query(`SELECT id, id_course FROM evaluation WHERE id = $1 LIMIT 1`, [examId]);
+    const { rows: evRows } = await query(
+      `SELECT ev.id, ev.id_course, et.type AS evaluation_type
+       FROM evaluation ev
+       LEFT JOIN evaluation_type et ON et.id = ev.id_type
+       WHERE ev.id = $1 LIMIT 1`,
+      [examId]
+    );
     const ev = evRows[0];
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
 
     const { rows: stRows } = await query(
       ced
-        ? `SELECT id, cedula, name, email, id_course FROM users WHERE cedula = $1 LIMIT 1`
-        : `SELECT id, cedula, name, email, id_course FROM users WHERE id = $1 LIMIT 1`,
+        ? `SELECT id, cedula, name, email, id_course, estado FROM users WHERE cedula = $1 LIMIT 1`
+        : `SELECT id, cedula, name, email, id_course, estado FROM users WHERE id = $1 LIMIT 1`,
       [ced || stId]
     );
     const st = stRows[0];
 
     if (!st?.id) return res.status(404).json({ error: ced ? "No existe estudiante con esa cédula" : "No existe estudiante con ese id" });
+    if (st.estado !== "Activo") {
+      return res.status(400).json({ error: "Este estudiante está retirado, no se le puede asignar una nota" });
+    }
 
     if (Number(st.id_course) !== Number(ev.id_course)) {
       return res.status(400).json({ error: "El estudiante no pertenece al curso de esta evaluación" });
@@ -1163,6 +1198,15 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
        RETURNING id_exam, id_student, grade, finished_at`,
       [examId, st.id, grade, finishedAt, attempts]
     );
+
+    if (ev.evaluation_type === "Examen") {
+      await syncRtaExamenForManualGrade({
+        studentId: st.id,
+        evaluationId: examId,
+        courseId: ev.id_course,
+        grade,
+      });
+    }
 
     return res.json({
       ok: true,
@@ -1609,7 +1653,7 @@ adminRouter.post("/upload-users", requireAuth, requireAdmin, upload.single("file
            ON CONFLICT (id) DO UPDATE SET
              email = EXCLUDED.email, name = EXCLUDED.name, cedula = EXCLUDED.cedula,
              code_jiliu = EXCLUDED.code_jiliu, id_course = EXCLUDED.id_course
-           RETURNING id, email, name, cedula, code_jiliu, id_course`,
+           RETURNING id, email, name, cedula, code_jiliu, id_course, estado`,
           [payload.id, payload.email, payload.name, payload.cedula, payload.code_jiliu, payload.id_course]
         );
         up = upRows[0];
@@ -1668,7 +1712,7 @@ adminRouter.get("/users/search", requireAuth, requireAdmin, async (req, res) => 
     const pattern = `%${q}%`;
 
     const { rows: data } = await query(
-      `SELECT u.id, u.name, u.email, u.cedula, u.code_jiliu, u.id_course, c.id AS course_id, c.name AS course_name
+      `SELECT u.id, u.name, u.email, u.cedula, u.code_jiliu, u.id_course, u.estado, c.id AS course_id, c.name AS course_name
        FROM users u
        LEFT JOIN course c ON c.id = u.id_course
        WHERE u.cedula ILIKE $1 OR u.name ILIKE $1 OR u.email ILIKE $1 OR u.code_jiliu ILIKE $1
@@ -1698,7 +1742,7 @@ adminRouter.get("/user-by-cedula", requireAuth, requireAdmin, async (req, res) =
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
 
     const { rows: uRows } = await query(
-      `SELECT id, name, email, cedula, code_jiliu, id_course FROM users WHERE cedula = $1 LIMIT 1`,
+      `SELECT id, name, email, cedula, code_jiliu, id_course, estado FROM users WHERE cedula = $1 LIMIT 1`,
       [cedula]
     );
     const u = uRows[0];
@@ -1728,6 +1772,8 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
     const cedula = cleanStr(req.body?.cedula);
     let code_jiliu = cleanStr(req.body?.code_jiliu);
     let id_course = toInt(req.body?.id_course);
+    const estadoRaw = cleanStr(req.body?.estado);
+    const estado = ["Activo", "Retirado"].includes(estadoRaw) ? estadoRaw : "Activo";
 
     if (!email || !email.includes("@")) return res.status(400).json({ error: "email inválido" });
     if (!name) return res.status(400).json({ error: "name requerido" });
@@ -1795,18 +1841,19 @@ adminRouter.post("/create-user", requireAuth, requireAdmin, async (req, res) => 
       cedula,
       code_jiliu,
       id_course,
+      estado,
     };
 
     let up;
     try {
       const { rows: upRows } = await query(
-        `INSERT INTO users (id, email, name, cedula, code_jiliu, id_course)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO users (id, email, name, cedula, code_jiliu, id_course, estado)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (id) DO UPDATE SET
            email = EXCLUDED.email, name = EXCLUDED.name, cedula = EXCLUDED.cedula,
-           code_jiliu = EXCLUDED.code_jiliu, id_course = EXCLUDED.id_course
-         RETURNING id, email, name, cedula, code_jiliu, id_course`,
-        [payload.id, payload.email, payload.name, payload.cedula, payload.code_jiliu, payload.id_course]
+           code_jiliu = EXCLUDED.code_jiliu, id_course = EXCLUDED.id_course, estado = EXCLUDED.estado
+         RETURNING id, email, name, cedula, code_jiliu, id_course, estado`,
+        [payload.id, payload.email, payload.name, payload.cedula, payload.code_jiliu, payload.id_course, payload.estado]
       );
       up = upRows[0];
     } catch (e) {
@@ -1846,6 +1893,7 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
     let code_jiliu = cleanStr(req.body?.code_jiliu);
     let id_course = toInt(req.body?.id_course);
     const roles = Array.isArray(req.body?.roles) ? req.body.roles : [];
+    const estadoRaw = cleanStr(req.body?.estado);
 
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
     if (!email || !email.includes("@")) return res.status(400).json({ error: "email inválido" });
@@ -1872,7 +1920,7 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
     }
 
     const { rows: uRows } = await query(
-      `SELECT id, cedula, email FROM users WHERE cedula = $1 LIMIT 1`,
+      `SELECT id, cedula, email, estado FROM users WHERE cedula = $1 LIMIT 1`,
       [cedula]
     );
     const u = uRows[0];
@@ -1880,6 +1928,7 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
 
     const userId = u.id;
     const oldEmail = (u.email || "").toLowerCase();
+    const estado = ["Activo", "Retirado"].includes(estadoRaw) ? estadoRaw : u.estado;
 
     const { rows: codeDupRows } = await query(
       `SELECT id FROM users WHERE code_jiliu = $1 AND id != $2 LIMIT 1`,
@@ -1912,9 +1961,9 @@ adminRouter.post("/update-user-by-cedula", requireAuth, requireAdmin, async (req
     let up;
     try {
       const { rows: upRows } = await query(
-        `UPDATE users SET email = $1, name = $2, code_jiliu = $3, id_course = $4 WHERE id = $5
-         RETURNING id, email, name, cedula, code_jiliu, id_course`,
-        [email, name, code_jiliu, id_course, userId]
+        `UPDATE users SET email = $1, name = $2, code_jiliu = $3, id_course = $4, estado = $5 WHERE id = $6
+         RETURNING id, email, name, cedula, code_jiliu, id_course, estado`,
+        [email, name, code_jiliu, id_course, estado, userId]
       );
       up = upRows[0];
     } catch (e) {
@@ -1953,7 +2002,7 @@ adminRouter.get("/user-by-cedula", requireAuth, requireAdmin, async (req, res) =
     if (!cedula) return res.status(400).json({ error: "cedula requerida" });
 
     const { rows: uRows } = await query(
-      `SELECT id, email, name, cedula, code_jiliu, id_course FROM users WHERE cedula = $1 LIMIT 1`,
+      `SELECT id, email, name, cedula, code_jiliu, id_course, estado FROM users WHERE cedula = $1 LIMIT 1`,
       [cedula]
     );
     const u = uRows[0];
@@ -2786,7 +2835,7 @@ adminRouter.get("/exam-attempts", requireAuth, requireAdmin, async (req, res) =>
          WHERE id_exam = $1 AND finished_at IS NOT NULL`,
         [id_evaluation]
       ),
-      query(`SELECT id, name, cedula FROM users WHERE id_course = $1`, [id_course]),
+      query(`SELECT id, name, cedula FROM users WHERE id_course = $1 AND estado = 'Activo'`, [id_course]),
     ]);
 
     const userMap = new Map(users.map((u) => [u.id, u]));

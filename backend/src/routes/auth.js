@@ -43,6 +43,13 @@ authRouter.post("/login", async (req, res) => {
     return res.status(401).json({ error: "Credenciales inválidas" });
   }
 
+  // Bloquear login de personas retiradas. Si todavía no completó /profile (usuario
+  // recién creado en auth.users, sin fila en public.users), se deja pasar sin chequeo.
+  const { rows: profileRows } = await query(`SELECT estado FROM users WHERE id = $1 LIMIT 1`, [authUser.id]);
+  if (profileRows[0] && profileRows[0].estado !== "Activo") {
+    return res.status(403).json({ error: "Tu cuenta ha sido retirada. Contacta al administrador." });
+  }
+
   const token = jwt.sign(
     { sub: authUser.id, email: authUser.email },
     process.env.JWT_SECRET,
@@ -169,8 +176,12 @@ authRouter.post("/resolve-login", async (req, res) => {
   const cedula = String(req.body?.cedula || "").trim();
   if (!cedula) return res.status(400).json({ error: "cedula requerida" });
 
-  const { rows } = await query(`SELECT email FROM users WHERE cedula = $1 LIMIT 1`, [cedula]);
+  const { rows } = await query(`SELECT email, estado FROM users WHERE cedula = $1 LIMIT 1`, [cedula]);
   if (!rows[0]?.email) return res.status(404).json({ error: "Cédula no registrada" });
+
+  if (rows[0].estado !== "Activo") {
+    return res.status(403).json({ error: "Tu cuenta ha sido retirada. Contacta al administrador." });
+  }
 
   return res.json({ email: rows[0].email });
 });
