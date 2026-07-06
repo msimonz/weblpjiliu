@@ -32,7 +32,7 @@ Categorizadas para decidir si llevan el filtro `estado = 'Activo'`:
 | Fase 2 — Backend: helper + bloqueo de login | ✅ Completa |
 | Fase 3 — Backend: filtrar listados (Categoría A + B1) | Pendiente |
 | Fase 4 — Backend: Crear/Actualizar persona (alta/edición de estado) | ✅ Completa |
-| Fase 5 — Frontend: UI de Estado + wiring | Pendiente |
+| Fase 5 — Frontend: UI de Estado + wiring | ✅ Completa |
 | Fase 6 — Validación end-to-end | Pendiente |
 
 ---
@@ -73,11 +73,12 @@ Agregar `AND estado = 'Activo'` (o el JOIN equivalente) en los siguientes archiv
 
 ## Fase 5 — Frontend: UI de Estado + wiring
 
-- [ ] `frontend/src/app/admin/page.tsx`: agregar grupo visual "Estado de la persona" (Activo/Retirado) junto al de roles, mismo estilo. Checkboxes visualmente, pero lógica de selección única (un solo `estado` en el state, no un array).
-- [ ] Al crear: enviar `estado: "Activo"` por defecto (checkbox Activo premarcado).
-- [ ] Al editar: cargar el `estado` real de la persona (vía `user-by-cedula`/`users/search`) y marcar el checkbox correspondiente.
-- [ ] Enviar `estado` en el payload de crear/actualizar.
-- [ ] Verificar en un navegador real: crear persona (queda Activo), editarla a Retirado, confirmar que desaparece de un selector (ej. lista de profesores) y que ya no puede loguear.
+- [x] `frontend/src/app/admin/page.tsx`: agregado grupo visual "Estado" (Activo/Retirado) junto al de Rol, mismo estilo de checkboxes, separado por un divisor vertical. Lógica de selección única implementada con un estado `uEstado: "Activo" | "Retirado"` (no un array): al marcar una opción se llama `setUEstado(o.value)`, nunca se pueden marcar ambas.
+- [x] Al crear: `uEstado` inicia en `"Activo"` (`resetManualUserForm` lo fija por defecto) y se envía en el payload.
+- [x] Al editar: `searchUserByCedula` carga el `estado` real devuelto por `GET /user-by-cedula` y marca el checkbox correspondiente.
+- [x] `estado: uEstado` agregado al payload de `createUserManual` (usado tanto para crear como para actualizar).
+- [x] Columna "Estado" agregada a la tabla de resultados de `GET /users/search` dentro del propio panel de Crear/Actualizar persona (Categoría D: ahí deben verse ambos estados), con el texto en rojo cuando es "Retirado".
+- [x] Verificado en un navegador real (Firefox vía Playwright, contra el dev server local con datos reales de la BD de OCI): login como admin, apertura del panel "Crear/Actualizar persona" con "Activo" premarcado por defecto; se creó un alumno de prueba (quedó `Activo`, visible en la búsqueda con esa etiqueta); se lo trajo a edición (cargó `Activo` correctamente); se marcó "Retirado" y se guardó; una nueva búsqueda mostró el mismo registro con "Retirado" (Categoría D, sigue visible ahí); se confirmó en la tabla `users` que el cambio persistió; se eliminó el registro de prueba al final. La verificación de que un alumno Retirado desaparece de otros módulos (profesor/monitor/secretaría) y de que no puede loguear ya se hizo en vivo en las Fases 2 y 3 — Fase 6 hará el recorrido end-to-end integrando todo.
 
 ## Fase 6 — Validación end-to-end
 
