@@ -749,6 +749,15 @@ teacherRouter.post("/grades", requireAuth, requireTeacher, async (req, res) => {
     [examId, st.id, g, finishedAt, attempts]
   );
 
+  if (ev.evaluation_type === "Examen") {
+    await syncRtaExamenForManualGrade({
+      studentId: st.id,
+      evaluationId: examId,
+      courseId: ev.id_course,
+      grade: g,
+    });
+  }
+
   return res.json({
     ok: true,
     student: { id: st.id, cedula: st.cedula, name: st.name },
@@ -1005,6 +1014,28 @@ async function resolveExamenTypeId(year) {
 async function getExamenTypeIds() {
   const { rows } = await query(`SELECT id FROM evaluation_type WHERE type = $1`, ["Examen"]);
   return rows.map((r) => r.id);
+}
+
+// Cuando se carga/edita una nota manual para una evaluación de tipo "Examen", refleja el
+// cambio también en rta_examen (finalizado_at + calificacion). Sin esto, el botón "Tomar
+// Examen" del alumno sigue apareciendo (depende solo de rta_examen.finalizado_at) y la
+// vista de resultado del examen sigue mostrando la calificación vieja. Requiere que ya
+// exista la fila en grades (FK compuesta id_student+id_evaluation -> grades).
+async function syncRtaExamenForManualGrade({ studentId, evaluationId, courseId, grade }) {
+  const { rows: progRows } = await query(
+    `SELECT id FROM examen_programacion WHERE id_evaluation = $1 AND id_course = $2 LIMIT 1`,
+    [evaluationId, courseId]
+  );
+  const idProgramacion = progRows[0]?.id ?? null;
+
+  await query(
+    `INSERT INTO rta_examen (id_student, id_evaluation, id_programacion, iniciado_at, finalizado_at, calificacion)
+     VALUES ($1, $2, $3, now(), now(), $4)
+     ON CONFLICT (id_student, id_evaluation) DO UPDATE SET
+       finalizado_at = COALESCE(rta_examen.finalizado_at, EXCLUDED.finalizado_at),
+       calificacion = EXCLUDED.calificacion`,
+    [studentId, evaluationId, idProgramacion, grade]
+  );
 }
 
 const TIPOS_VALIDOS_EXAMEN = ["multiple_multi", "multiple_single", "falso_verdadero", "emparejamiento"];

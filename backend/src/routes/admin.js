@@ -215,6 +215,28 @@ async function getEvaluationTypeIdsByName(typeName) {
   return rows.map((r) => r.id);
 }
 
+// Cuando se carga/edita una nota manual para una evaluación de tipo "Examen", refleja el
+// cambio también en rta_examen (finalizado_at + calificacion). Sin esto, el botón "Tomar
+// Examen" del alumno sigue apareciendo (depende solo de rta_examen.finalizado_at) y la
+// vista de resultado del examen sigue mostrando la calificación vieja. Requiere que ya
+// exista la fila en grades (FK compuesta id_student+id_evaluation -> grades).
+async function syncRtaExamenForManualGrade({ studentId, evaluationId, courseId, grade }) {
+  const { rows: progRows } = await query(
+    `SELECT id FROM examen_programacion WHERE id_evaluation = $1 AND id_course = $2 LIMIT 1`,
+    [evaluationId, courseId]
+  );
+  const idProgramacion = progRows[0]?.id ?? null;
+
+  await query(
+    `INSERT INTO rta_examen (id_student, id_evaluation, id_programacion, iniciado_at, finalizado_at, calificacion)
+     VALUES ($1, $2, $3, now(), now(), $4)
+     ON CONFLICT (id_student, id_evaluation) DO UPDATE SET
+       finalizado_at = COALESCE(rta_examen.finalizado_at, EXCLUDED.finalizado_at),
+       calificacion = EXCLUDED.calificacion`,
+    [studentId, evaluationId, idProgramacion, grade]
+  );
+}
+
 // Para escrituras: busca o crea el tipo en el año especificado.
 // year es obligatorio cuando se crea un nuevo tipo.
 async function resolveEvaluationTypeId(id_type, type_text, year) {
@@ -1126,7 +1148,13 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: "grade inválida (0..100)" });
     }
 
-    const { rows: evRows } = await query(`SELECT id, id_course FROM evaluation WHERE id = $1 LIMIT 1`, [examId]);
+    const { rows: evRows } = await query(
+      `SELECT ev.id, ev.id_course, et.type AS evaluation_type
+       FROM evaluation ev
+       LEFT JOIN evaluation_type et ON et.id = ev.id_type
+       WHERE ev.id = $1 LIMIT 1`,
+      [examId]
+    );
     const ev = evRows[0];
     if (!ev?.id) return res.status(404).json({ error: "Evaluación no existe" });
 
@@ -1163,6 +1191,15 @@ adminRouter.post("/grades", requireAuth, requireAdmin, async (req, res) => {
        RETURNING id_exam, id_student, grade, finished_at`,
       [examId, st.id, grade, finishedAt, attempts]
     );
+
+    if (ev.evaluation_type === "Examen") {
+      await syncRtaExamenForManualGrade({
+        studentId: st.id,
+        evaluationId: examId,
+        courseId: ev.id_course,
+        grade,
+      });
+    }
 
     return res.json({
       ok: true,
