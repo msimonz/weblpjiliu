@@ -82,9 +82,9 @@ Agregar `AND estado = 'Activo'` (o el JOIN equivalente) en los siguientes archiv
 
 ## Fase 6 — Validación end-to-end
 
-- [ ] Recorrido manual: alumno retirado no aparece en roster de monitor/secretaría/profesor/admin, no puede loguear, sí aparece en Crear/Actualizar persona.
-- [ ] Profesor retirado: no aparece en selectores de asignación nueva, sí mantiene su nombre en evaluaciones/asistencias ya creadas, no puede loguear.
-- [ ] Confirmar que reactivar (Retirado → Activo) revierte todo correctamente.
+- [x] Recorrido manual (script único e2e contra la BD real de OCI, invocando los handlers reales de Express — mismo patrón que las fases anteriores): se crearon 2 alumnos de prueba (Alumno A y un Alumno B de control) y 1 profesor de prueba, más una sesión de asistencia histórica real (tabla `asistencia_sesion`/`asistencia_detalle`) con ambos alumnos presentes y dictada por el profesor de prueba. Con Alumno A y el profesor en estado Activo se confirmó: aparecen en `admin GET /students`, `/courses/:id/students`, `monitor GET /students`, `admin GET /teachers`; el login (`POST /auth/login`) funciona. Al marcar a Alumno A como Retirado: desaparece de las 3 vistas anteriores, su login y `resolve-login` quedan rechazados con 403, y su fila desaparece del histórico de asistencia (`secretaria /attendance/consulta-todas`) — mientras que Alumno B (control, sigue Activo) permanece visible en el mismo histórico, confirmando que el filtro no oculta de más.
+- [x] Profesor retirado: al marcarlo Retirado, desaparece de `admin GET /teachers` (selector de asignación nueva), su login queda rechazado con 403, pero su nombre se mantiene en el histórico de asistencia ya creado (Categoría B2, identidad de staff preservada).
+- [x] Reactivar (Retirado → Activo): se confirmó que Alumno A vuelve a aparecer en `admin GET /students`, su fila reaparece en el histórico de asistencia, y su login vuelve a funcionar; el profesor reactivado vuelve a aparecer en `admin GET /teachers`. Total: 25 verificaciones, todas OK. Limpieza al final: sesión/detalle de asistencia de prueba y los 3 usuarios de prueba eliminados y confirmados en 0 filas restantes.
 - [ ] Mergear a `qa` y repetir el recorrido contra el deploy real (mismo patrón que la migración: usuarios de prueba por API, navegador real, limpieza al final).
 
 ---
