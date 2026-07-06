@@ -1,32 +1,20 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
-let transporter = null;
+let resend = null;
 
-function getTransporter() {
-  if (transporter) return transporter;
-
-  transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 465),
-    secure: Number(process.env.SMTP_PORT || 465) === 465,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASSWORD,
-    },
-    // Si la red no puede conectar a Gmail, fallar rápido en vez de colgar el request indefinidamente.
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
-  });
-
-  return transporter;
+function getResend() {
+  if (resend) return resend;
+  resend = new Resend(process.env.RESEND_API_KEY);
+  return resend;
 }
 
-export async function sendPasswordResetEmail(toEmail, resetLink) {
-  const transport = getTransporter();
+const FROM = "WebNotas JILIU <no-responder@sofialapromesa.orko.com.co>";
 
-  await transport.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+export async function sendPasswordResetEmail(toEmail, resetLink) {
+  const client = getResend();
+
+  const { error } = await client.emails.send({
+    from: FROM,
     to: toEmail,
     subject: "Restablecer tu contraseña — WebNotas JILIU",
     text: `Recibimos una solicitud para restablecer tu contraseña.\n\nHacé clic en este link (válido por 30 minutos):\n${resetLink}\n\nSi no pediste este cambio, ignorá este correo.`,
@@ -43,4 +31,8 @@ export async function sendPasswordResetEmail(toEmail, resetLink) {
       </div>
     `,
   });
+
+  if (error) {
+    throw new Error(error.message || "Error enviando el correo con Resend");
+  }
 }
